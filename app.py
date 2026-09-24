@@ -116,6 +116,8 @@ pages = {
                 icon=":material/tune:"),
         st.Page("frontend/views/calculator.py", title="Calculator versions",
                 icon=":material/deployed_code:"),
+        st.Page("frontend/views/snapshots.py", title="Config snapshots",
+                icon=":material/inventory_2:"),
     ],
     "Portfolio": [
         st.Page("frontend/views/overview.py", title="Overview",

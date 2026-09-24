@@ -311,3 +311,42 @@ def approval_queue_status() -> dict:
 
 def decide_run(run_id: str, decision: str, by: str, reason: str) -> dict:
     return post(f"/runstatus/{run_id}/{decision}", {"by": by, "reason": reason})
+
+
+# ------------------------------------------------- config snapshots --------
+@st.cache_data(ttl=20, show_spinner=False)
+def snapshots() -> dict:
+    return get("/snapshots")
+
+
+@st.cache_data(ttl=20, show_spinner=False)
+def snapshot_detail(label: str) -> dict:
+    return get(f"/snapshots/{label}")
+
+
+@st.cache_data(ttl=20, show_spinner=False)
+def snapshot_file(label: str, relpath: str) -> dict:
+    return get(f"/snapshots/{label}/file", relpath=relpath)
+
+
+def create_snapshot(label: str, description: str, created_by: str,
+                    parent: str | None = None) -> dict:
+    return post("/snapshots", {"label": label, "description": description,
+                               "created_by": created_by, "parent": parent})
+
+
+def promote_snapshot(label: str, status: str, by: str, reason: str) -> dict:
+    return post(f"/snapshots/{label}/promote",
+                {"status": status, "by": by, "reason": reason})
+
+
+def edit_snapshot(label: str, relpath: str, text=None, rows=None,
+                  edited_by: str = "") -> dict:
+    return post(f"/snapshots/{label}/edit",
+                {"relpath": relpath, "text": text, "rows": rows,
+                 "edited_by": edited_by})
+
+
+@st.cache_data(ttl=20, show_spinner="Comparing…")
+def diff_snapshots(a: str, b: str) -> dict:
+    return get(f"/snapshots/{a}/diff/{b}")

@@ -366,3 +366,125 @@ def approve_status(run_id: str, body: DecisionIn) -> dict:
 @router.post("/runstatus/{run_id}/reject")
 def reject_status(run_id: str, body: DecisionIn) -> dict:
     return _decide(run_id, "rejected", body)
+
+
+# ------------------------------------------------- config snapshots --------
+SNAPSHOTS_ROOT = Path(os.environ.get("IFRS9_SNAPSHOTS_DIR",
+                                     PROJECT_ROOT / "config_snapshots"))
+
+
+class SnapshotIn(BaseModel):
+    label: str
+    description: str = ""
+    created_by: str = ""
+    parent: str | None = None
+
+
+class PromoteIn(BaseModel):
+    status: str
+    by: str
+    reason: str
+
+
+class EditIn(BaseModel):
+    relpath: str
+    text: str | None = None
+    rows: list[dict] | None = None
+    edited_by: str = ""
+
+
+@router.get("/snapshots")
+def snapshots() -> dict:
+    from ifrs9qdb.snapshots import list_snapshots
+    return {"root": str(SNAPSHOTS_ROOT),
+            "snapshots": _records(list_snapshots(SNAPSHOTS_ROOT))}
+
+
+@router.get("/snapshots/{label}")
+def snapshot_detail(label: str) -> dict:
+    from ifrs9qdb.snapshots import (editable_snapshot_files,
+                                    read_snapshot_metadata)
+    meta = read_snapshot_metadata(label, SNAPSHOTS_ROOT)
+    if meta is None:
+        raise HTTPException(404, f"No snapshot named {label!r}")
+    return {"meta": meta,
+            "editable": _records(editable_snapshot_files(label, SNAPSHOTS_ROOT))}
+
+
+@router.get("/snapshots/{label}/file")
+def snapshot_file(label: str, relpath: str) -> dict:
+    """One file's content, as text for YAML and as rows for CSV.
+
+    A CSV comes back with its comment header separate, because the static
+    tables carry their provenance in leading `#` lines and a round trip that
+    folds them into the data destroys them.
+    """
+    from ifrs9qdb.snapshots import read_static_csv_with_header, snapshot_dir
+    base = snapshot_dir(label, SNAPSHOTS_ROOT)
+    p = (base / relpath).resolve()
+    if not str(p).startswith(str(base.resolve())) or not p.is_file():
+        raise HTTPException(404, f"No file {relpath!r} in snapshot {label!r}")
+    if p.suffix.lower() == ".csv":
+        r = read_static_csv_with_header(p)
+        return {"kind": "csv", "comment_header": r["comment_header"],
+                "rows": _records(r["data"]),
+                "columns": list(r["data"].columns)}
+    return {"kind": "text", "text": p.read_text(encoding="utf-8")}
+
+
+@router.post("/snapshots")
+def create_snapshot_endpoint(body: SnapshotIn) -> dict:
+    from ifrs9qdb.snapshots import create_snapshot
+    try:
+        out = create_snapshot(
+            body.label, body.description, body.created_by or None,
+            parent=body.parent or None,
+            config_dir=PROJECT_ROOT / "config",
+            static_dir=PROJECT_ROOT / "data-raw" / "static",
+            run_config_path=PROJECT_CONFIG,
+            snapshots_root=SNAPSHOTS_ROOT)
+    except FileExistsError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "path": str(out)}
+
+
+@router.post("/snapshots/{label}/promote")
+def promote_snapshot_endpoint(label: str, body: PromoteIn) -> dict:
+    from ifrs9qdb.snapshots import promote_snapshot
+    run_audit = AuditLog(SNAPSHOTS_ROOT / "audit.jsonl")
+    try:
+        meta = promote_snapshot(label, body.status, body.by, body.reason,
+                                snapshots_root=SNAPSHOTS_ROOT,
+                                config_path=PROJECT_CONFIG, audit=run_audit)
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "status": meta["status"], "meta": meta}
+
+
+@router.post("/snapshots/{label}/edit")
+def edit_snapshot(label: str, body: EditIn) -> dict:
+    from ifrs9qdb.snapshots import save_snapshot_csv, save_snapshot_yaml
+    audit = AuditLog(SNAPSHOTS_ROOT / "audit.jsonl")
+    if body.rows is not None:
+        r = save_snapshot_csv(label, body.relpath, pd.DataFrame(body.rows),
+                              snapshots_root=SNAPSHOTS_ROOT,
+                              edited_by=body.edited_by or None, audit=audit)
+    else:
+        r = save_snapshot_yaml(label, body.relpath, body.text or "",
+                               snapshots_root=SNAPSHOTS_ROOT,
+                               edited_by=body.edited_by or None, audit=audit)
+    if not r.get("ok"):
+        raise HTTPException(400, r.get("message", "the edit was refused"))
+    return r
+
+
+@router.get("/snapshots/{a}/diff/{b}")
+def diff_snapshots_endpoint(a: str, b: str) -> dict:
+    from ifrs9qdb.snapshots import diff_snapshots
+    return diff_snapshots(a, b, SNAPSHOTS_ROOT)

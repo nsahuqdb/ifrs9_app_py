@@ -85,3 +85,58 @@ class TestSuppressions:
                               "reason": "accepted for Q1", "approved_by": ""})
         assert r.status_code == 400
         assert "approved_by" in r.text
+
+
+class TestSnapshots:
+    def test_the_listing_answers(self):
+        r = client.get("/api/snapshots")
+        assert r.status_code == 200
+        assert set(r.json()) == {"root", "snapshots"}
+
+    def test_an_unknown_snapshot_is_404(self):
+        assert client.get("/api/snapshots/no_such_label").status_code == 404
+
+    def test_a_bad_label_is_refused(self):
+        r = client.post("/api/snapshots", json={"label": "../escape"})
+        assert r.status_code == 400
+
+    def test_a_file_outside_the_snapshot_cannot_be_read(self):
+        """A relpath is a path, and a path can point upwards."""
+        labels = [s["label"] for s in client.get("/api/snapshots").json()["snapshots"]]
+        if not labels:
+            pytest.skip("no snapshots configured")
+        r = client.get(f"/api/snapshots/{labels[0]}/file",
+                       params={"relpath": "../../config.yml"})
+        assert r.status_code == 404
+
+    def test_an_illegal_promotion_is_400(self):
+        labels = [s["label"] for s in client.get("/api/snapshots").json()["snapshots"]]
+        if not labels:
+            pytest.skip("no snapshots configured")
+        r = client.post(f"/api/snapshots/{labels[0]}/promote",
+                        json={"status": "archived", "by": "priya",
+                              "reason": "skip ahead"})
+        assert r.status_code == 400
+
+    def test_a_promotion_without_a_reason_is_400(self):
+        labels = [s["label"] for s in client.get("/api/snapshots").json()["snapshots"]]
+        if not labels:
+            pytest.skip("no snapshots configured")
+        r = client.post(f"/api/snapshots/{labels[0]}/promote",
+                        json={"status": "pending_final", "by": "priya",
+                              "reason": ""})
+        assert r.status_code == 400
+
+    def test_a_csv_comes_back_with_its_header_separate(self):
+        labels = [s["label"] for s in client.get("/api/snapshots").json()["snapshots"]]
+        if not labels:
+            pytest.skip("no snapshots configured")
+        d = client.get(f"/api/snapshots/{labels[0]}").json()
+        csvs = [f["relpath"] for f in d["editable"]
+                if f["relpath"].endswith(".csv")]
+        if not csvs:
+            pytest.skip("no CSV in this snapshot")
+        body = client.get(f"/api/snapshots/{labels[0]}/file",
+                          params={"relpath": csvs[0]}).json()
+        assert body["kind"] == "csv"
+        assert "comment_header" in body and "rows" in body

@@ -57,6 +57,8 @@ runs/
       StPD.csv, Ratings.csv,    stress testing needs these
       AccountMaster_1.csv, ...
     config_used/                the config the run froze
+    reports/manifest.json       what produced the run
+    reports/run_status.yml      where it stands for approval
     reports/                    manifest, validation, run status
 ```
 
@@ -87,11 +89,11 @@ backend/
 frontend/
   api.py        the only place that talks to the backend
   ui.py         shared presentation: theme, formatting, layout helpers
-  views/        one module per page (19)
+  views/        one module per page (20)
 ```
 
 The pages, in the order a quarter uses them: run the pipeline, configuration,
-calculator versions; overview, staging, concentration, data quality,
+calculator versions, config snapshots; overview, staging, concentration, data quality,
 validation; movement, reconcile & export; overlays, approval, accepted
 findings, audit trail; stress packages, lever sensitivity, reverse stress,
 roll forward; and help.
