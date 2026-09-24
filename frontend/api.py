@@ -261,3 +261,38 @@ def output_summary(run_id: str) -> list:
 
 def export_run(run_id: str, include_inputs: bool = False) -> dict:
     return post(f"/export/{run_id}", {"include_inputs": include_inputs})
+
+
+# ------------------------------------------- accepted findings -------------
+@st.cache_data(ttl=30, show_spinner=False)
+def suppressions(run_id: str) -> dict:
+    return get(f"/suppressions/{run_id}")
+
+
+def add_suppression(run_id: str, validator_id: str, reason: str,
+                    approved_by: str, valid_until: str | None = None) -> dict:
+    return post(f"/suppressions/{run_id}",
+                {"validator_id": validator_id, "reason": reason,
+                 "approved_by": approved_by, "valid_until": valid_until})
+
+
+# ------------------------------------------- calculator versions -----------
+@st.cache_data(ttl=30, show_spinner=False)
+def calculator_versions() -> dict:
+    return get("/calculator/versions")
+
+
+def register_calculator(id: str, label: str = "", description: str = "",
+                        created_by: str = "", make_active: bool = True) -> dict:
+    return post("/calculator/versions",
+                {"id": id, "label": label, "description": description,
+                 "created_by": created_by, "make_active": make_active})
+
+
+def activate_calculator(version_id: str) -> dict:
+    return post(f"/calculator/active/{version_id}", {})
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def code_status() -> dict:
+    return get("/code/status")

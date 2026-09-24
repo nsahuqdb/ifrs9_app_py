@@ -87,6 +87,15 @@ backend/
 frontend/
   api.py        the only place that talks to the backend
   ui.py         shared presentation: theme, formatting, layout helpers
-  views/        one module per page
+  views/        one module per page (19)
+```
+
+The pages, in the order a quarter uses them: run the pipeline, configuration,
+calculator versions; overview, staging, concentration, data quality,
+validation; movement, reconcile & export; overlays, approval, accepted
+findings, audit trail; stress packages, lever sensitivity, reverse stress,
+roll forward; and help.
+
+```
 app.py          the Streamlit entry point and navigation
 ```

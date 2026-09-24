@@ -114,6 +114,8 @@ pages = {
                 icon=":material/play_circle:"),
         st.Page("frontend/views/config.py", title="Configuration",
                 icon=":material/tune:"),
+        st.Page("frontend/views/calculator.py", title="Calculator versions",
+                icon=":material/deployed_code:"),
     ],
     "Portfolio": [
         st.Page("frontend/views/overview.py", title="Overview",
@@ -152,6 +154,10 @@ pages = {
                 icon=":material/search:"),
         st.Page("frontend/views/rollforward.py", title="Roll forward",
                 icon=":material/fast_forward:"),
+    ],
+    "Help": [
+        st.Page("frontend/views/help.py", title="How this works",
+                icon=":material/help:"),
     ],
 }
 

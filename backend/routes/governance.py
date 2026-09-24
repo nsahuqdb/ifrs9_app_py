@@ -175,3 +175,128 @@ def export(run_id: str, req: ExportIn) -> dict:
     AuditLog(run_dir / "audit.jsonl").record(
         "export", f"packaged {res['files']} files", zip=res["zip"])
     return res
+
+
+# ------------------------------------------- accepted findings -------------
+def _suppressions_path(run_id: str) -> Path:
+    """Where a run's accepted findings live.
+
+    Inside the run's own frozen config when it has one, so reproducing a
+    quarter uses the exceptions THAT quarter was signed with. Suppressions do
+    not carry forward to a new snapshot.
+    """
+    run = _run(run_id)
+    frozen = run / "config_used" / "config" / "validation_suppressions.yml"
+    if frozen.parent.is_dir():
+        return frozen
+    return run / "validation_suppressions.yml"
+
+
+class SuppressionIn(BaseModel):
+    validator_id: str
+    reason: str
+    approved_by: str
+    valid_until: str | None = None
+
+
+@router.get("/suppressions/{run_id}")
+def list_suppressions(run_id: str) -> dict:
+    from ifrs9qdb.validation import active_suppression_ids, load_suppressions
+    path = _suppressions_path(run_id)
+    table = load_suppressions(path)
+    return {
+        "path": str(path),
+        "entries": _records(table),
+        "active": active_suppression_ids(table),
+    }
+
+
+@router.post("/suppressions/{run_id}")
+def add_run_suppression(run_id: str, body: SuppressionIn) -> dict:
+    """Accept a finding, with the reason and the approver recorded.
+
+    Both are required by the engine. The endpoint does not supply a default
+    approver: a name in an audit trail that nobody chose is worse than a
+    refusal.
+    """
+    from ifrs9qdb.validation import add_suppression
+    run = _run(run_id)
+    try:
+        path = add_suppression(_suppressions_path(run_id), body.validator_id,
+                               body.reason, body.approved_by, body.valid_until,
+                               audit=None)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    try:
+        AuditLog(run / "audit.jsonl").record(
+            "suppression_add", f"accepted {body.validator_id}",
+            validator_id=body.validator_id, reason=body.reason,
+            approved_by=body.approved_by, valid_until=body.valid_until or "")
+    except Exception:
+        pass
+    return {"ok": True, "path": str(path)}
+
+
+# ------------------------------------------- calculator versions -----------
+PROJECT_ROOT = Path(os.environ.get("IFRS9_PROJECT_ROOT",
+                                   Path(__file__).parent.parent.parent))
+
+
+class CalculatorIn(BaseModel):
+    id: str
+    label: str = ""
+    description: str = ""
+    created_by: str = ""
+    make_active: bool = True
+
+
+@router.get("/calculator/versions")
+def calculator_versions() -> dict:
+    """The registry, plus what the CURRENTLY DEPLOYED code fingerprints to.
+
+    The two together are the point: the registry says what a run would claim,
+    the live fingerprint says what it would actually execute.
+    """
+    from ifrs9qdb.calculator_versions import (calculator_version_for_run,
+                                              compute_code_fingerprint,
+                                              list_calculator_versions)
+    table = list_calculator_versions(PROJECT_ROOT)
+    return {
+        "root": str(PROJECT_ROOT),
+        "versions": _records(table),
+        "live_fingerprint": compute_code_fingerprint(),
+        "for_run": calculator_version_for_run(root=PROJECT_ROOT),
+    }
+
+
+@router.post("/calculator/versions")
+def register_calculator(body: CalculatorIn) -> dict:
+    from ifrs9qdb.calculator_versions import register_calculator_version
+    try:
+        entry = register_calculator_version(
+            body.id, body.label or None, body.description,
+            body.created_by or None, body.make_active, root=PROJECT_ROOT)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "version": entry}
+
+
+@router.post("/calculator/active/{version_id}")
+def activate_calculator(version_id: str) -> dict:
+    from ifrs9qdb.calculator_versions import set_active_calculator_version
+    try:
+        set_active_calculator_version(version_id, PROJECT_ROOT)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return {"ok": True, "active": version_id}
+
+
+@router.get("/code/status")
+def code_state() -> dict:
+    """What code is deployed, as git sees it.
+
+    ``dirty`` is the one that matters at close: a run produced from a modified
+    working tree cannot be reproduced from its SHA.
+    """
+    from ifrs9qdb.code_version import code_status
+    return code_status()
