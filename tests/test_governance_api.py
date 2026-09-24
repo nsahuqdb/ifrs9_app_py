@@ -140,3 +140,41 @@ class TestSnapshots:
                           params={"relpath": csvs[0]}).json()
         assert body["kind"] == "csv"
         assert "comment_header" in body and "rows" in body
+
+
+class TestOverlayBundles:
+    """Read-only checks. Applying an overlay WRITES into a run, so that path
+    is covered in the package's own suite against a temporary copy rather than
+    here against whatever IFRS9_RUNS_DIR points at."""
+
+    def test_the_registry_answers(self):
+        r = client.get("/api/overlay-bundles")
+        assert r.status_code == 200
+        assert set(r.json()) == {"path", "bundles"}
+
+    def test_a_bundle_with_no_rules_is_refused(self):
+        r = client.post("/api/overlay-bundles", json={"id": "empty", "rules": []})
+        assert r.status_code == 400
+        assert "at least one rule" in r.text
+
+    def test_a_rule_without_a_comment_is_refused(self):
+        r = client.post("/api/overlay-bundles", json={
+            "id": "nocomment",
+            "rules": [{"method": "uplift_pct", "level": "whole_book",
+                       "value": 0.1}]})
+        assert r.status_code == 400
+        assert "comment is mandatory" in r.text
+
+    def test_an_unknown_overlay_is_404(self):
+        assert client.delete("/api/overlay-bundles/nope").status_code == 404
+        assert client.post("/api/overlay-bundles/nope/status",
+                           json={"status": "approved", "by": "p",
+                                 "reason": "x"}).status_code == 404
+
+    def test_the_applied_listing_answers(self):
+        runs = client.get("/api/runs").json()
+        if not runs:
+            pytest.skip("set IFRS9_RUNS_DIR to a folder holding runs")
+        r = client.get(f"/api/overlay-bundles/applied/{runs[0]['run_id']}")
+        assert r.status_code == 200
+        assert "applied" in r.json()

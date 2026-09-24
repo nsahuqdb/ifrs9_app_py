@@ -488,3 +488,133 @@ def edit_snapshot(label: str, body: EditIn) -> dict:
 def diff_snapshots_endpoint(a: str, b: str) -> dict:
     from ifrs9qdb.snapshots import diff_snapshots
     return diff_snapshots(a, b, SNAPSHOTS_ROOT)
+
+
+# ------------------------------------------------- overlay bundles ---------
+OVERLAYS_FILE = Path(os.environ.get("IFRS9_OVERLAYS",
+                                    CONFIG_DIR / "overlays.yml"))
+
+
+class RuleIn(BaseModel):
+    method: str
+    level: str
+    target: str | None = None
+    value: float = 0.0
+    comment: str = ""
+
+
+class BundleIn(BaseModel):
+    id: str
+    name: str = ""
+    owner: str = ""
+    approval_ref: str = ""
+    effective_date: str = ""
+    expiry: str = ""
+    rules: list[RuleIn] = []
+
+
+class StatusIn(BaseModel):
+    status: str
+    by: str
+    reason: str
+
+
+def _bundle_dict(body: BundleIn, existing: dict | None = None) -> dict:
+    out = dict(existing or {})
+    out.update({k: v for k, v in body.model_dump().items() if k != "rules"})
+    out["rules"] = [r.model_dump() for r in body.rules]
+    out.setdefault("status", "draft")
+    return out
+
+
+@router.get("/overlay-bundles")
+def overlay_bundles() -> dict:
+    from ifrs9qdb.overlays import read_overlay_bundles
+    return {"path": str(OVERLAYS_FILE),
+            "bundles": read_overlay_bundles(OVERLAYS_FILE)}
+
+
+@router.post("/overlay-bundles")
+def save_overlay_bundle(body: BundleIn) -> dict:
+    from ifrs9qdb.overlays import get_overlay, upsert_overlay
+    bundle = _bundle_dict(body, get_overlay(body.id, OVERLAYS_FILE))
+    try:
+        upsert_overlay(bundle, OVERLAYS_FILE)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "bundle": bundle}
+
+
+@router.delete("/overlay-bundles/{overlay_id}")
+def delete_overlay_bundle(overlay_id: str) -> dict:
+    from ifrs9qdb.overlays import remove_overlay
+    if not remove_overlay(overlay_id, OVERLAYS_FILE):
+        raise HTTPException(404, f"No overlay named {overlay_id!r}")
+    return {"ok": True}
+
+
+@router.post("/overlay-bundles/{overlay_id}/status")
+def set_bundle_status(overlay_id: str, body: StatusIn) -> dict:
+    from ifrs9qdb.overlays import set_overlay_status
+    try:
+        b = set_overlay_status(overlay_id, body.status, body.by, body.reason,
+                               OVERLAYS_FILE)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "bundle": b}
+
+
+@router.post("/overlay-bundles/{overlay_id}/preview/{run_id}")
+def preview_bundle(overlay_id: str, run_id: str) -> dict:
+    """What the overlay WOULD do to this run. Writes nothing."""
+    from ifrs9qdb.overlays import get_overlay, preview_overlays as _preview
+    bundle = get_overlay(overlay_id, OVERLAYS_FILE)
+    if bundle is None:
+        raise HTTPException(404, f"No overlay named {overlay_id!r}")
+    p = _run(run_id) / "Output" / "FinalEclReport.csv"
+    if not p.is_file():
+        raise HTTPException(404, "This run has no ECL report to adjust")
+    rep = normalise(pd.read_csv(p, low_memory=False))
+    out = _preview(rep, bundle)
+    if out.get("ok") and "summary" in out:
+        out["summary"] = _records(out["summary"])
+    return out
+
+
+@router.post("/overlay-bundles/{overlay_id}/apply/{run_id}")
+def apply_bundle(overlay_id: str, run_id: str) -> dict:
+    """Apply the overlay to the run, alongside what it already produced."""
+    from ifrs9qdb.overlays import apply_overlay_to_run, get_overlay
+    bundle = get_overlay(overlay_id, OVERLAYS_FILE)
+    if bundle is None:
+        raise HTTPException(404, f"No overlay named {overlay_id!r}")
+    run = _run(run_id)
+    try:
+        res = apply_overlay_to_run(run, bundle)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    if not res.get("ok"):
+        return res
+    res["audit"] = _records(res["audit"])
+    try:
+        AuditLog(run / "audit.jsonl").record(
+            "overlay_applied", f"{overlay_id} applied",
+            overlay_id=overlay_id, totals=res["totals"])
+    except Exception:
+        pass
+    return res
+
+
+@router.get("/overlay-bundles/applied/{run_id}")
+def applied_overlays(run_id: str) -> dict:
+    from ifrs9qdb.overlays import list_applied_overlays
+    return {"applied": _records(list_applied_overlays(_run(run_id)))}
+
+
+@router.delete("/overlay-bundles/applied/{run_id}/{overlay_id}")
+def remove_applied(run_id: str, overlay_id: str) -> dict:
+    """Remove an overlay's outputs. The model report is untouched."""
+    from ifrs9qdb.overlays import remove_applied_overlay
+    return remove_applied_overlay(_run(run_id), overlay_id)

@@ -67,6 +67,22 @@ def post(path: str, payload: dict):
     return r.json()
 
 
+def request(method: str, path: str, payload: dict | None = None):
+    """Any other verb. DELETE mostly, which the two helpers above do not cover."""
+    try:
+        r = requests.request(method, _url(path), json=payload, timeout=TIMEOUT)
+    except requests.exceptions.ConnectionError:
+        raise BackendError(
+            f"Cannot reach the backend at {BACKEND}. Start it with:\n\n"
+            "`uvicorn backend.main:app --reload --port 8000`"
+        )
+    except requests.exceptions.ReadTimeout:
+        raise BackendError("The backend took too long to respond.")
+    if not r.ok:
+        _raise(r)
+    return r.json()
+
+
 # ------------------------------------------------------------------ cached --
 @st.cache_data(ttl=300, show_spinner=False)
 def health() -> dict:
@@ -350,3 +366,40 @@ def edit_snapshot(label: str, relpath: str, text=None, rows=None,
 @st.cache_data(ttl=20, show_spinner="Comparing…")
 def diff_snapshots(a: str, b: str) -> dict:
     return get(f"/snapshots/{a}/diff/{b}")
+
+
+# ------------------------------------------------- overlay bundles ---------
+@st.cache_data(ttl=20, show_spinner=False)
+def overlay_bundles() -> dict:
+    return get("/overlay-bundles")
+
+
+def save_overlay_bundle(bundle: dict) -> dict:
+    return post("/overlay-bundles", bundle)
+
+
+def delete_overlay_bundle(overlay_id: str) -> dict:
+    return request("DELETE", f"/overlay-bundles/{overlay_id}")
+
+
+def set_bundle_status(overlay_id: str, status: str, by: str,
+                      reason: str) -> dict:
+    return post(f"/overlay-bundles/{overlay_id}/status",
+                {"status": status, "by": by, "reason": reason})
+
+
+def preview_bundle(overlay_id: str, run_id: str) -> dict:
+    return post(f"/overlay-bundles/{overlay_id}/preview/{run_id}", {})
+
+
+def apply_bundle(overlay_id: str, run_id: str) -> dict:
+    return post(f"/overlay-bundles/{overlay_id}/apply/{run_id}", {})
+
+
+@st.cache_data(ttl=15, show_spinner=False)
+def applied_overlays(run_id: str) -> dict:
+    return get(f"/overlay-bundles/applied/{run_id}")
+
+
+def remove_applied_overlay(run_id: str, overlay_id: str) -> dict:
+    return request("DELETE", f"/overlay-bundles/applied/{run_id}/{overlay_id}")
