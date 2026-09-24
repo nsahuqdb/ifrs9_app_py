@@ -1,0 +1,41 @@
+# Local and on-premise deployment.
+#
+#   pip wheel -w wheels ../ifrs9qdb_py     # vendor the engine first
+#   docker compose up --build              # -> http://localhost:8501
+#
+# Two services from one image: the API and the interface. They are separate
+# processes for the same reason they are separate in development - the
+# interface holds no calculation, and restarting one does not restart the
+# other. Runs live on a mounted volume so they survive a rebuild.
+services:
+  api:
+    build: .
+    image: ifrs9-app:latest
+    environment:
+      SERVICE: api
+      IFRS9_RUNS_DIR: /data/runs
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+
+  ui:
+    image: ifrs9-app:latest
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      SERVICE: ui
+      IFRS9_BACKEND: http://api:8000
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/data
+    restart: unless-stopped

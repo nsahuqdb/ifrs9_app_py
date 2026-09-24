@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ifrs9-app"
+version = "0.26.0"
+description = "IFRS 9 ECL application (QDB): FastAPI backend and Streamlit front end"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+authors = [{ name = "Qatar Development Bank", email = "frm@qdb.qa" }]
+
+# The engine is a dependency, not a copy. Install it from the ifrs9qdb_py
+# repository - `pip install -e ../ifrs9qdb_py` for development, or a built
+# wheel in the container.
+dependencies = [
+    "ifrs9qdb>=0.26",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "pydantic>=2.5",
+    "python-multipart>=0.0.9",
+    "streamlit>=1.36",
+    "plotly>=5.20",
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4", "httpx>=0.26"]
+
+[tool.setuptools.packages.find]
+include = ["backend*", "frontend*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
