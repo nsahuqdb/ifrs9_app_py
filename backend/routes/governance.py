@@ -300,3 +300,69 @@ def code_state() -> dict:
     """
     from ifrs9qdb.code_version import code_status
     return code_status()
+
+
+# ------------------------------------------------- maker-checker -----------
+class DecisionIn(BaseModel):
+    by: str
+    reason: str
+
+
+PROJECT_CONFIG = Path(os.environ.get("IFRS9_CONFIG",
+                                     Path(__file__).parent.parent.parent
+                                     / "config.yml"))
+
+
+@router.get("/runstatus/queue")
+def approval_queue_status() -> dict:
+    """What is awaiting a checker, and what has been decided.
+
+    A run with no status file is listed as ``unknown`` rather than hidden: it
+    is the one most worth seeing, because something wrote a run and did not
+    record that it needs approving.
+    """
+    from ifrs9qdb.run_status import (list_runs_decided,
+                                     list_runs_pending_approval)
+    return {"pending": _records(list_runs_pending_approval(RUNS_DIR)),
+            "decided": _records(list_runs_decided(RUNS_DIR))}
+
+
+@router.get("/runstatus/{run_id}")
+def run_status(run_id: str) -> dict:
+    from ifrs9qdb.run_status import maker_for_run, normalise_status, read_run_status
+    run = _run(run_id)
+    meta = read_run_status(run)
+    if meta is None:
+        return {"run_id": run_id, "status": "unknown", "meta": None,
+                "maker": maker_for_run(run),
+                "detail": ("This run has no reports/run_status.yml, so nothing "
+                           "records that it is awaiting approval.")}
+    return {"run_id": run_id, "status": normalise_status(meta.get("status")),
+            "meta": meta, "maker": maker_for_run(run), "detail": ""}
+
+
+def _decide(run_id: str, target: str, body: DecisionIn) -> dict:
+    from ifrs9qdb.run_status import transition_run
+    run = _run(run_id)
+    try:
+        meta = transition_run(run, target, body.by, body.reason,
+                              config_path=PROJECT_CONFIG,
+                              audit=AuditLog(run / "audit.jsonl"))
+    except PermissionError as exc:
+        # 403, not 400: this is a control refusing, not a malformed request.
+        raise HTTPException(403, str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "status": meta["status"], "meta": meta}
+
+
+@router.post("/runstatus/{run_id}/approve")
+def approve_status(run_id: str, body: DecisionIn) -> dict:
+    return _decide(run_id, "approved", body)
+
+
+@router.post("/runstatus/{run_id}/reject")
+def reject_status(run_id: str, body: DecisionIn) -> dict:
+    return _decide(run_id, "rejected", body)

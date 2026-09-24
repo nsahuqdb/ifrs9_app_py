@@ -296,3 +296,18 @@ def activate_calculator(version_id: str) -> dict:
 @st.cache_data(ttl=30, show_spinner=False)
 def code_status() -> dict:
     return get("/code/status")
+
+
+# ------------------------------------------------- maker-checker -----------
+@st.cache_data(ttl=20, show_spinner=False)
+def run_status(run_id: str) -> dict:
+    return get(f"/runstatus/{run_id}")
+
+
+@st.cache_data(ttl=20, show_spinner=False)
+def approval_queue_status() -> dict:
+    return get("/runstatus/queue")
+
+
+def decide_run(run_id: str, decision: str, by: str, reason: str) -> dict:
+    return post(f"/runstatus/{run_id}/{decision}", {"by": by, "reason": reason})
