@@ -403,3 +403,75 @@ def applied_overlays(run_id: str) -> dict:
 
 def remove_applied_overlay(run_id: str, overlay_id: str) -> dict:
     return request("DELETE", f"/overlay-bundles/applied/{run_id}/{overlay_id}")
+
+
+# --------------------------------------------------------- analytics ------
+@st.cache_data(ttl=600, show_spinner=False)
+def risk(run_id: str, by: str = "stage", portfolio: str | None = None) -> dict:
+    return get(f"/analytics/{run_id}/risk", by=by, portfolio=portfolio)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def collateral(run_id: str) -> dict:
+    return get(f"/analytics/{run_id}/collateral")
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def segments(run_id: str, rows: str = "portfolio", cols: str = "stage",
+             value: str = "ecl") -> list[dict]:
+    return get(f"/analytics/{run_id}/segments", rows=rows, cols=cols, value=value)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def staging_detail(run_id: str, dpd_threshold: float = 60) -> dict:
+    return get(f"/analytics/{run_id}/staging-detail", dpd_threshold=dpd_threshold)
+
+
+@st.cache_data(ttl=600, show_spinner="Matching the two books…")
+def migration(prev: str, curr: str, top: int = 12,
+              by_customer: bool = True) -> dict:
+    return get("/analytics/migration", prev=prev, curr=curr, top=top,
+               by_customer=by_customer)
+
+
+@st.cache_data(ttl=600, show_spinner="Attributing the movement…")
+def attribution(prev: str, curr: str, by: str = "portfolio",
+                exact: bool = False) -> dict:
+    return get("/analytics/attribution", prev=prev, curr=curr, by=by, exact=exact)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def scenarios(run_id: str) -> dict:
+    return get(f"/analytics/{run_id}/scenarios")
+
+
+def reweight(run_id: str, weights: dict, shift: float = 0.10) -> dict:
+    return post(f"/analytics/{run_id}/scenarios/reweight",
+                {"weights": weights, "shift": shift})
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def model_assumptions(run_id: str) -> dict:
+    return get(f"/analytics/{run_id}/model")
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def quality_detail(run_id: str, n: int = 200) -> dict:
+    return get(f"/analytics/{run_id}/quality-detail", n=n)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def customers(run_id: str, ids: str) -> dict:
+    return get(f"/analytics/{run_id}/customers", ids=ids)
+
+
+@st.cache_data(ttl=600, show_spinner="Repricing at each threshold…")
+def threshold_sweep(run_id: str, thresholds: str) -> dict:
+    return get(f"/stress/{run_id}/threshold-sweep", thresholds=thresholds)
+
+
+def mev_stress(run_id: str, cells: list, shock: dict, weight_mode: str,
+               weights: dict | None = None) -> dict:
+    return post(f"/stress/{run_id}/mev",
+                {"cells": cells, "shock": shock, "weight_mode": weight_mode,
+                 "weights": weights})

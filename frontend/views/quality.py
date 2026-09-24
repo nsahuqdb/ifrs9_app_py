@@ -3,7 +3,7 @@ import pandas as pd
 import streamlit as st
 
 import api
-from ui import caption, guard, metric_row, money, page_setup
+from ui import caption, fmt_table, guard, metric_row, money, page_setup
 
 run_id = st.session_state.get("run_id")
 if not run_id:
@@ -29,6 +29,9 @@ metric_row([
     ("Contracts affected", money(int(q["contracts"].sum()))),
 ])
 
+with guard():
+    detail = api.quality_detail(run_id)
+
 for sev, label in (("error", "Errors"), ("warn", "Warnings"), ("info", "Notes")):
     part = q[q["severity"] == sev]
     if len(part) == 0:
@@ -41,3 +44,16 @@ for sev, label in (("error", "Errors"), ("warn", "Warnings"), ("info", "Notes"))
             c1, c2 = st.columns(2)
             c1.metric("Exposure", money(r["exposure"]))
             c2.metric("ECL", money(r["ecl"]))
+
+            rows = pd.DataFrame(detail.get(r["check"], []))
+            if len(rows):
+                caption("Largest exposure first. A count is an argument; a "
+                        "list of contract ids is something somebody can act "
+                        "on.")
+                st.dataframe(
+                    fmt_table(rows, money_cols=("exposure", "ecl")),
+                    use_container_width=True, hide_index=True)
+                st.download_button(
+                    "Download these contracts", rows.to_csv(index=False),
+                    file_name=f"{run_id}_{r['check'].lower().replace(' ', '_')}.csv",
+                    mime="text/csv", key=f"dl_{r['check']}")

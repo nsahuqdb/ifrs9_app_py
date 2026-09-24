@@ -17,8 +17,8 @@ from .runs import _output_dir
 from ifrs9qdb.analytics import normalise
 from ifrs9qdb.inputs import load_engine_inputs
 from ifrs9qdb.stress import (
-    StressSpec, apply_stress, reverse_stress_all, roll_forward, tornado,
-    TORNADO_LEVERS,
+    StressSpec, apply_stress, mev_stress, reverse_stress_all, roll_forward,
+    staging_threshold, staging_threshold_sweep, tornado, TORNADO_LEVERS,
 )
 
 router = APIRouter(tags=["stress"])
@@ -122,3 +122,71 @@ def reverse(run_id: str, target_pct: float = 25.0) -> list[dict]:
                              StressSpec(name="reverse",
                                         portfolios=inputs.internal_portfolios()))
     return _records(out)
+
+
+# --------------------------------------------------- staging and macro -----
+@router.get("/stress/{run_id}/threshold-sweep")
+def threshold_sweep(run_id: str, thresholds: str = "0,15,30,45,60,75,90") -> dict:
+    """Reprice the book at each candidate Stage 2 DPD threshold.
+
+    Rarely a straight line: most of the book is staged by watchlist,
+    restructuring and contagion rather than by days past due, so lowering the
+    threshold moves far less than people expect. The reference row is whatever
+    policy the run itself used.
+    """
+    inputs, report = _load(run_id)
+    try:
+        values = [float(t) for t in thresholds.split(",") if t.strip()]
+    except ValueError as exc:
+        raise HTTPException(400, f"thresholds must be numbers: {exc}") from exc
+    if not values:
+        raise HTTPException(400, "give at least one threshold")
+
+    out = _output_dir(RUNS_DIR / run_id)
+    used = staging_threshold(out)
+    if used not in values:
+        values = sorted(values + [used])
+    sweep = staging_threshold_sweep(
+        inputs, report, thresholds=values, reference=used,
+        base=StressSpec(name="sweep", portfolios=inputs.internal_portfolios()))
+    if len(sweep) == 0:
+        raise HTTPException(400, "Nothing could be repriced for this run.")
+    return {"run_threshold": used, "rows": _records(sweep)}
+
+
+class MevIn(BaseModel):
+    """An edit to the macro path. Cells are set first, then shocks applied."""
+    cells: list[dict] = Field(default_factory=list,
+                              description="rows of {year, idx, value}")
+    shock: dict[str, float] = Field(default_factory=dict,
+                                    description="MEV index (1-based) -> delta")
+    weight_mode: str = "auto"
+    weights: dict[str, float] | None = None
+
+
+@router.post("/stress/{run_id}/mev")
+def mev(run_id: str, body: MevIn) -> dict:
+    """Reprice on a different macroeconomic path.
+
+    The whole PD chain is rebuilt from the run's own frozen config, so the
+    shift factors, the scenario curves and the monthly StPD all follow from
+    the new path as they would in a real run.
+    """
+    inputs, report = _load(run_id)
+    out = _output_dir(RUNS_DIR / run_id)
+    cells = pd.DataFrame(body.cells) if body.cells else None
+    try:
+        r = mev_stress(inputs, report, out, mev_new=cells,
+                       shock={int(k): v for k, v in body.shock.items()},
+                       weight_mode=body.weight_mode, weights=body.weights)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not r.get("ok"):
+        raise HTTPException(400, r.get("reason", "Could not reprice."))
+    return {
+        "before": r["before"], "after": r["after"], "delta": r["delta"],
+        "priced": r["priced"], "weight_mode": r["weight_mode"],
+        "by_portfolio": _records(r["by_portfolio"]),
+        "movers": _records(r["movers"].head(50)),
+        "path": _records(r["path"]),
+    }

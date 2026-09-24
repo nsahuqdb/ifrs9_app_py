@@ -7,17 +7,29 @@ functions.
 from __future__ import annotations
 
 import os
+from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
 from .runs import _output_dir
 from ifrs9qdb.analytics import (
-    concentration, customer_view, data_quality, ecl_walk, hhi, hhi_band,
-    hhi_equivalent_n, maturity_profile, normalise, run_profile,
-    stage2_triggers, staging_distribution, top_contributors,
+    collateral_analysis, concentration, coverage_bridge, customer_lookup,
+    customer_stage_migration, customer_view, data_quality,
+    data_quality_detail, dpd_by_stage, ead_runoff, ecl_factor_attribution,
+    ecl_walk, factor_attribution_diagnosis, factor_attribution_exact, hhi,
+    hhi_band, hhi_equivalent_n, lgd_floor_stats, lgd_vs_collateral,
+    maturity_profile, mev_forecast_table, mev_weights_table, migration_summary,
+    normalise, pd_profile, pd_term_structure, rating_migration, run_profile,
+    scenario_comparison, scenario_ecl_from_outputs, scenario_reweight,
+    scenario_sensitivity, scenario_severity, scenario_stage_split,
+    scenario_weights, segment_matrix, stage2_trigger_overlap, stage2_triggers,
+    stage3_drivers, stage_movers, staging_consistency, staging_distribution,
+    top_contributors,
 )
+from ifrs9qdb.analytics.model_view import config_used
 
 router = APIRouter(tags=["analytics"])
 RUNS_DIR = Path(os.environ.get("IFRS9_RUNS_DIR", "runs"))
@@ -109,3 +121,217 @@ def walk(prev: str, curr: str) -> dict:
         "residual": w["residual"], "counts": w["counts"],
         "steps": _records(w["steps"]),
     }
+
+
+# ------------------------------------------------------------- risk --------
+@lru_cache(maxsize=8)
+def _inputs(run_id: str):
+    """The engine inputs a run priced with, or None when they are not there.
+
+    Cached: reading the eighteen CSVs and building the PD and EAD curves takes
+    a few seconds, and the risk screen asks for them on every widget change.
+    """
+    from ifrs9qdb.inputs import load_engine_inputs
+
+    od = _output_dir(RUNS_DIR / run_id)
+    if od is None:
+        raise HTTPException(404, f"No run named {run_id!r}")
+    got = load_engine_inputs(od)
+    return got if got.ok else None
+
+
+def _run_output(run_id: str) -> Path:
+    od = _output_dir(RUNS_DIR / run_id)
+    if od is None:
+        raise HTTPException(404, f"No run named {run_id!r}")
+    return od
+
+
+@router.get("/analytics/{run_id}/risk")
+def risk(run_id: str, by: str = Query("stage"),
+         portfolio: str | None = None) -> dict:
+    """The risk parameters behind the provision, rather than the provision."""
+    if by not in ("stage", "portfolio", "rating", "account_type"):
+        raise HTTPException(400, "by must be stage, portfolio, rating or account_type")
+    d = _report(run_id)
+    inputs = _inputs(run_id)
+    return {
+        "pd": _records(pd_profile(d, by)),
+        "lgd_floor": _records(lgd_floor_stats(d)),
+        "lgd_scatter": _records(lgd_vs_collateral(d)),
+        "term_structure": _records(pd_term_structure(inputs, portfolio))
+        if inputs else [],
+        "ead_runoff": _records(ead_runoff(inputs)) if inputs else [],
+    }
+
+
+@router.get("/analytics/{run_id}/collateral")
+def collateral(run_id: str) -> dict:
+    """What the collateral tables hold, and what did not join.
+
+    An orphan allocation prices the contract as unsecured without erroring,
+    so the count matters more than the totals.
+    """
+    inputs = _inputs(run_id)
+    if inputs is None:
+        return {"available": False,
+                "reason": "This run's engine inputs could not be read."}
+    c = collateral_analysis(inputs)
+    if not c:
+        return {"available": False,
+                "reason": "This run has no collateral tables in its Output."}
+    return {"available": True, "by_type": _records(c.pop("by_type")), **c}
+
+
+@router.get("/analytics/{run_id}/segments")
+def segments(run_id: str, rows: str = Query("portfolio"),
+             cols: str = Query("stage"), value: str = Query("ecl")) -> list[dict]:
+    try:
+        return _records(segment_matrix(_report(run_id), rows, cols, value))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+# ---------------------------------------------------------- staging --------
+@router.get("/analytics/{run_id}/staging-detail")
+def staging_detail(run_id: str, dpd_threshold: float = 60) -> dict:
+    """Staging read from the outcome: what triggered it, and where it
+    disagrees with the rule that produced it."""
+    d = _report(run_id)
+    consistency = staging_consistency(d, dpd_threshold)
+    return {
+        "dpd_by_stage": _records(dpd_by_stage(d)),
+        "trigger_overlap": _records(stage2_trigger_overlap(d, dpd_threshold)),
+        "stage3_drivers": _records(stage3_drivers(d)),
+        "consistency": {k: v for k, v in consistency.items() if k != "findings"},
+        "findings": _records(consistency.get("findings")),
+    }
+
+
+@router.get("/analytics/migration")
+def migration(prev: str, curr: str, top: int = 12,
+              by_customer: bool = True) -> dict:
+    """Who moved, on rating and on stage, between two runs."""
+    a, b = _report(prev), _report(curr)
+    return {
+        "rating": _records(rating_migration(a, b, top=top,
+                                            by_customer=by_customer)),
+        "rating_summary": _records(migration_summary(a, b)),
+        "stage": _records(customer_stage_migration(a, b)),
+        "movers": _records(stage_movers(a, b).head(200)),
+    }
+
+
+# ------------------------------------------------------ attribution --------
+@router.get("/analytics/attribution")
+def attribution(prev: str, curr: str, by: str = Query("portfolio"),
+                exact: bool = False) -> dict:
+    """Why the provision moved.
+
+    ``exact`` reprices every contract through the engine, which takes a
+    second or two on a full book; the default indicative split is instant.
+    """
+    a, b = _report(prev), _report(curr)
+    try:
+        bridge = coverage_bridge(a, b, by)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    out = {"indicative": _records(ecl_factor_attribution(a, b)),
+           "bridge": _records(bridge)}
+    if not exact:
+        return out
+
+    ia, ib = _inputs(prev), _inputs(curr)
+    res = factor_attribution_exact(ia, a, ib, b) if ia and ib else {}
+    if not res:
+        out["exact"] = None
+        out["exact_reason"] = (factor_attribution_diagnosis(ia, a, ib, b)
+                               or "The exact attribution could not be built.")
+        return out
+    out["exact"] = {
+        "effects": _records(res["effects"]),
+        **{k: res[k] for k in ("covered", "uncovered", "opening", "closing",
+                               "contracts", "residual")},
+    }
+    return out
+
+
+# -------------------------------------------------------- scenarios --------
+@router.get("/analytics/{run_id}/scenarios")
+def scenarios(run_id: str) -> dict:
+    """The five per-scenario runs read back, ordered by severity."""
+    out_dir = _run_output(run_id)
+    ecl = scenario_ecl_from_outputs(out_dir)
+    if not ecl.get("ok"):
+        return {"available": False, "reason": ecl.get("reason")}
+    severity = scenario_severity(out_dir)
+    return {
+        "available": True,
+        "weighted": ecl.get("weighted"),
+        "files": ecl.get("files"),
+        "unreadable": ecl.get("unreadable"),
+        "comparison": _records(scenario_comparison(ecl["ecl"], severity)),
+        "stage_split": _records(scenario_stage_split(out_dir)),
+    }
+
+
+class Reweight(BaseModel):
+    weights: dict[str, float]
+    shift: float = 0.10
+
+
+@router.post("/analytics/{run_id}/scenarios/reweight")
+def reweight(run_id: str, body: Reweight) -> dict:
+    """What the provision would be under a different set of weights."""
+    out_dir = _run_output(run_id)
+    ecl = scenario_ecl_from_outputs(out_dir)
+    if not ecl.get("ok"):
+        raise HTTPException(400, ecl.get("reason", "No scenario reports"))
+    got = scenario_reweight(ecl["ecl"], body.weights)
+    if got is None:
+        raise HTTPException(400, "None of those weights name a priced scenario")
+    return {
+        "total": got["total"],
+        "normalised_weights": got["normalised_weights"],
+        "missing": got["missing"],
+        "booked": ecl.get("weighted"),
+        "sensitivity": _records(
+            scenario_sensitivity(ecl["ecl"], body.weights, body.shift)),
+    }
+
+
+# ------------------------------------------------------- the model ---------
+@router.get("/analytics/{run_id}/model")
+def model(run_id: str) -> dict:
+    """What the run froze: its scenarios, weights and macro forecast."""
+    out_dir = _run_output(run_id)
+    cu = config_used(out_dir)
+    if cu is None:
+        return {"available": False,
+                "reason": "This run has no frozen config (config_used), so "
+                          "the assumptions behind it cannot be shown."}
+    return {
+        "available": True,
+        "severity": _records(scenario_severity(out_dir)),
+        "weights": _records(scenario_weights(cu["config"])),
+        "mev_forecast": _records(mev_forecast_table(out_dir)),
+        "mev_weights": _records(mev_weights_table(out_dir)),
+    }
+
+
+# ------------------------------------------------- quality and lookup ------
+@router.get("/analytics/{run_id}/quality-detail")
+def quality_detail(run_id: str, n: int = 200) -> dict:
+    """The contracts behind each finding, largest exposure first."""
+    return {k: _records(v)
+            for k, v in data_quality_detail(_report(run_id), n).items()}
+
+
+@router.get("/analytics/{run_id}/customers")
+def customers(run_id: str, ids: str = Query(...)) -> dict:
+    """Look several customers up at once. Ids may be pasted any way."""
+    got = customer_lookup(_report(run_id), ids)
+    if not got:
+        raise HTTPException(400, "No customer ids were given")
+    return {"found": _records(got["found"]), "missing": got["missing"]}

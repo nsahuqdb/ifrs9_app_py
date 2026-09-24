@@ -187,11 +187,15 @@ def fmt_table(df: pd.DataFrame, money_cols=(), pct_cols=(), dp: int = 0) -> pd.D
 
 # ------------------------------------------------------------------ charts --
 def bar(df: pd.DataFrame, x: str, y: str, *, horizontal=True, diverging=False,
-        title=None, height=None, fmt="%{x:,.0f}"):
+        title=None, height=None, fmt="%{x:,.0f}", dp: int = 0):
     """A bar chart with the app's palette.
 
     Diverging colours increases red and decreases green, which is the reading
     people expect for a provision.
+
+    ``dp`` is the precision of the value label on each bar. It defaults to 0
+    because most of these are currency, but a PD of 0.065 labelled "0" is
+    worse than no label at all.
     """
     import plotly.express as px
 
@@ -209,7 +213,7 @@ def bar(df: pd.DataFrame, x: str, y: str, *, horizontal=True, diverging=False,
     # reading it off the bar, and these are numbers people quote.
     fig.update_traces(
         marker_color=colours, marker_line_width=0,
-        text=[f"{v:,.0f}" for v in d[y]], textposition="outside",
+        text=[f"{v:,.{dp}f}" for v in d[y]], textposition="outside",
         textfont=dict(size=11, color="#4a5162"), cliponaxis=False,
         hovertemplate=f"%{{y}}<br>{fmt}<extra></extra>")
     fig.update_layout(
@@ -218,7 +222,7 @@ def bar(df: pd.DataFrame, x: str, y: str, *, horizontal=True, diverging=False,
         plot_bgcolor="white", paper_bgcolor="white",
         title=dict(font=dict(size=13, color="#2a2f3a")),
         xaxis=dict(showgrid=True, gridcolor="#f4f2f7", zerolinecolor="#ded9e6",
-                   tickformat=",", showline=False),
+                   tickformat=f",.{dp}f" if dp else ",", showline=False),
         yaxis=dict(showgrid=False, tickfont=dict(size=11.5)),
         showlegend=False, font=dict(size=12, color="#4a5162"), bargap=0.28,
     )

@@ -16,12 +16,39 @@ st.markdown("""
    still be there.
 2. **Read the validation.** A run that completes is not the same as a run that
    is safe to sign. 114 checks say which it is.
-3. **Look at the portfolio.** Overview, staging, concentration and data
-   quality all read the same priced report.
-4. **Compare.** Movement against the previous quarter, and reconciliation
-   against a reference run.
+3. **Look at the portfolio.** Overview, staging, concentration, risk
+   parameters, scenarios and data quality all read the same priced report.
+4. **Compare.** Movement against the previous quarter, attribution and
+   migration to say why it moved, and reconciliation against a reference run.
 5. **Overlay, then approve.** Management overlays sit on top of a completed
    run rather than inside it, so the engine's number stays visible underneath.
+
+## Which page answers which question
+
+| Question | Page |
+| --- | --- |
+| How much, and where does it sit? | Overview, Staging, Concentration |
+| What is it made of? | Risk parameters |
+| What would a worse world cost? | Scenarios, Macro path |
+| How much did it move? | Movement |
+| *Why* did it move? | Attribution |
+| Who moved? | Migration |
+| What assumptions produced it? | Model assumptions |
+| What would a different policy cost? | Staging threshold, Stress testing |
+
+**Attribution comes in two forms.** The default splits the move into
+exposure, PD and LGD by multiplying them out — which is not what the engine
+does, so the three effects are rescaled to fit the actual move and the result
+is marked indicative. Turning on *Reprice through the engine* instead prices
+each contract five times, substituting one ingredient at a time, so the
+effects sum to the move exactly and the residual is zero.
+
+**The macro path rebuilds the whole PD chain** from the config the run froze,
+with the forecast edited. The scenario-weight switch on that page is not a
+detail: the internal weights are derived from the first forecast years of the
+same matrix, so editing non-oil GDP moves the weights *and* the curves, and
+the two can point in opposite directions. Holding the weights isolates the PD
+effect.
 
 ## Where the numbers come from
 
