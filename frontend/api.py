@@ -475,3 +475,11 @@ def mev_stress(run_id: str, cells: list, shock: dict, weight_mode: str,
     return post(f"/stress/{run_id}/mev",
                 {"cells": cells, "shock": shock, "weight_mode": weight_mode,
                  "weights": weights})
+
+
+def whatif_match(run_id: str, rules: list) -> dict:
+    return post(f"/stress/{run_id}/whatif/match", {"rules": rules})
+
+
+def whatif(run_id: str, rules: list) -> dict:
+    return post(f"/stress/{run_id}/whatif", {"rules": rules})

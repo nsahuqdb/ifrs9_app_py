@@ -17,8 +17,9 @@ from .runs import _output_dir
 from ifrs9qdb.analytics import normalise
 from ifrs9qdb.inputs import load_engine_inputs
 from ifrs9qdb.stress import (
-    StressSpec, apply_stress, mev_stress, reverse_stress_all, roll_forward,
-    staging_threshold, staging_threshold_sweep, tornado, TORNADO_LEVERS,
+    Rule, StressSpec, apply_stress, match_rules, mev_stress, reprice_rules,
+    reverse_stress_all, roll_forward, staging_threshold,
+    staging_threshold_sweep, tornado, TORNADO_LEVERS,
 )
 
 router = APIRouter(tags=["stress"])
@@ -189,4 +190,62 @@ def mev(run_id: str, body: MevIn) -> dict:
         "by_portfolio": _records(r["by_portfolio"]),
         "movers": _records(r["movers"].head(50)),
         "path": _records(r["path"]),
+    }
+
+
+class RuleIn(BaseModel):
+    """One what-if rule: who it applies to, and what changes for them."""
+    label: str = "Rule 1"
+    customers: list[str] = Field(default_factory=list)
+    portfolios: list[str] = Field(default_factory=list)
+    stages: list[int] = Field(default_factory=list)
+    stage_to: int | None = None
+    rating_notches: int = 0
+    collateral_pct: float = 100.0
+    exposure_pct: float = 100.0
+    maturity_years: float = 0.0
+    pd_scenario: str = ""
+
+
+class RulesIn(BaseModel):
+    rules: list[RuleIn] = Field(default_factory=list)
+
+
+@router.post("/stress/{run_id}/whatif/match")
+def whatif_match(run_id: str, body: RulesIn) -> dict:
+    """Who each rule claims, and which contracts two of them claim.
+
+    Separate from applying them, so a conflict can be seen and resolved before
+    anything is priced.
+    """
+    _, report = _load(run_id)
+    if not body.rules:
+        raise HTTPException(400, "give at least one rule")
+    m = match_rules(report, [Rule(**r.model_dump()) for r in body.rules])
+    assignment = m["assignment"]
+    labels = [r.label for r in body.rules]
+    counts = [{"rule": labels[j],
+               "contracts": int((assignment == j).fillna(False).sum())}
+              for j in range(len(labels))]
+    return {"matched": int(assignment.notna().sum()),
+            "contracts": int(len(report)),
+            "by_rule": counts,
+            "conflicts": _records(m["conflicts"])}
+
+
+@router.post("/stress/{run_id}/whatif")
+def whatif(run_id: str, body: RulesIn) -> dict:
+    """Apply the rules and reprice. Rules do not stack."""
+    inputs, report = _load(run_id)
+    if not body.rules:
+        raise HTTPException(400, "give at least one rule")
+    r = reprice_rules(inputs, report, [Rule(**x.model_dump()) for x in body.rules])
+    if not r.get("ok"):
+        raise HTTPException(400, r.get("reason", "Could not reprice."))
+    return {
+        "before": r["before"], "after": r["after"], "delta": r["delta"],
+        "priced": r["priced"], "matched": r["matched"],
+        "by_rule": _records(r["by_rule"]),
+        "conflicts": _records(r["conflicts"]),
+        "movers": _records(r["movers"].head(50)),
     }

@@ -270,3 +270,45 @@ class TestStagingThresholdAndMacro:
         r = client.post(f"/api/stress/{RUN}/mev",
                         json={"weight_mode": "whatever_sounds_right"})
         assert r.status_code == 400
+
+
+class TestWhatIf:
+    """Rules do not stack: the conflict path is the one worth testing."""
+
+    @needs_run
+    def test_matching_reports_who_each_rule_claims(self):
+        r = client.post(f"/api/stress/{RUN}/whatif/match", json={"rules": [
+            {"label": "Off BS", "portfolios": ["Off BS"], "stage_to": 2}]})
+        body = r.json()
+        assert body["matched"] > 0
+        assert body["by_rule"][0]["rule"] == "Off BS"
+        assert body["conflicts"] == []
+
+    @needs_run
+    def test_two_rules_claiming_one_contract_conflict(self):
+        body = client.post(f"/api/stress/{RUN}/whatif/match", json={"rules": [
+            {"label": "A", "portfolios": ["Off BS"], "stage_to": 2},
+            {"label": "B", "stages": [1], "collateral_pct": 50}]}).json()
+        assert body["conflicts"], "an overlap must be reported, not resolved"
+        assert " + " in body["conflicts"][0]["rules"]
+
+    @needs_run
+    def test_conflicted_contracts_are_not_repriced(self):
+        body = client.post(f"/api/stress/{RUN}/whatif", json={"rules": [
+            {"label": "A", "portfolios": ["Off BS"], "stage_to": 2},
+            {"label": "B", "stages": [1], "collateral_pct": 50}]}).json()
+        claimed = sum(r["contracts"] for r in body["by_rule"])
+        assert claimed == body["matched"]
+        assert len(body["conflicts"]) > 0
+
+    @needs_run
+    def test_a_rule_that_changes_nothing_moves_nothing(self):
+        """The baseline is priced by the same function as the what-if."""
+        body = client.post(f"/api/stress/{RUN}/whatif", json={"rules": [
+            {"label": "no change", "portfolios": ["Off BS"]}]}).json()
+        assert body["delta"] == pytest.approx(0.0, abs=1e-6)
+
+    @needs_run
+    def test_no_rules_is_refused(self):
+        assert client.post(f"/api/stress/{RUN}/whatif",
+                           json={"rules": []}).status_code == 400
