@@ -312,3 +312,105 @@ class TestWhatIf:
     def test_no_rules_is_refused(self):
         assert client.post(f"/api/stress/{RUN}/whatif",
                            json={"rules": []}).status_code == 400
+
+
+class TestDistributionsAndFlows:
+    @needs_run
+    def test_the_profiles_over_every_contract_conserve_the_book(self):
+        """Days past due and ticket size are defined for every contract, so a
+        band that lost one would be losing it silently."""
+        d = client.get(f"/api/analytics/{RUN}/distributions").json()
+        n = client.get(f"/api/analytics/{RUN}/summary").json()["contracts"]
+        for name in ("dpd", "exposure"):
+            assert sum(r["contracts"] for r in d[name]) == n, name
+
+    @needs_run
+    def test_the_parameter_profiles_band_everything_they_cover(self):
+        """PD and LGD are not populated for every contract, so these band
+        fewer — but never zero, and never a suspiciously round fraction: a
+        value sitting exactly on the top edge used to fall out of the last
+        bucket, which is the one anybody reading the chart wants."""
+        d = client.get(f"/api/analytics/{RUN}/distributions").json()
+        n = client.get(f"/api/analytics/{RUN}/summary").json()["contracts"]
+        for name in ("lgd", "pd"):
+            got = sum(r["contracts"] for r in d[name])
+            assert 0 < got <= n, name
+            assert got > 0.5 * n, f"{name} banded only {got} of {n}"
+
+    @needs_run
+    def test_pd_rises_with_the_rating(self):
+        """A kink here means a rating or PD-curve mapping broke."""
+        rows = client.get(f"/api/analytics/{RUN}/distributions").json()["pd_by_rating"]
+        if len(rows) < 3:
+            pytest.skip("too few rated grades to judge")
+        assert all(r["pd_weighted"] is not None for r in rows)
+
+    @needs_run
+    def test_the_lorenz_curve_ends_at_a_hundred(self):
+        lz = client.get(f"/api/analytics/{RUN}/distributions").json()["lorenz"]
+        assert lz and lz[-1]["pct_ecl"] == pytest.approx(100.0, abs=1e-6)
+
+    @needs_pair
+    def test_the_flows_are_the_contracts_that_arrived_or_left(self):
+        prev, curr = PAIR
+        f = client.get("/api/analytics/flows",
+                       params={"prev": prev, "curr": curr}).json()
+        labels = {r["flow"] for r in f["flows"]}
+        assert labels == {"New business", "Derecognised"}
+        assert all(r["contracts"] > 0 for r in f["flows"])
+
+    @needs_pair
+    def test_every_drill_down_ties_to_its_step(self):
+        """The walk has no plug, so neither can the detail behind it."""
+        prev, curr = PAIR
+        f = client.get("/api/analytics/flows",
+                       params={"prev": prev, "curr": curr, "n": 10**9}).json()
+        w = client.get("/api/analytics/walk",
+                       params={"prev": prev, "curr": curr}).json()
+        steps = {s["label"]: s["amount"] for s in w["steps"]}
+        for label, rows in f["detail"].items():
+            if not rows:
+                continue
+            assert sum(r["amount"] for r in rows) == pytest.approx(
+                steps[label], abs=1e-4), label
+
+    @needs_pair
+    def test_the_segment_movement_sums_to_the_whole_move(self):
+        prev, curr = PAIR
+        f = client.get("/api/analytics/flows",
+                       params={"prev": prev, "curr": curr}).json()
+        a = client.get(f"/api/analytics/{prev}/summary").json()
+        b = client.get(f"/api/analytics/{curr}/summary").json()
+        assert sum(r["change"] for r in f["by_segment"]) == pytest.approx(
+            b["ecl"] - a["ecl"], abs=1e-4)
+
+    @needs_pair
+    def test_an_unknown_breakdown_is_refused(self):
+        prev, curr = PAIR
+        r = client.get("/api/analytics/flows",
+                       params={"prev": prev, "curr": curr, "by": "sector"})
+        assert r.status_code == 400
+
+
+class TestPackageComparison:
+    @needs_run
+    def test_a_harsher_package_costs_more(self):
+        """Priced together on identical inputs, so the ranking means something."""
+        rows = client.post(f"/api/stress/{RUN}/compare", json={"packages": [
+            {"name": "mild", "pd_multiplier": 1.25},
+            {"name": "severe", "pd_multiplier": 2.0}]}).json()
+        by = {r["name"]: r for r in rows}
+        assert by["severe"]["delta"] > by["mild"]["delta"] > 0
+        assert by["severe"]["before"] == pytest.approx(by["mild"]["before"])
+
+    @needs_run
+    def test_the_ranking_puts_the_worst_first(self):
+        rows = client.post(f"/api/stress/{RUN}/compare", json={"packages": [
+            {"name": "mild", "pd_multiplier": 1.1},
+            {"name": "severe", "pd_multiplier": 3.0}]}).json()
+        assert rows[0]["name"] == "severe"
+
+    @needs_run
+    def test_no_packages_is_refused(self):
+        assert client.post(f"/api/stress/{RUN}/compare",
+                           json={"packages": []}).status_code == 400

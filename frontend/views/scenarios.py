@@ -24,6 +24,20 @@ with guard():
 
 if not s.get("available"):
     st.info(s.get("reason", "This run wrote no per-scenario reports."))
+    caption("The five reports are the record of what the run priced. Where "
+            "they are missing, the PD chain can be rebuilt from the config "
+            "the run froze and the book repriced on each scenario in turn — "
+            "a reconstruction rather than a record, and slower, but it "
+            "answers the same question.")
+    if st.button("Rebuild from the frozen config", type="primary"):
+        with guard():
+            r = api.scenarios_rebuild(run_id)
+        rebuilt = pd.DataFrame(r["comparison"])
+        bar(rebuilt, "scenario", "ecl", title="Provision by scenario (rebuilt)")
+        st.dataframe(fmt_table(rebuilt, money_cols=("ecl",),
+                               pct_cols=("vs_base_pct",)),
+                     use_container_width=True, hide_index=True)
+        st.info(r["note"], icon="ℹ️")
     st.stop()
 
 comp = pd.DataFrame(s["comparison"])

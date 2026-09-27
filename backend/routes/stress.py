@@ -17,8 +17,8 @@ from .runs import _output_dir
 from ifrs9qdb.analytics import normalise
 from ifrs9qdb.inputs import load_engine_inputs
 from ifrs9qdb.stress import (
-    Rule, StressSpec, apply_stress, match_rules, mev_stress, reprice_rules,
-    reverse_stress_all, roll_forward, staging_threshold,
+    Rule, StressSpec, apply_stress, compare_packages, match_rules, mev_stress,
+    reprice_rules, reverse_stress_all, roll_forward, staging_threshold,
     staging_threshold_sweep, tornado, TORNADO_LEVERS,
 )
 
@@ -249,3 +249,30 @@ def whatif(run_id: str, body: RulesIn) -> dict:
         "conflicts": _records(r["conflicts"]),
         "movers": _records(r["movers"].head(50)),
     }
+
+
+class PackagesIn(BaseModel):
+    packages: list[SpecIn] = Field(default_factory=list)
+
+
+@router.post("/stress/{run_id}/compare")
+def compare(run_id: str, body: PackagesIn) -> list[dict]:
+    """Several stress packages side by side, priced through the same engine.
+
+    One package answers "what if". Several answer "which of these hurts most",
+    which is the question a committee actually puts, and pricing them together
+    keeps them on identical inputs.
+    """
+    inputs, report = _load(run_id)
+    if not body.packages:
+        raise HTTPException(400, "give at least one package")
+    specs = []
+    for p in body.packages:
+        s = StressSpec(**p.model_dump())
+        if not s.portfolios:
+            s.portfolios = inputs.internal_portfolios()
+        specs.append(s)
+    out = compare_packages(inputs, report, specs)
+    if len(out) == 0:
+        raise HTTPException(400, "None of those packages could be priced.")
+    return _records(out)

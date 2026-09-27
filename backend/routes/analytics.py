@@ -29,6 +29,11 @@ from ifrs9qdb.analytics import (
     stage3_drivers, stage_movers, staging_consistency, staging_distribution,
     top_contributors,
 )
+from ifrs9qdb.analytics import (  # noqa: F401  -- distributions and flows
+    collateral_bands, dpd_profile, ecl_walk_detail, exposure_bands,
+    flow_profile, lgd_distribution, lorenz_curve, movement_by,
+    pd_by_rating, pd_distribution, vintage_profile,
+)
 from ifrs9qdb.analytics.model_view import config_used
 
 router = APIRouter(tags=["analytics"])
@@ -335,3 +340,72 @@ def customers(run_id: str, ids: str = Query(...)) -> dict:
     if not got:
         raise HTTPException(400, "No customer ids were given")
     return {"found": _records(got["found"]), "missing": got["missing"]}
+
+
+# ---------------------------------------------------- distributions -------
+@router.get("/analytics/{run_id}/distributions")
+def distributions(run_id: str) -> dict:
+    """The shape of the book, one profile per question.
+
+    Each of these is a histogram somebody asks for by name at a review, and
+    each carries its own conserved total: every contract lands in exactly one
+    band, so a band that is missing is zero rather than absent.
+    """
+    d = _report(run_id)
+    return {
+        "dpd": _records(dpd_profile(d)),
+        "exposure": _records(exposure_bands(d)),
+        "collateral": _records(collateral_bands(d)),
+        "vintage": _records(vintage_profile(d)),
+        "lgd": _records(lgd_distribution(d)),
+        "pd": _records(pd_distribution(d)),
+        "pd_by_rating": _records(pd_by_rating(d)),
+        "lorenz": _records(lorenz_curve(d, level="customer")),
+    }
+
+
+@router.get("/analytics/flows")
+def flows(prev: str, curr: str, by: str = Query("portfolio"),
+          n: int = 25) -> dict:
+    """Arrivals, departures, and the detail behind each step of the walk.
+
+    The walk says the provision moved; this says which contracts carried the
+    movement. Every drill-down sums back to its own step, which is asserted in
+    the package's tests rather than hoped for.
+    """
+    if by not in ("portfolio", "stage", "rating", "account_type"):
+        raise HTTPException(400, "by must be portfolio, stage, rating or account_type")
+    a, b = _report(prev), _report(curr)
+    detail = ecl_walk_detail(a, b, n=n)
+    return {
+        "flows": _records(flow_profile(a, b)),
+        "by_segment": _records(movement_by(a, b, by)),
+        "detail": {label: _records(frame) for label, frame in detail.items()},
+    }
+
+
+@router.post("/analytics/{run_id}/scenarios/rebuild")
+def scenarios_rebuild(run_id: str) -> dict:
+    """Price each scenario from the run's frozen config, one at a time.
+
+    Only for a run that did not write its per-scenario reports. Where it did,
+    ``/scenarios`` reads them and cannot disagree with the run; this rebuilds
+    the PD chain instead, which is slower and is a reconstruction rather than
+    a record.
+    """
+    from ifrs9qdb.inputs import load_engine_inputs
+    from ifrs9qdb.stress import scenario_ecl_single_run
+
+    out_dir = _run_output(run_id)
+    inputs = load_engine_inputs(out_dir)
+    r = scenario_ecl_single_run(inputs, _report(run_id), out_dir)
+    if not r.get("ok"):
+        raise HTTPException(400, r.get("reason", "Could not rebuild the curves."))
+    severity = scenario_severity(out_dir)
+    return {
+        "rebuilt": True,
+        "comparison": _records(scenario_comparison(r["ecl"], severity)),
+        "note": "Rebuilt from the run's frozen config, not read from its "
+                "outputs. No weighted total: the run weights its marginal PDs "
+                "before the curves are built, not its finished provisions.",
+    }

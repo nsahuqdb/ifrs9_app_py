@@ -483,3 +483,21 @@ def whatif_match(run_id: str, rules: list) -> dict:
 
 def whatif(run_id: str, rules: list) -> dict:
     return post(f"/stress/{run_id}/whatif", {"rules": rules})
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def distributions(run_id: str) -> dict:
+    return get(f"/analytics/{run_id}/distributions")
+
+
+@st.cache_data(ttl=600, show_spinner="Matching the two books…")
+def flows(prev: str, curr: str, by: str = "portfolio", n: int = 25) -> dict:
+    return get("/analytics/flows", prev=prev, curr=curr, by=by, n=n)
+
+
+def scenarios_rebuild(run_id: str) -> dict:
+    return post(f"/analytics/{run_id}/scenarios/rebuild", {})
+
+
+def compare_packages(run_id: str, packages: list) -> list:
+    return post(f"/stress/{run_id}/compare", {"packages": packages})
