@@ -151,13 +151,13 @@ def queue() -> list[dict]:
 @router.get("/reconcile/{run_id}/against/{reference_id}")
 def reconcile(run_id: str, reference_id: str) -> dict:
     """Compare a run against another, file by file and on the provision."""
-    from ...reconcile import reconcile_report
+    from ifrs9qdb.reconcile import reconcile_report
     return reconcile_report(_run(run_id), _run(reference_id))
 
 
 @router.get("/summary/{run_id}")
 def output_summary(run_id: str) -> list[dict]:
-    from ...reconcile import summarise_output_dir
+    from ifrs9qdb.reconcile import summarise_output_dir
     return _records(summarise_output_dir(_run(run_id)))
 
 
@@ -168,13 +168,30 @@ class ExportIn(BaseModel):
 @router.post("/export/{run_id}")
 def export(run_id: str, req: ExportIn) -> dict:
     """Package a run for handover or archive."""
-    from ...reconcile import build_export
+    from ifrs9qdb.reconcile import build_export
     run_dir = _run(run_id)
     dest = run_dir / f"{run_id}_export.zip"
     res = build_export(run_dir, dest, include_inputs=req.include_inputs)
     AuditLog(run_dir / "audit.jsonl").record(
         "export", f"packaged {res['files']} files", zip=res["zip"])
     return res
+
+
+@router.get("/export/{run_id}/download")
+def export_download(run_id: str):
+    """Hand the packaged zip back over HTTP.
+
+    The app usually runs on a server, where telling somebody the path to a
+    file on that server is not a handover.
+    """
+    from fastapi.responses import FileResponse
+
+    run_dir = _run(run_id)
+    dest = run_dir / f"{run_id}_export.zip"
+    if not dest.is_file():
+        raise HTTPException(404, "Package the run first.")
+    return FileResponse(dest, media_type="application/zip",
+                        filename=dest.name)
 
 
 # ------------------------------------------- accepted findings -------------

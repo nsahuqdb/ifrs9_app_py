@@ -81,11 +81,23 @@ with tab_exp:
         with guard():
             res = api.export_run(run_id, inc)
         st.success(f"{res['files']} files, {res['bytes']/1e6:.1f} MB", icon="✅")
-        st.code(res["zip"], language=None)
-        caption("Contains the LIC input files, the report, the frozen "
-                "configuration with its hashes, the validation result, the "
-                "approvals and the audit trail — plus a README explaining what "
-                "each is for.")
+        caption("One folder named for the run, so unzipping gives a "
+                "self-contained tree: the LIC input files and the report, the "
+                "frozen configuration with its hashes, every report the run "
+                "wrote, any overrides applied, the approvals and the audit "
+                "trail. Plus a README naming each section, the code at run "
+                "time and at packaging time, and a one-page approval summary "
+                "— a reviewer wants to know who signed this at a glance, not "
+                "after a hunt through three YAML files.")
+        try:
+            data = api.export_download(run_id)
+        except api.BackendError:
+            data = None
+        if data:
+            st.download_button("Download the package", data,
+                               file_name=f"{run_id}_export.zip",
+                               mime="application/zip", type="primary")
+        st.caption(f"On the server at `{res['zip']}`")
         if res.get("skipped"):
             st.info("Not present: " + ", ".join(res["skipped"])
                     + ". A missing approval or validation file means that step "

@@ -511,3 +511,11 @@ def assistant_status() -> dict:
 def assistant_ask(question: str, run_id: str | None, history: list) -> dict:
     return post("/assistant/ask",
                 {"question": question, "run_id": run_id, "history": history})
+
+
+def export_download(run_id: str) -> bytes:
+    """The packaged zip itself, so a server deployment can hand it over."""
+    import requests as _r
+    resp = _r.get(_url(f"/export/{run_id}/download"), timeout=TIMEOUT)
+    _raise(resp)
+    return resp.content

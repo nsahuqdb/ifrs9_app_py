@@ -178,3 +178,70 @@ class TestOverlayBundles:
         r = client.get(f"/api/overlay-bundles/applied/{runs[0]['run_id']}")
         assert r.status_code == 200
         assert "applied" in r.json()
+
+
+class TestReconcileAndExport:
+    """These three went unnoticed for a while because nothing called them.
+
+    The page that uses them rendered fine — it only calls them on a button
+    press — so a render check passed while every one raised ImportError at the
+    first click. A test that loads a page is not a test that the page works.
+    """
+
+    RUNS = [r["run_id"] for r in client.get("/api/runs").json()
+            if r.get("has_report")]
+
+    @pytest.mark.skipif(not RUNS, reason="set IFRS9_RUNS_DIR")
+    def test_the_output_summary_returns_rows(self):
+        r = client.get(f"/api/summary/{self.RUNS[0]}")
+        assert r.status_code == 200
+        assert len(r.json()) > 0
+
+    @pytest.mark.skipif(len(RUNS) < 2, reason="two runs are needed")
+    def test_reconciling_two_runs_compares_every_file(self):
+        a, b = self.RUNS[0], self.RUNS[1]
+        r = client.get(f"/api/reconcile/{a}/against/{b}")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["files_compared"] > 0
+        assert len(body["files"]) == body["files_compared"]
+
+    @pytest.mark.skipif(not RUNS, reason="set IFRS9_RUNS_DIR")
+    def test_a_run_reconciles_against_itself_perfectly(self):
+        """The control. If a run does not match itself, the comparison is
+        measuring the comparison."""
+        run = self.RUNS[0]
+        body = client.get(f"/api/reconcile/{run}/against/{run}").json()
+        assert body["files_matching"] == body["files_compared"]
+
+    @pytest.mark.skipif(not RUNS, reason="set IFRS9_RUNS_DIR")
+    def test_packaging_a_run_produces_a_zip_that_can_be_downloaded(self):
+        """The app usually runs on a server, where naming a path on that
+        server is not a handover."""
+        run = self.RUNS[0]
+        made = client.post(f"/api/export/{run}", json={"include_inputs": False})
+        assert made.status_code == 200
+        assert made.json()["files"] > 0
+
+        got = client.get(f"/api/export/{run}/download")
+        assert got.status_code == 200
+        assert got.headers["content-type"] == "application/zip"
+        assert len(got.content) > 1000
+
+    @pytest.mark.skipif(not RUNS, reason="set IFRS9_RUNS_DIR")
+    def test_the_package_is_one_self_contained_folder(self):
+        import io
+        import zipfile
+
+        run = self.RUNS[0]
+        client.post(f"/api/export/{run}", json={"include_inputs": False})
+        raw = client.get(f"/api/export/{run}/download").content
+        with zipfile.ZipFile(io.BytesIO(raw)) as z:
+            names = z.namelist()
+        assert {n.split("/")[0] for n in names} == {run}
+        assert any(n.endswith("README.txt") for n in names)
+        assert any(n.endswith("approval_summary.txt") for n in names)
+
+    def test_downloading_before_packaging_says_so(self):
+        r = client.get("/api/export/run_that_does_not_exist/download")
+        assert r.status_code == 404
