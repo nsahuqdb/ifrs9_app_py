@@ -180,6 +180,8 @@ pages = {
                 icon=":material/public:"),
     ],
     "Help": [
+        st.Page("frontend/views/assistant.py", title="Assistant",
+                icon=":material/forum:"),
         st.Page("frontend/views/help.py", title="How this works",
                 icon=":material/help:"),
     ],

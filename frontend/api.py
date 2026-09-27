@@ -501,3 +501,13 @@ def scenarios_rebuild(run_id: str) -> dict:
 
 def compare_packages(run_id: str, packages: list) -> list:
     return post(f"/stress/{run_id}/compare", {"packages": packages})
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def assistant_status() -> dict:
+    return get("/assistant/status")
+
+
+def assistant_ask(question: str, run_id: str | None, history: list) -> dict:
+    return post("/assistant/ask",
+                {"question": question, "run_id": run_id, "history": history})

@@ -21,8 +21,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ifrs9qdb import __version__
-from .routes import (analytics, ecl, etl, governance, health, runs, stress,
-                     validation)
+from .routes import (analytics, assistant, ecl, etl, governance, health, runs,
+                     stress, validation)
 
 RUNS_DIR = Path(os.environ.get("IFRS9_RUNS_DIR", "runs")).expanduser()
 
@@ -60,7 +60,7 @@ app.add_middleware(
 
 for r in (health.router, runs.router, ecl.router, analytics.router,
           stress.router, etl.router, validation.router,
-          governance.router):
+          governance.router, assistant.router):
     app.include_router(r, prefix="/api")
 
 

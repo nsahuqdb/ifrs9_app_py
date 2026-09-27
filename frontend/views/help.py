@@ -35,6 +35,8 @@ st.markdown("""
 | Who moved? | Migration |
 | What assumptions produced it? | Model assumptions |
 | What would a different policy cost? | Staging threshold, Stress testing |
+| How is the book spread? | Distributions, Segments |
+| Anything, in plain language | Assistant |
 
 **Attribution comes in two forms.** The default splits the move into
 exposure, PD and LGD by multiplying them out — which is not what the engine
@@ -80,6 +82,19 @@ A finding can be **accepted** rather than fixed, on the Accepted findings
 page, provided a reason and an approver are recorded. The alternative — people
 learning to ignore a permanently red screen — is worse than an explicit,
 auditable exception.
+
+## The assistant
+
+It answers questions about the runs by looking them up, not by remembering
+them. Ten read-only tools are its entire view of the data — a run list, file
+and column descriptions, group-by aggregations, run-to-run comparisons, a
+row-level diff, filters, the frozen model spec and the validation report —
+so every number it quotes came back from a real run during that conversation.
+The lookups behind each answer are listed under it.
+
+It cannot start a run, change config or approve anything, and it says which
+page does when asked. It needs an OpenAI-compatible endpoint configured; with
+none, the page says so and shows what it would be able to look at.
 
 ## Reproducing a past quarter
 
