@@ -203,6 +203,10 @@ def _version_paths(label: str | None):
 # runtime locations that belong to the project (they resolve against it).
 _VERSION_PATH_KEYS = ("variable_dictionary", "models", "model_inputs",
                       "model_config", "validation_suppressions")
+# Where a run executes on this machine, not what it computes: taken from the
+# live project config.yml, as R's snapshot_run_paths() does.
+_RUNTIME_PATH_KEYS = ("input_dir", "output_dir", "runs_dir", "data_drop_root",
+                      "reference_outputs")
 
 
 def _run_config_for(label: str | None) -> dict:
@@ -211,10 +215,10 @@ def _run_config_for(label: str | None) -> dict:
     R reads the version's own frozen config.yml (pre_run_check(snapshot=),
     run_etl(snapshot=)): it names the model and the gating policy the version
     was approved with. Its model paths are pointed at the version's frozen
-    files and static_dir at its static/, as R does; the runtime locations
-    (input, drops, runs) resolve against the project, where they live -- R
-    resolves those inside the version too and so warns that they are missing
-    on every version pick. The live config.yml when no version is picked or
+    files and static_dir at its static/; the runtime locations -- inputs,
+    drops, runs, output, reference outputs -- are the live project config's,
+    as R's snapshot_run_paths() takes them. Any other relative path resolves
+    against the project. The live config.yml when no version is picked or
     the version carries none.
     """
     import yaml
@@ -231,14 +235,24 @@ def _run_config_for(label: str | None) -> dict:
     except Exception:
         return live
     paths = rc.get("paths") if isinstance(rc.get("paths"), dict) else {}
+    live_paths = live.get("paths") if isinstance(live, dict) and isinstance(
+        live.get("paths"), dict) else {}
     fixed = {}
     for k, v in paths.items():
+        if k in _RUNTIME_PATH_KEYS:
+            continue
         if not isinstance(v, str) or not v or Path(v).expanduser().is_absolute():
             fixed[k] = v
         elif k in _VERSION_PATH_KEYS:
             fixed[k] = str(Path(sp["config_dir"]) / Path(v).name)
         else:
             fixed[k] = str(settings.PROJECT_ROOT / v)
+    for k in _RUNTIME_PATH_KEYS:
+        v = live_paths.get(k)
+        if v is None:
+            continue
+        fixed[k] = (str(settings.PROJECT_ROOT / v) if isinstance(v, str) and v
+                    and not Path(v).expanduser().is_absolute() else v)
     fixed["static_dir"] = str(sp["static_dir"])
     rc["paths"] = fixed
     return rc
