@@ -109,15 +109,25 @@ with st.sidebar:
     st.caption(f"engine {h['engine_version']} · {api.BACKEND}")
 
 pages = {
-    "Pipeline": [
+    "Runs": [
+        st.Page("frontend/views/runs.py", title="Browse runs",
+                icon=":material/list_alt:"),
         st.Page("frontend/views/pipeline.py", title="Run the pipeline",
                 icon=":material/play_circle:"),
-        st.Page("frontend/views/config.py", title="Configuration",
-                icon=":material/tune:"),
+        st.Page("frontend/views/approval.py", title="Approval queue",
+                icon=":material/how_to_reg:"),
+    ],
+    "Config": [
+        st.Page("frontend/views/snapshots.py", title="Config versions",
+                icon=":material/inventory_2:"),
         st.Page("frontend/views/calculator.py", title="Calculator versions",
                 icon=":material/deployed_code:"),
-        st.Page("frontend/views/snapshots.py", title="Config snapshots",
-                icon=":material/inventory_2:"),
+        st.Page("frontend/views/overlays.py", title="ECL overlays",
+                icon=":material/tune:"),
+        st.Page("frontend/views/suppressions.py", title="Validation suppressions",
+                icon=":material/rule_folder:"),
+        st.Page("frontend/views/config.py", title="Live configuration",
+                icon=":material/settings:"),
         st.Page("frontend/views/assumptions.py", title="Model assumptions",
                 icon=":material/function:"),
     ],
@@ -151,14 +161,8 @@ pages = {
         st.Page("frontend/views/reconcile.py", title="Reconcile & export",
                 icon=":material/compare_arrows:"),
     ],
-    "Governance": [
-        st.Page("frontend/views/overlays.py", title="Overlays",
-                icon=":material/tune:"),
-        st.Page("frontend/views/approval.py", title="Approval",
-                icon=":material/how_to_reg:"),
-        st.Page("frontend/views/suppressions.py", title="Accepted findings",
-                icon=":material/rule_folder:"),
-        st.Page("frontend/views/audit.py", title="Audit trail",
+    "Audit": [
+        st.Page("frontend/views/audit.py", title="Audit log",
                 icon=":material/history:"),
     ],
     "Stress testing": [

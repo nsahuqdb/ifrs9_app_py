@@ -21,17 +21,32 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ifrs9qdb import __version__
-from .routes import (analytics, assistant, ecl, etl, governance, health, runs,
-                     stress, validation)
+from ifrs9qdb.audit_log import set_audit_log_path
+from . import settings
+from .routes import (admin, analytics, assistant, ecl, etl, governance, health,
+                     runs, runs_detail, stress, validation, workflow)
 
-RUNS_DIR = Path(os.environ.get("IFRS9_RUNS_DIR", "runs")).expanduser()
+RUNS_DIR = settings.RUNS_DIR
+_SEEDED = settings.ensure_project()
+
+# Every audit event the engine writes -- a run starting, a version promoted, a
+# suppression added -- goes to the project's log, which the Audit log page
+# reads. Pinned here once so it does not depend on the working directory.
+set_audit_log_path(settings.AUDIT_LOG)
+
 
 def _announce() -> None:
     print(f"  ifrs9qdb {__version__}")
+    print(f"  project   {settings.PROJECT_ROOT.resolve()}")
+    if _SEEDED:
+        print(f"  seeded    {', '.join(_SEEDED)} from the app's defaults")
     print(f"  runs      {RUNS_DIR.resolve()}")
     if not RUNS_DIR.is_dir():
         print("  ! that directory does not exist yet - set IFRS9_RUNS_DIR")
+    print(f"  audit log {settings.AUDIT_LOG}")
     print("  docs      http://127.0.0.1:8000/docs")
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     _announce()
@@ -58,9 +73,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for r in (health.router, runs.router, ecl.router, analytics.router,
-          stress.router, etl.router, validation.router,
-          governance.router, assistant.router):
+for r in (health.router, runs.router, runs_detail.router, ecl.router,
+          analytics.router, stress.router, etl.router, workflow.router,
+          validation.router, governance.router, admin.router,
+          assistant.router):
     app.include_router(r, prefix="/api")
 
 

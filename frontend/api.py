@@ -392,6 +392,10 @@ def preview_bundle(overlay_id: str, run_id: str) -> dict:
     return post(f"/overlay-bundles/{overlay_id}/preview/{run_id}", {})
 
 
+def overlay_preview_rules(run_id: str, overlay_id: str, rules: list) -> dict:
+    return post(f"/overlay-rules/preview/{run_id}", {"id": overlay_id, "rules": rules})
+
+
 def apply_bundle(overlay_id: str, run_id: str) -> dict:
     return post(f"/overlay-bundles/{overlay_id}/apply/{run_id}", {})
 
@@ -517,5 +521,230 @@ def export_download(run_id: str) -> bytes:
     """The packaged zip itself, so a server deployment can hand it over."""
     import requests as _r
     resp = _r.get(_url(f"/export/{run_id}/download"), timeout=TIMEOUT)
-    _raise(resp)
+    # Only a failure raises: calling _raise unconditionally turned every
+    # successful download into an error, so the button never appeared.
+    if not resp.ok:
+        _raise(resp)
     return resp.content
+
+
+def _bytes(path: str) -> bytes:
+    import requests as _r
+    try:
+        resp = _r.get(_url(path), timeout=TIMEOUT)
+    except requests.exceptions.ConnectionError:
+        raise BackendError(f"Cannot reach the backend at {BACKEND}.")
+    if not resp.ok:
+        _raise(resp)
+    return resp.content
+
+
+def upload(path: str, file) -> dict:
+    """POST one file as multipart."""
+    try:
+        r = requests.post(_url(path), files={"file": (file.name, file.getvalue())},
+                          timeout=(5, 900))
+    except requests.exceptions.ConnectionError:
+        raise BackendError(f"Cannot reach the backend at {BACKEND}.")
+    if not r.ok:
+        _raise(r)
+    return r.json()
+
+
+# ------------------------------------------------------------ runs page ----
+def runs_table() -> dict:
+    return get("/runs-table")
+
+
+def run_manifest(run_id: str) -> dict:
+    return get(f"/runs/{run_id}/manifest")
+
+
+def run_validation_table(run_id: str) -> dict:
+    return get(f"/runs/{run_id}/validation-table")
+
+
+def run_readiness(run_id: str) -> dict:
+    return get(f"/runs/{run_id}/readiness")
+
+
+def run_overrides(run_id: str) -> dict:
+    return get(f"/runs/{run_id}/overrides")
+
+
+def run_reconciliation(run_id: str) -> dict:
+    return get(f"/runs/{run_id}/reconciliation")
+
+
+def run_outputs(run_id: str) -> dict:
+    return get(f"/runs/{run_id}/outputs")
+
+
+def run_output_preview(run_id: str, name: str, offset: int = 0, limit: int = 200,
+                       q: str | None = None, column: str | None = None) -> dict:
+    params = {"offset": offset, "limit": limit}
+    if q:
+        params["q"] = q
+    if column:
+        params["column"] = column
+    return get(f"/runs/{run_id}/outputs/{name}", **params)
+
+
+def run_export_status(run_id: str) -> dict:
+    return get(f"/runs/{run_id}/export-status")
+
+
+def run_export(run_id: str, include_inputs: bool) -> dict:
+    return post(f"/runs/{run_id}/export", {"include_inputs": include_inputs})
+
+
+def run_export_bytes(run_id: str) -> bytes:
+    return _bytes(f"/runs/{run_id}/export/download")
+
+
+def report_source(run_id: str) -> dict:
+    return get(f"/analytics/{run_id}/source")
+
+
+# --------------------------------------------------------- run pipeline ----
+def wf_sources() -> dict:
+    return get("/workflow/sources")
+
+
+def wf_upload_zip(file) -> dict:
+    return upload("/workflow/upload-zip", file)
+
+
+def wf_validate_inputs(payload: dict) -> dict:
+    return post("/workflow/validate-inputs", payload)
+
+
+def wf_versions() -> dict:
+    return get("/workflow/versions")
+
+
+def wf_run_type_check(run_type: str, version: str) -> dict:
+    return get("/workflow/run-type-check", run_type=run_type, version=version)
+
+
+def wf_calculators() -> dict:
+    return get("/workflow/calculators")
+
+
+def wf_pre_run_check(payload: dict) -> dict:
+    return post("/workflow/pre-run-check", payload)
+
+
+def wf_readiness(payload: dict) -> dict:
+    return post("/workflow/readiness", payload)
+
+
+def wf_start(payload: dict) -> dict:
+    return post("/workflow/start", payload)
+
+
+def wf_job(job_id: str) -> dict:
+    return get(f"/workflow/jobs/{job_id}")
+
+
+def wf_paused() -> list:
+    return get("/workflow/paused")
+
+
+def wf_paused_run(run_id: str) -> dict:
+    return get(f"/workflow/paused/{run_id}")
+
+
+def wf_customers(run_id: str, q: str | None = None, stage: str | None = None,
+                 offset: int = 0, limit: int = 50) -> dict:
+    params = {"offset": offset, "limit": limit}
+    if q:
+        params["q"] = q
+    if stage:
+        params["stage"] = stage
+    return get(f"/workflow/paused/{run_id}/customers", **params)
+
+
+def wf_customer(run_id: str, customer_id: str) -> dict:
+    return get(f"/workflow/paused/{run_id}/customer/{customer_id}")
+
+
+def wf_add_override(run_id: str, payload: dict) -> dict:
+    return post(f"/workflow/paused/{run_id}/overrides", payload)
+
+
+def wf_overrides(run_id: str) -> dict:
+    return get(f"/workflow/paused/{run_id}/overrides")
+
+
+def wf_drop_override(run_id: str, kind: str, customer_id: str) -> dict:
+    return request("DELETE", f"/workflow/paused/{run_id}/overrides/{kind}/{customer_id}")
+
+
+def wf_continue(run_id: str) -> dict:
+    return post(f"/workflow/paused/{run_id}/continue", {})
+
+
+def wf_cancel(run_id: str) -> dict:
+    return post(f"/workflow/paused/{run_id}/cancel", {})
+
+
+# ------------------------------------------------------------ governance ----
+def queue_runs() -> dict:
+    return get("/approval-queue/runs")
+
+
+def queue_run_context(run_id: str, acting_as: str | None = None) -> dict:
+    return get(f"/approval-queue/runs/{run_id}/context",
+               **({"acting_as": acting_as} if acting_as else {}))
+
+
+def queue_versions() -> dict:
+    return get("/approval-queue/versions")
+
+
+def clone_snapshot(label: str, new_label: str, description: str,
+                   created_by: str = "") -> dict:
+    return post(f"/snapshots/{label}/clone",
+                {"new_label": new_label, "description": description,
+                 "created_by": created_by})
+
+
+def snapshot_tree(label: str) -> dict:
+    return get(f"/snapshots/{label}/tree")
+
+
+def snapshot_raw(label: str, relpath: str) -> dict:
+    return get(f"/snapshots/{label}/raw", relpath=relpath)
+
+
+def promote_context(label: str, acting_as: str | None = None) -> dict:
+    return get(f"/snapshots/{label}/promote-context",
+               **({"acting_as": acting_as} if acting_as else {}))
+
+
+def project_suppressions() -> dict:
+    return get("/project-suppressions")
+
+
+def add_project_suppression(validator_id: str, reason: str, approved_by: str,
+                            valid_until: str | None) -> dict:
+    return post("/project-suppressions",
+                {"validator_id": validator_id, "reason": reason,
+                 "approved_by": approved_by, "valid_until": valid_until})
+
+
+def validator_catalog() -> dict:
+    return get("/validator-catalog")
+
+
+def audit_log(event: str | None = None, run_id: str | None = None,
+              user: str | None = None) -> dict:
+    params = {}
+    if event:
+        params["event"] = event
+    if run_id:
+        params["run_id"] = run_id
+    if user:
+        params["user"] = user
+    return get("/audit-log", **params)

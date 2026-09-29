@@ -17,6 +17,7 @@ runs/
 input/
 output/
 uploads/
+drops/
 tests/fixtures/FinalEclReport.csv
 .streamlit/secrets.toml
 
@@ -24,3 +25,9 @@ tests/fixtures/FinalEclReport.csv
 wheels/*
 !wheels/.keep
 data/
+
+# Deployment state, not source -- like runs/: the project audit log, the
+# archived calculator code and the config versions a deployment creates.
+logs/
+calculator_versions/
+config_snapshots/

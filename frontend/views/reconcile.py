@@ -62,7 +62,11 @@ with tab_files:
 
         for _, row in differing.iterrows():
             det = row.get("detail")
-            if not det:
+            # A file in one run only (an overlaid report, its audit file) has
+            # no column-by-column detail: the frame holds NaN there, not a list.
+            if not isinstance(det, list) or not det:
+                if str(row.get("status", "")).startswith("only in"):
+                    caption(f"`{row['file']}` — {row['status']}.")
                 continue
             with st.expander(f"{row['file']} — what differs"):
                 st.dataframe(pd.DataFrame(det), use_container_width=True,
@@ -73,6 +77,14 @@ with tab_exp:
         summ = pd.DataFrame(api.output_summary(run_id))
     if len(summ):
         st.dataframe(summ, use_container_width=True, hide_index=True, height=330)
+    with guard():
+        gate = api.run_export_status(run_id)
+    if not gate["exportable"]:
+        st.info(f"**Export not available.** {gate['reason']}", icon="🔒")
+        st.stop()
+    if gate["unofficial"]:
+        st.info("**Unofficial run.** The export bundle is marked UNOFFICIAL.",
+                icon="ℹ️")
     inc = st.checkbox(
         "Include the raw source extracts", value=False,
         help="Large, and they contain customer data — including them should be "

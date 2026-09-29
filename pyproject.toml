@@ -15,7 +15,7 @@ authors = [{ name = "Qatar Development Bank", email = "frm@qdb.qa" }]
 # repository - `pip install -e ../ifrs9qdb_py` for development, or a built
 # wheel in the container.
 dependencies = [
-    "ifrs9qdb>=0.26",
+    "ifrs9qdb[excel]>=0.26",   # the pipeline reads the Excel and SQL*Plus extracts
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
     "pydantic>=2.5",

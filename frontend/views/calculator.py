@@ -3,7 +3,7 @@ import pandas as pd
 import streamlit as st
 
 import api
-from ui import caption, guard, metric_row, page_setup, pill
+from ui import caption, guard, metric_row, page_setup, pill, flash
 
 page_setup("Calculator versions",
            "Deployment does not always go through git, so the calculation "
@@ -75,7 +75,7 @@ else:
             with guard():
                 api.activate_calculator(pick)
             api.calculator_versions.clear()
-            st.success(f"{pick} is now the active calculator version.")
+            flash(f"{pick} is now the active calculator version.")
             st.rerun()
 
 st.markdown("## Register the deployed code")
@@ -105,7 +105,7 @@ with st.form("register_calculator"):
                 st.error(str(e))
             else:
                 api.calculator_versions.clear()
-                st.success(f"Registered {vid.strip()}.")
+                flash(f"Registered {vid.strip()}.")
                 st.rerun()
 
 with st.expander("What the deployed code is, as git sees it"):

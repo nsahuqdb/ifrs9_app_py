@@ -20,7 +20,7 @@ from pathlib import Path
 import pandas as pd
 
 MAX_ROWS = 40
-RUNS_DIR = Path(os.environ.get("IFRS9_RUNS_DIR", "runs"))
+from ..settings import RUNS_DIR  # noqa: E402
 
 TOOL_CATALOGUE = "\n".join([
     "list_runs() -> every run with its id, extract date, contract count, "
@@ -72,6 +72,14 @@ def _output(run: Path) -> Path | None:
     return run if (run / "FinalEclReport.csv").is_file() else None
 
 
+def _report_file(out: Path) -> Path:
+    """The ECL report the pages read: the OVERLAID one when an overlay has
+    been applied to the run (the first, by name), as the analytics pages
+    and the R app read it -- so the assistant quotes the same provision."""
+    ov = sorted(out.glob("FinalEclReport_overlay_*.csv"))
+    return ov[0] if ov else out / "FinalEclReport.csv"
+
+
 def _read(run_id: str | None, file: str) -> tuple[pd.DataFrame | None, str]:
     run = _run_dir(run_id)
     if run is None:
@@ -83,11 +91,17 @@ def _read(run_id: str | None, file: str) -> tuple[pd.DataFrame | None, str]:
     if not name.lower().endswith(".csv"):
         name += ".csv"
     path = out / name
+    label = run.name
+    if name.lower() == "finaleclreport.csv":
+        path = _report_file(out)
+        if path.name != "FinalEclReport.csv":
+            label = (f"{run.name} (overlay applied - read {path.name}, as the "
+                     "pages do)")
     if not path.is_file():
         have = ", ".join(sorted(p.name for p in out.glob("*.csv"))[:20])
         return None, f"{name} is not in run {run.name}. It holds: {have}"
     try:
-        return pd.read_csv(path, low_memory=False), run.name
+        return pd.read_csv(path, low_memory=False), label
     except Exception as exc:
         return None, f"{name} could not be read: {exc}"
 
@@ -124,7 +138,7 @@ def list_runs(**_) -> dict:
     rows = []
     for r in runs:
         out = _output(r)
-        rep = out / "FinalEclReport.csv" if out else None
+        rep = _report_file(out) if out else None
         n, ecl, date = None, None, ""
         if rep is not None and rep.is_file():
             try:

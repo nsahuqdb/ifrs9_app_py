@@ -37,15 +37,40 @@ from ifrs9qdb.analytics import (  # noqa: F401  -- distributions and flows
 from ifrs9qdb.analytics.model_view import config_used
 
 router = APIRouter(tags=["analytics"])
-RUNS_DIR = Path(os.environ.get("IFRS9_RUNS_DIR", "runs"))
+from ..settings import RUNS_DIR  # noqa: E402
+
+
+def report_path(run_id: str) -> Path | None:
+    """The report the analytics read -- the OVERLAID one when an overlay has
+    been applied to the run (the first, by name), else the model report. The
+    R app's analytics page reads it the same way, so the two show the same
+    provision."""
+    od = _output_dir(RUNS_DIR / run_id)
+    if od is None:
+        return None
+    ov = sorted(od.glob("FinalEclReport_overlay_*.csv"))
+    if ov:
+        return ov[0]
+    p = od / "FinalEclReport.csv"
+    return p if p.is_file() else None
 
 
 def _report(run_id: str) -> pd.DataFrame:
-    od = _output_dir(RUNS_DIR / run_id)
-    path = (od / "FinalEclReport.csv") if od else Path("/nonexistent")
-    if not path.is_file():
+    path = report_path(run_id)
+    if path is None or not path.is_file():
         raise HTTPException(404, f"No ECL report for run {run_id!r}")
     return normalise(pd.read_csv(path, low_memory=False))
+
+
+@router.get("/analytics/{run_id}/source")
+def report_source(run_id: str) -> dict:
+    """Which report file the analytics pages are reading for this run."""
+    p = report_path(run_id)
+    return {"file": p.name if p else None,
+            "overlay": bool(p and p.name.startswith("FinalEclReport_overlay_")),
+            "overlay_id": (p.stem[len("FinalEclReport_overlay_"):]
+                           if p and p.name.startswith("FinalEclReport_overlay_")
+                           else None)}
 
 
 def _records(df: pd.DataFrame) -> list[dict]:

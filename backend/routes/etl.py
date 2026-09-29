@@ -19,9 +19,10 @@ from ifrs9qdb.etl.pipeline import PENDING, PRODUCED, next_run_id, run_etl
 from ifrs9qdb.etl.read_inputs import INPUT_SPECS, detect_format, resolve_input_path
 
 router = APIRouter(tags=["etl"])
-RUNS_DIR = Path(os.environ.get("IFRS9_RUNS_DIR", "runs"))
-INPUT_DIR = Path(os.environ.get("IFRS9_INPUT_DIR", "input"))
-STATIC_DIR = Path(__file__).parent.parent.parent / "static"
+from .. import settings  # noqa: E402
+from ..settings import RUNS_DIR, UPLOAD_DIR  # noqa: E402
+
+INPUT_DIR = settings.input_dir()
 
 _JOBS: dict[str, dict] = {}
 _LOCK = threading.Lock()
@@ -83,8 +84,15 @@ def start_run(req: RunRequest) -> dict:
     def work():
         try:
             r = run_etl(src, RUNS_DIR, reporting_date=req.reporting_date,
-                        run_id=req.run_id, static_dir=STATIC_DIR,
-                        progress=progress)
+                        run_id=req.run_id,
+                        static_dir=settings.static_dir_for_run(),
+                        config_dir=settings.config_dir_for_run(),
+                        progress=progress,
+                        on_validation_error=settings.on_validation_error(),
+                        run_config=settings.run_config(),
+                        project_root=settings.PROJECT_ROOT,
+                        input_source={"kind": "folder",
+                                      "details": {"path": str(src)}})
             with _LOCK:
                 _JOBS[job_id].update(
                     status="done" if r.ok else "failed",
@@ -123,7 +131,6 @@ def coverage() -> dict:
                           "FxRate.csv"]}
 
 
-UPLOAD_DIR = Path(os.environ.get("IFRS9_UPLOAD_DIR", "uploads"))
 
 
 @router.post("/etl/upload")
@@ -163,7 +170,8 @@ def read_config() -> dict:
     """The model configuration, as text, with the values that move a number
     pulled out so they can be read without parsing YAML."""
     import yaml
-    cfg_dir = Path(__file__).parent.parent.parent / "config"
+    cfg_dir = settings.config_dir_for_run() or \
+        Path(__import__("ifrs9qdb").__file__).parent / "config"
     out = {"config_dir": str(cfg_dir), "files": {}, "summary": {}}
     for name in ("model.yml", "model_inputs.yml"):
         p = cfg_dir / name
@@ -211,6 +219,7 @@ def write_config(req: ConfigWrite) -> dict:
         yaml.safe_load(req.content)
     except yaml.YAMLError as exc:
         raise HTTPException(400, f"That is not valid YAML: {exc}")
-    p = Path(__file__).parent.parent.parent / "config" / req.name
+    p = settings.CONFIG_DIR / req.name
+    p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(req.content)
     return {"saved": req.name, "path": str(p)}

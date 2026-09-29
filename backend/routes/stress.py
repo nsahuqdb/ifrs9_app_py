@@ -23,7 +23,7 @@ from ifrs9qdb.stress import (
 )
 
 router = APIRouter(tags=["stress"])
-RUNS_DIR = Path(os.environ.get("IFRS9_RUNS_DIR", "runs"))
+from ..settings import RUNS_DIR  # noqa: E402
 
 
 @lru_cache(maxsize=8)

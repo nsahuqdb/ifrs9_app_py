@@ -1,0 +1,6 @@
+# Post-model ECL overlays (management adjustments). Managed in the app
+# (Config > ECL overlays). Each overlay id is a bundle of rules with its own
+# approval state (draft -> pending -> approved). Applied to a completed run as
+# the last step on model ECL; Stage 3 untouched; a contract matched by more
+# than one rule blocks the overlay.
+overlays: []

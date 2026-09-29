@@ -108,6 +108,10 @@ CSS = """
   .stButton button[kind="primary"] {background: #5b1f6e; border: 0;
       font-weight: 600; box-shadow: 0 1px 3px rgba(91,31,110,.25);}
   .stButton button[kind="primary"]:hover {background: #6d2a83;}
+  /* a disabled primary button keeps its label readable: dark text on the
+     brand purple was unreadable (the Start button before the checks pass) */
+  .stButton button[kind="primary"]:disabled {background: #e4dbe8;
+      color: #5b4a63; opacity: 1; cursor: not-allowed;}
 
   div[data-testid="stExpander"] {border: 1px solid #e6e3ec; border-radius: 10px;}
 
@@ -121,11 +125,27 @@ CSS = """
 """
 
 
+def flash(message: str) -> None:
+    """Keep a confirmation for the next run of the page.
+
+    An action that ends in st.rerun() -- approve, create, promote -- would
+    otherwise show its success message for a frame and lose it; the R app
+    shows a notification that stays. page_setup() shows it once, at the top.
+    """
+    st.session_state["_flash"] = message
+
+
 def page_setup(title: str, subtitle: str | None = None) -> None:
     st.markdown(CSS, unsafe_allow_html=True)
     st.title(title)
     if subtitle:
         caption(subtitle)
+    # The slot exists on every run, message or not: an element that comes and
+    # goes above the page's tabs would shift them and reset the open tab.
+    slot = st.empty()
+    msg = st.session_state.pop("_flash", None)
+    if msg:
+        slot.success(msg, icon="✅")
 
 
 @contextmanager

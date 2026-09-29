@@ -10,7 +10,7 @@ from ifrs9qdb.validation import validate_run
 from .runs import _output_dir
 
 router = APIRouter(tags=["validation"])
-RUNS_DIR = Path(os.environ.get("IFRS9_RUNS_DIR", "runs"))
+from ..settings import RUNS_DIR  # noqa: E402
 
 
 @router.get("/validation/{run_id}")

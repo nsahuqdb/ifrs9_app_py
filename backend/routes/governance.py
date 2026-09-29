@@ -16,8 +16,8 @@ from ifrs9qdb.validation import validate_run
 from .runs import _output_dir
 
 router = APIRouter(tags=["governance"])
-RUNS_DIR = Path(os.environ.get("IFRS9_RUNS_DIR", "runs"))
-CONFIG_DIR = Path(__file__).parent.parent.parent / "config"
+from ..settings import (CONFIG_DIR, OVERLAYS_FILE, PROJECT_CONFIG,  # noqa: E402
+                        PROJECT_ROOT, RUNS_DIR, SNAPSHOTS_ROOT)
 
 
 def _run(run_id: str) -> Path:
@@ -167,9 +167,16 @@ class ExportIn(BaseModel):
 
 @router.post("/export/{run_id}")
 def export(run_id: str, req: ExportIn) -> dict:
-    """Package a run for handover or archive."""
+    """Package a run for handover or archive -- only an approved or unofficial
+    run, as the R app allows (a run awaiting its checker is not a deliverable)."""
     from ifrs9qdb.reconcile import build_export
+
+    from .runs_detail import export_status
     run_dir = _run(run_id)
+    gate = export_status(run_dir.name)
+    if not gate["exportable"]:
+        raise HTTPException(403, f"Export refused: run is in status "
+                                 f"'{gate['status']}'. {gate['reason']}")
     dest = run_dir / f"{run_id}_export.zip"
     res = build_export(run_dir, dest, include_inputs=req.include_inputs)
     AuditLog(run_dir / "audit.jsonl").record(
@@ -186,7 +193,10 @@ def export_download(run_id: str):
     """
     from fastapi.responses import FileResponse
 
+    from .runs_detail import export_status
     run_dir = _run(run_id)
+    if not export_status(run_dir.name)["exportable"]:
+        raise HTTPException(403, "Export refused for this run's status.")
     dest = run_dir / f"{run_id}_export.zip"
     if not dest.is_file():
         raise HTTPException(404, "Package the run first.")
@@ -255,8 +265,6 @@ def add_run_suppression(run_id: str, body: SuppressionIn) -> dict:
 
 
 # ------------------------------------------- calculator versions -----------
-PROJECT_ROOT = Path(os.environ.get("IFRS9_PROJECT_ROOT",
-                                   Path(__file__).parent.parent.parent))
 
 
 class CalculatorIn(BaseModel):
@@ -325,9 +333,6 @@ class DecisionIn(BaseModel):
     reason: str
 
 
-PROJECT_CONFIG = Path(os.environ.get("IFRS9_CONFIG",
-                                     Path(__file__).parent.parent.parent
-                                     / "config.yml"))
 
 
 @router.get("/runstatus/queue")
@@ -386,8 +391,6 @@ def reject_status(run_id: str, body: DecisionIn) -> dict:
 
 
 # ------------------------------------------------- config snapshots --------
-SNAPSHOTS_ROOT = Path(os.environ.get("IFRS9_SNAPSHOTS_DIR",
-                                     PROJECT_ROOT / "config_snapshots"))
 
 
 class SnapshotIn(BaseModel):
@@ -452,12 +455,17 @@ def snapshot_file(label: str, relpath: str) -> dict:
 @router.post("/snapshots")
 def create_snapshot_endpoint(body: SnapshotIn) -> dict:
     from ifrs9qdb.snapshots import create_snapshot
+
+    from ..settings import STATIC_DIR, config_dir_for_run, static_dir_for_run
+    # R's manager refuses a version with no description: it is the audit trail.
+    if not body.description.strip():
+        raise HTTPException(400, "A description is required (audit trail).")
     try:
         out = create_snapshot(
             body.label, body.description, body.created_by or None,
             parent=body.parent or None,
-            config_dir=PROJECT_ROOT / "config",
-            static_dir=PROJECT_ROOT / "data-raw" / "static",
+            config_dir=config_dir_for_run() or CONFIG_DIR,
+            static_dir=static_dir_for_run() or STATIC_DIR,
             run_config_path=PROJECT_CONFIG,
             snapshots_root=SNAPSHOTS_ROOT)
     except FileExistsError as exc:
@@ -508,8 +516,6 @@ def diff_snapshots_endpoint(a: str, b: str) -> dict:
 
 
 # ------------------------------------------------- overlay bundles ---------
-OVERLAYS_FILE = Path(os.environ.get("IFRS9_OVERLAYS",
-                                    CONFIG_DIR / "overlays.yml"))
 
 
 class RuleIn(BaseModel):
@@ -528,6 +534,10 @@ class BundleIn(BaseModel):
     effective_date: str = ""
     expiry: str = ""
     rules: list[RuleIn] = []
+    # R's save of an id that already exists asks: replace its rules, or
+    # append the builder's to them. "new" refuses to overwrite.
+    mode: str = "replace"
+    by: str = ""
 
 
 class StatusIn(BaseModel):
@@ -537,10 +547,30 @@ class StatusIn(BaseModel):
 
 
 def _bundle_dict(body: BundleIn, existing: dict | None = None) -> dict:
+    """The bundle as saved -- ALWAYS back to draft, as the R app saves it.
+
+    An edited overlay is a new proposal: it cannot keep an approval given to
+    different rules. The transition says whether it was created or edited.
+    """
+    from datetime import datetime as _dt
+
+    from ..settings import current_user
     out = dict(existing or {})
-    out.update({k: v for k, v in body.model_dump().items() if k != "rules"})
-    out["rules"] = [r.model_dump() for r in body.rules]
-    out.setdefault("status", "draft")
+    out.update({k: v for k, v in body.model_dump().items()
+                if k not in ("rules", "mode", "by")})
+    rules = [r.model_dump() for r in body.rules]
+    if existing is not None and body.mode == "append":
+        rules = list(existing.get("rules") or []) + rules
+    out["rules"] = rules
+    was = (existing or {}).get("status")
+    out["status"] = "draft"
+    out.setdefault("created_at", _dt.now().strftime("%Y-%m-%d"))
+    out["transitions"] = list((existing or {}).get("transitions") or []) + [{
+        "to": "draft", "by": body.by or current_user(),
+        "at": _dt.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S"),
+        "reason": ("created" if existing is None else
+                   "edited - re-approval required" if was == "approved"
+                   else "edited")}]
     return out
 
 
@@ -553,12 +583,21 @@ def overlay_bundles() -> dict:
 
 @router.post("/overlay-bundles")
 def save_overlay_bundle(body: BundleIn) -> dict:
+    from ifrs9qdb.audit_log import audit_event
     from ifrs9qdb.overlays import get_overlay, upsert_overlay
-    bundle = _bundle_dict(body, get_overlay(body.id, OVERLAYS_FILE))
+    existing = get_overlay(body.id, OVERLAYS_FILE)
+    if existing is not None and body.mode == "new":
+        raise HTTPException(409, f"Overlay '{body.id}' already exists with "
+                                 f"{len(existing.get('rules') or [])} rule(s). "
+                                 "Replace it, or append these rules to it.")
+    bundle = _bundle_dict(body, existing)
     try:
         upsert_overlay(bundle, OVERLAYS_FILE)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    audit_event({"event": "overlay_saved", "overlay_id": body.id,
+                 "n_rules": len(bundle["rules"]), "mode": body.mode,
+                 "status": "draft"})
     return {"ok": True, "bundle": bundle}
 
 
@@ -572,7 +611,21 @@ def delete_overlay_bundle(overlay_id: str) -> dict:
 
 @router.post("/overlay-bundles/{overlay_id}/status")
 def set_bundle_status(overlay_id: str, body: StatusIn) -> dict:
-    from ifrs9qdb.overlays import set_overlay_status
+    from ifrs9qdb.audit_log import audit_event
+    from ifrs9qdb.overlays import get_overlay, set_overlay_status
+    # R's buttons: submit a draft (or rejected) overlay; approve or reject a
+    # pending one. A move outside that is refused rather than recorded.
+    allowed = {"draft": ("pending",), "rejected": ("pending", "draft"),
+               "pending": ("approved", "rejected", "draft"),
+               "approved": ("draft",)}
+    bundle = get_overlay(overlay_id, OVERLAYS_FILE)
+    if bundle is None:
+        raise HTTPException(404, f"No overlay named {overlay_id!r}")
+    cur = bundle.get("status") or "draft"
+    if body.status not in allowed.get(cur, ()):
+        raise HTTPException(400, f"An overlay that is {cur} cannot move to "
+                                 f"{body.status}. Allowed: "
+                                 f"{', '.join(allowed.get(cur, ())) or 'none'}.")
     try:
         b = set_overlay_status(overlay_id, body.status, body.by, body.reason,
                                OVERLAYS_FILE)
@@ -580,6 +633,9 @@ def set_bundle_status(overlay_id: str, body: StatusIn) -> dict:
         raise HTTPException(404, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    audit_event({"event": "overlay_status", "overlay_id": overlay_id,
+                 "from_status": cur, "to_status": body.status,
+                 "user": body.by, "reason": body.reason})
     return {"ok": True, "bundle": b}
 
 
@@ -595,6 +651,30 @@ def preview_bundle(overlay_id: str, run_id: str) -> dict:
         raise HTTPException(404, "This run has no ECL report to adjust")
     rep = normalise(pd.read_csv(p, low_memory=False))
     out = _preview(rep, bundle)
+    if out.get("ok") and "summary" in out:
+        out["summary"] = _records(out["summary"])
+    return out
+
+
+class PreviewRulesIn(BaseModel):
+    id: str = "PREVIEW"
+    rules: list[RuleIn] = []
+
+
+@router.post("/overlay-rules/preview/{run_id}")
+def preview_rules(run_id: str, body: PreviewRulesIn) -> dict:
+    """What the builder's (unsaved) rules WOULD do to a run -- R's "Preview
+    impact". Writes nothing."""
+    from ifrs9qdb.overlays import preview_overlays as _preview
+    from ifrs9qdb.overlays import validate_overlay_bundle
+    bundle = {"id": body.id or "PREVIEW", "rules": [r.model_dump() for r in body.rules]}
+    errs = validate_overlay_bundle(bundle)
+    if errs:
+        return {"ok": False, "errors": errs, "contracts": []}
+    p = _run(run_id) / "Output" / "FinalEclReport.csv"
+    if not p.is_file():
+        raise HTTPException(404, "This run has no ECL report to adjust")
+    out = _preview(normalise(pd.read_csv(p, low_memory=False)), bundle)
     if out.get("ok") and "summary" in out:
         out["summary"] = _records(out["summary"])
     return out
@@ -621,6 +701,12 @@ def apply_bundle(overlay_id: str, run_id: str) -> dict:
             overlay_id=overlay_id, totals=res["totals"])
     except Exception:
         pass
+    from ifrs9qdb.audit_log import audit_event
+    audit_event({"event": "overlay_applied", "run_id": run_id,
+                 "overlay_id": overlay_id, "status": res.get("status"),
+                 "model": res["totals"]["model"],
+                 "overlay": res["totals"]["overlay"],
+                 "final": res["totals"]["final"]})
     return res
 
 
@@ -633,5 +719,11 @@ def applied_overlays(run_id: str) -> dict:
 @router.delete("/overlay-bundles/applied/{run_id}/{overlay_id}")
 def remove_applied(run_id: str, overlay_id: str) -> dict:
     """Remove an overlay's outputs. The model report is untouched."""
+    from ifrs9qdb.audit_log import audit_event
     from ifrs9qdb.overlays import remove_applied_overlay
-    return remove_applied_overlay(_run(run_id), overlay_id)
+    res = remove_applied_overlay(_run(run_id), overlay_id)
+    if res.get("ok"):
+        audit_event({"event": "overlay_removed", "run_id": run_id,
+                     "overlay_id": overlay_id,
+                     "removed": ", ".join(res.get("removed") or [])})
+    return res

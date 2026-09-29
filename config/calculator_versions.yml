@@ -1,0 +1,28 @@
+# =============================================================================
+# config/calculator_versions.yml
+#
+# Registry of CALCULATOR (code) versions.
+#
+# The "calculator" is the Python computation code -- the ifrs9qdb package.
+# Because deployment may not always go through git, code versions are tracked
+# here explicitly rather than inferred from a SHA. Each run records which
+# calculator version was selected AND a fingerprint of the code that actually
+# executed, so any run can be traced to the exact calculator that produced it,
+# and a drift from the registered fingerprint is visible.
+#
+# Manage these from the app: Config -> Calculator versions.
+#   - "active" is the version selected by default for new runs.
+#   - Registering a version stamps it with the current code fingerprint and
+#     archives the code under calculator_versions/<id>/src, so an older
+#     version can be re-run later (Run the pipeline -> Calculator version).
+# =============================================================================
+
+active: "v1.0"
+
+versions:
+  - id: "v1.0"
+    label: "v1.0 — V4 parity"
+    description: "Initial production calculator reproducing the V4 Excel ETL."
+    created_at: "2026-06-05"
+    created_by: "nsahu"
+    code_hash: ""        # empty until registered/fingerprinted from the app

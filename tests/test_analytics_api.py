@@ -357,7 +357,9 @@ class TestDistributionsAndFlows:
                        params={"prev": prev, "curr": curr}).json()
         labels = {r["flow"] for r in f["flows"]}
         assert labels == {"New business", "Derecognised"}
-        assert all(r["contracts"] > 0 for r in f["flows"])
+        # Two runs of the same book have neither, and say so with zeros.
+        assert all(r["contracts"] >= 0 for r in f["flows"])
+        assert all(r["contracts"] > 0 or not r.get("ecl") for r in f["flows"])
 
     @needs_pair
     def test_every_drill_down_ties_to_its_step(self):

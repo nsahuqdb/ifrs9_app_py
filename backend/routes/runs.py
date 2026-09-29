@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException
 
 router = APIRouter(tags=["runs"])
 
-RUNS_DIR = Path(os.environ.get("IFRS9_RUNS_DIR", "runs"))
+from ..settings import RUNS_DIR
 
 
 def _output_dir(run: Path) -> Path | None:

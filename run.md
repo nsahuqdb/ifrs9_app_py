@@ -5,9 +5,15 @@ Two processes, as with the transaction model app.
 ## 1. Backend
 
 ```bash
-IFRS9_RUNS_DIR=/path/to/your/runs \
+IFRS9_PROJECT_ROOT=/path/to/project \
 uvicorn backend.main:app --reload --port 8000
 ```
+
+The project folder holds `config.yml`, `config/`, `data-raw/static/`, the
+config versions, `runs/` and `logs/etl_audit.jsonl` -- the R app's layout, so
+both apps can share one. A new folder is seeded from this app's defaults on
+first start. `IFRS9_RUNS_DIR` and the other `IFRS9_*` variables override one
+location at a time (see README).
 
 Interactive API documentation: <http://127.0.0.1:8000/docs>
 
@@ -35,17 +41,14 @@ pip install -e ".[api,ui,dev]"
 
 ## Where the runs go
 
-Point `IFRS9_RUNS_DIR` at the same `runs/` folder the R app uses — the layout
-is identical:
+`<project>/runs/`, one folder per run, in the R engine's layout -- see
+README, *The project folder*. A run with only the report still works for the
+portfolio pages; the stress pages say which files are missing rather than
+failing obscurely.
 
-```
-runs/
-  run_00001/
-    Output/
-      FinalEclReport.csv        analytics need this
-      StPD.csv, Ratings.csv,    stress testing needs these
-      AccountMaster_1.csv, ...
-```
+## Tests
 
-A run with only the report still works for the portfolio pages; the stress
-pages will say which files are missing rather than failing obscurely.
+```bash
+pytest -q                                    # the API, without runs
+IFRS9_PROJECT_ROOT=/path/to/project pytest -q    # and the tests that need runs
+```

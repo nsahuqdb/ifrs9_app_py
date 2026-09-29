@@ -110,9 +110,14 @@ class TestSnapshots:
         assert r.status_code == 404
 
     def test_an_illegal_promotion_is_400(self):
-        labels = [s["label"] for s in client.get("/api/snapshots").json()["snapshots"]]
+        # A draft, tested or pending version cannot jump to archived; an
+        # approved one can (R's transitions), so it is no test of the refusal
+        # -- and trying it would archive it.
+        snaps = client.get("/api/snapshots").json()["snapshots"]
+        labels = [s["label"] for s in snaps
+                  if s.get("status") in ("draft", "tested", "pending_final")]
         if not labels:
-            pytest.skip("no snapshots configured")
+            pytest.skip("no draft, tested or pending version to try")
         r = client.post(f"/api/snapshots/{labels[0]}/promote",
                         json={"status": "archived", "by": "priya",
                               "reason": "skip ahead"})
