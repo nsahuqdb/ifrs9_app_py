@@ -35,8 +35,12 @@ IFRS9_BACKEND=http://10.0.0.5:8000 streamlit run app.py
 
 ## Install
 
+From a folder holding both clones (`ifrs9qdb_py` and `ifrs9_app_py`), in a
+virtual environment:
+
 ```bash
-pip install -e ".[api,ui,dev]"
+pip install -e "./ifrs9qdb_py[excel]"   # the engine first
+pip install -e ./ifrs9_app_py           # then this app (".[dev]" adds the test tools)
 ```
 
 ## Where the runs go
