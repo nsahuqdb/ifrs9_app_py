@@ -49,9 +49,8 @@ The layout is the R app's, so the two apps can share one folder:
 ```
 <project>/
   config.yml                run settings: paths, on_validation_error,
-                            the model (run.internal_model), the collateral
-                            allocation unit (run.allocation_percentage_unit),
-                            approval (separation of duties), upload limit
+                            the model (run.internal_model), approval
+                            (separation of duties), upload limit
   config/                   model.yml, model_inputs.yml, overlays.yml,
                             validation_suppressions.yml, calculator_versions.yml
   data-raw/static/          the static reference tables
