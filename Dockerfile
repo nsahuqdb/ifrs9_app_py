@@ -44,7 +44,7 @@ COPY data-raw/ ./data-raw/
 COPY .streamlit/ ./.streamlit/
 RUN pip install --no-cache-dir --no-deps . \
  && pip install --no-cache-dir "fastapi>=0.110" "uvicorn[standard]>=0.27" \
-      "pydantic>=2.5" "python-multipart>=0.0.9" "streamlit>=1.36" \
+      "pydantic>=2.5" "python-multipart>=0.0.9" "streamlit>=1.64" \
       "plotly>=5.20" "requests>=2.31"
 
 # Runs, inputs and the PROJECT (config.yml, config/, data-raw/static/, config

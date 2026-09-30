@@ -34,6 +34,7 @@ the test suites.
 | Pre-run check: config, static and input checks with the version's suppressions; the version's static and model files, the project's input, drop and runs folders; "N ERROR — Run blocked" / "N WARN — review then proceed"; flagged checks; cleared when the run type or version changes | the same | browser: 5 ERROR on the injected-defect drop, 11 WARN on the repaired one |
 | **Pricing readiness** (new in both apps): no ECL, blank in LIC, priced from incomplete inputs; reasons with fixes; row funnel; contracts with a gap | the same; an unsuppressed READY ERROR disables Start, as in the R app | browser |
 | Start, gated; "Start OFFICIAL run" / "Start unofficial run" | the same | browser |
+| A blocking finding is accepted on **Validation suppressions** (reason, approver, expiry), then the check is run again | the same, and also on this page: *Accept with a reason...* writes the same entry to the same file and re-runs the checks (default config only; a config version keeps its frozen suppressions) | browser: 4 ERROR accepted on the garbage drop, Start enabled, run finished |
 | Pause: customers, investments, findings; customer view with filter; one customer at a time | the same, with paging and a stage filter | browser |
 | Override editor: rating (master scale), stage (worsening only), restructuring; reason required | the same | browser: a reason-less override refused |
 | Pending overrides per kind, with remove | the same | browser (add) |
@@ -110,6 +111,8 @@ above say.
 | The pre-run readiness dry run | runs in the session (the page waits) | runs as a background job with progress | long runs do not block the page |
 | Indicative attribution | not shown in the R app | shown, with an **Overlay** line when a run carries an overlay | the factors explain the model move and the overlay line the adjustment |
 | Who is acting | the OS user | `IFRS9_USER`, or the name entered on the page | the app has no login of its own |
+| Layout | a title bar, a sidebar of run pickers, pages below | one header bar (logo, menu, user); the run picker in each page's title row; Run the pipeline on one screen with a stepper, settings left and findings right | the full window is used; which run is on screen is never out of sight |
+| A check still running when the page reruns | not applicable (the page waits) | the job is kept in the session and picked up again | a rerun cut short no longer loses the result |
 
 ## How it was checked
 

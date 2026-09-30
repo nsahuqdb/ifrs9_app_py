@@ -11,7 +11,7 @@ if not run_id:
     st.info("No run selected. Build one on **Run the pipeline**, or point the "
             "backend at a folder of existing runs.", icon="👈")
     st.stop()
-page_setup("Overview", f"Run {run_id}")
+page_setup("Overview", "The headline provision and how it splits")
 
 with guard():
     s = api.summary(run_id)
@@ -50,7 +50,7 @@ with c2:
         fmt_table(pf[["group", "contracts", "exposure", "ecl", "coverage"]],
                   money_cols=("contracts", "exposure", "ecl"),
                   pct_cols=("coverage",)),
-        use_container_width=True, hide_index=True, height=320)
+        width="stretch", hide_index=True, height=min(320, 38 + 35 * len(pf)))
 
 if len(mp):
     st.subheader("Run-off profile")
@@ -64,4 +64,4 @@ if len(mp):
             fmt_table(mp[["band", "contracts", "exposure", "coverage"]],
                       money_cols=("contracts", "exposure"),
                       pct_cols=("coverage",)),
-            use_container_width=True, hide_index=True, height=330)
+            width="stretch", hide_index=True, height=min(330, 38 + 35 * len(mp)))

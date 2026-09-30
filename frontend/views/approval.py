@@ -10,17 +10,12 @@ import pandas as pd
 import streamlit as st
 
 import api
-from ui import caption, guard, metric_row, money, page_setup, pill, flash
+from ui import (caption, flash, guard, kpis, money, page_setup, pill,
+                style_severity)
 
 page_setup("Approval queue",
-           "Review and approve completed runs and config-version promotions. "
-           "Run approval accepts the entire run including any overrides applied "
-           "during it; version approval promotes a config bundle from pending to "
-           "approved, making it available for official runs.")
-
-if st.button("Refresh", key="aq_refresh"):
-    api.clear()
-    st.rerun()
+           "Run approval accepts the entire run, overrides included; version "
+           "approval makes a config bundle usable for official runs.")
 
 with guard():
     qr = api.queue_runs()
@@ -28,10 +23,17 @@ with guard():
 
 pending, decided = pd.DataFrame(qr["pending"]), pd.DataFrame(qr["decided"])
 vpend, vdec = pd.DataFrame(qv["pending"]), pd.DataFrame(qv["decided"])
-metric_row([("Runs awaiting a checker", money(len(pending))),
-            ("Runs decided", money(len(decided))),
-            ("Versions awaiting approval", money(len(vpend))),
-            ("Versions decided", money(len(vdec)))])
+k, r = st.columns([8, 1], vertical_alignment="center")
+with k:
+    kpis([("Runs awaiting a checker", money(len(pending)),
+           "warn" if len(pending) else "ok", ""),
+          ("Runs decided", money(len(decided)), "plum", ""),
+          ("Versions awaiting approval", money(len(vpend)),
+           "warn" if len(vpend) else "ok", ""),
+          ("Versions decided", money(len(vdec)), "plum", "")])
+if r.button("Refresh", key="aq_refresh", icon=":material/refresh:", width="stretch"):
+    api.clear()
+    st.rerun()
 
 
 def _val_tab(run_id: str):
@@ -41,10 +43,14 @@ def _val_tab(run_id: str):
         caption("No validation report.")
         return
     c = v["counts"]
-    st.write(f"{c['passed']}/{c['checks']} passed ({c['failed']} failures)")
-    st.dataframe(pd.DataFrame(v["rows"])[["status", "stage", "id", "description",
-                                          "message"]],
-                 hide_index=True, use_container_width=True, height=320,
+    st.markdown(f"{c['passed']}/{c['checks']} passed &nbsp; "
+                + pill(f"{c['errors']} errors", "err" if c["errors"] else "ok") + " "
+                + pill(f"{c['warnings']} warnings", "warn" if c["warnings"] else "ok")
+                + " " + pill(f"{c['suppressed']} accepted", "muted"),
+                unsafe_allow_html=True)
+    st.dataframe(style_severity(pd.DataFrame(v["rows"])[
+        ["status", "stage", "id", "description", "message"]]),
+                 hide_index=True, width="stretch", height=320,
                  column_config={"message": st.column_config.TextColumn(width="large")})
 
 

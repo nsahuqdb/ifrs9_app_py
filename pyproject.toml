@@ -20,7 +20,9 @@ dependencies = [
     "uvicorn[standard]>=0.27",
     "pydantic>=2.5",
     "python-multipart>=0.0.9",
-    "streamlit>=1.36",
+    # top navigation with the logo, segmented controls, dialogs and the
+    # theme options the interface uses; older releases lack some of them
+    "streamlit>=1.64",
     "plotly>=5.20",
     "requests>=2.31",
 ]

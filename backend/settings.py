@@ -59,6 +59,13 @@ def ensure_project() -> list[str]:
     """
     import shutil
     seeded = []
+    # The folders a first run needs: without them a fresh install greets the
+    # user with "that folder does not exist" for the input and runs folders.
+    for d in (RUNS_DIR, input_dir()):
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
     if PROJECT_ROOT.resolve() == APP_ROOT.resolve():
         return seeded
     PROJECT_ROOT.mkdir(parents=True, exist_ok=True)

@@ -42,6 +42,37 @@ at <http://127.0.0.1:8000/docs>. If the backend is on another host or port:
 IFRS9_BACKEND=http://10.0.0.5:8000 streamlit run app.py
 ```
 
+## Using it
+
+One bar across the top carries the QDB logo, the menu (Runs, Portfolio,
+Comparison, Stress testing, Governance, Help) and who is acting. Pages that
+read a run have the run picker in their title row -- run id, portfolio date,
+run type and approval status -- and the comparison pages a second picker for
+the run they compare against. The page uses the full width of the window.
+
+**Run the pipeline** is one screen: what you set on the left (input extracts,
+run settings, check and start), what the checks found on the right, and a
+stepper across the top (Inputs, Checks, Review & overrides, Finish).
+
+1. *Validate inputs* -- the 12 files present and readable, and a preview of
+   every data-quality check, colour-coded: ERROR red, WARN amber, INFO blue,
+   ACCEPTED grey.
+2. *Run the pre-run check* -- every input validator with the chosen config,
+   then the pricing dry run: which contracts would get no ECL, which LIC would
+   leave blank, which are priced from incomplete inputs. An unaccepted ERROR
+   locks Start and the page says which.
+3. A blocking finding you have to live with -- a known source issue -- can be
+   accepted there and then: *Accept with a reason...* records it in the
+   project's `validation_suppressions.yml` with the reason, who accepted it
+   and an optional expiry, writes it to the audit log, and runs the checks
+   again. The finding stays on the run's record as ACCEPTED. (Missing files,
+   duplicate keys and the like cannot be accepted, and a config version keeps
+   its own frozen suppressions, so accepting is offered on the default config
+   only.)
+4. *Start* -- the run pauses after phase 1 with the customer view for rating,
+   stage and restructuring overrides (a reason each), then *Continue and
+   finish* prices it. An official run lands in the Approval queue.
+
 ## The project folder
 
 The layout is the R app's, so the two apps can share one folder:

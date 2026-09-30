@@ -1,9 +1,21 @@
 [theme]
 primaryColor = "#5b1f6e"
 backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#faf9fb"
+secondaryBackgroundColor = "#f7f5fa"
 textColor = "#1f2430"
 font = "sans serif"
+baseFontSize = 15
+baseRadius = "0.55rem"
+borderColor = "#e4e0ea"
+showWidgetBorder = true
+dataframeHeaderBackgroundColor = "#f6f3f9"
+linkColor = "#5b1f6e"
+chartCategoricalColors = ["#5b1f6e", "#8e5aa3", "#0d9488", "#c9a9d8", "#7c3aed",
+                          "#5eead4", "#8a94a6", "#d97706"]
+
+[client]
+# No Deploy button or developer menu: this is an application, not a notebook.
+toolbarMode = "minimal"
 
 [server]
 headless = true

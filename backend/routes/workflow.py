@@ -104,6 +104,18 @@ def job_status(job_id: str) -> dict:
 
 
 # ----------------------------------------------------------- 1. sources ----
+def _found_inputs(d: Path) -> int:
+    """How many of the 12 extracts a folder holds, by name without extension
+    (as the drop listing counts them: .xlsx one quarter, .xls the next)."""
+    from ifrs9qdb.acquisition import expected_input_files
+    if not d.is_dir():
+        return 0
+    stems = {Path(f).stem.lower() for f in expected_input_files()}
+    found = {p.stem.lower() for p in d.iterdir()
+             if p.is_file() and p.suffix.lower() in (".xlsx", ".xls", ".csv")}
+    return len(stems & found)
+
+
 @router.get("/workflow/sources")
 def sources() -> dict:
     """The three input sources, as the R page offers them."""
@@ -116,6 +128,7 @@ def sources() -> dict:
             r["modified"] = str(r.get("modified") or "")
             rows.append(r)
     return {"configured_dir": str(cfg), "configured_exists": cfg.is_dir(),
+            "configured_found": _found_inputs(cfg),
             "drop_root": str(root) if root else "",
             "drop_root_exists": bool(root and root.is_dir()),
             "drops": rows, "upload_limit_mb": settings.max_upload_mb()}
@@ -258,6 +271,19 @@ def _run_config_for(label: str | None) -> dict:
     return rc
 
 
+def _not_suppressible() -> set[str]:
+    """The checks a suppression cannot silence: a missing input or reference
+    file, a duplicate key in the tables the run joins on, an implausible
+    reporting date, an incomplete run block. The pipeline page offers to
+    accept a blocking finding only when it can be accepted."""
+    from ifrs9qdb.validation import PREFLIGHT_VALIDATORS, STAGE_VALIDATORS
+    from ifrs9qdb.validation.readiness import (READY_STAGE_VALIDATORS,
+                                               REPORT_STAGE_VALIDATORS)
+    return {v.id for v in (STAGE_VALIDATORS + PREFLIGHT_VALIDATORS
+                           + READY_STAGE_VALIDATORS + REPORT_STAGE_VALIDATORS)
+            if not v.suppressible}
+
+
 def _suppressions_for(cfg_dir) -> Path:
     if cfg_dir is not None and (Path(cfg_dir) / "validation_suppressions.yml").is_file():
         return Path(cfg_dir) / "validation_suppressions.yml"
@@ -376,7 +402,8 @@ def pre_run(body: PreRunIn) -> dict:
                        base_dir=settings.PROJECT_ROOT,
                        suppressions_path=_suppressions_for(cfg))
     f = pr["results"]
-    flagged = f[~f["passed"].astype(bool)]
+    flagged = f[~f["passed"].astype(bool)].copy()
+    flagged["suppressible"] = ~flagged["id"].isin(_not_suppressible())
     s = pr["summary"]
     if s["errors"]:
         pill = ("error", f"{s['errors']} ERROR — Run blocked")
@@ -384,10 +411,17 @@ def pre_run(body: PreRunIn) -> dict:
         pill = ("warn", f"{s['warnings']} WARN — review then proceed")
     else:
         pill = ("pass", f"All {s['passed']} checks passed")
+    # A finding accepted on the pipeline page goes into the project's
+    # validation_suppressions.yml. That is the file this check, the readiness
+    # dry run and the run itself all read for the default config -- but not
+    # for a config version, which carries its own frozen copy.
+    live = not body.version or body.version == "__LIVE__"
     return {"summary": s, "blocked": s["errors"] > 0, "pill": pill,
             "flagged": _records(flagged), "extract_date": pr["extract_date"],
             "strip_log": pr["strip_log"],
-            "run_type": run_type_check(body.run_type, body.version or "__LIVE__")}
+            "run_type": run_type_check(body.run_type, body.version or "__LIVE__"),
+            "suppressions_file": str(_suppressions_for(cfg)),
+            "accept_here": bool(live and cfg is not None)}
 
 
 @router.post("/workflow/readiness")
@@ -409,9 +443,12 @@ def start_readiness(body: PreRunIn) -> dict:
         ready = []
         if v is not None and len(v):
             vv = v[(v["stage"] == "READY")
-                   & (v["passed"].astype(str).str.upper() != "TRUE")]
-            ready = _records(vv[["id", "severity", "effective_severity",
-                                 "description", "message"]])
+                   & (v["passed"].astype(str).str.upper() != "TRUE")].copy()
+            vv["suppressible"] = ~vv["id"].isin(_not_suppressible())
+            cols = [c for c in ("id", "severity", "effective_severity",
+                                "context", "description", "message",
+                                "suppressed", "suppressible") if c in vv.columns]
+            ready = _records(vv[cols])
         return {"ok": r["ok"], "error": r["error"], "readiness": payload,
                 "ready_findings": ready,
                 "steps": r.get("steps") or []}

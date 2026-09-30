@@ -39,6 +39,33 @@ def _run_dirs() -> list[Path]:
     return sorted(found, key=lambda p: p.stat().st_mtime, reverse=True)
 
 
+def _run_labels(p: Path) -> dict:
+    """What a run picker shows beside the id: the portfolio date, the run type
+    and the approval status, from the manifest and reports/run_status.yml.
+    Blank when a run predates them."""
+    import json
+    import yaml
+    out = {"portfolio_date": None, "run_type": None, "status": None,
+           "started_at": None}
+    try:
+        m = json.loads((p / "reports" / "manifest.json").read_text(encoding="utf-8"))
+        meta = m.get("run_metadata") or {}
+        run = m.get("run") or {}
+        out["portfolio_date"] = meta.get("portfolio_date") or m.get("reporting_date")
+        out["run_type"] = meta.get("run_type")
+        out["started_at"] = run.get("started_at") or m.get("created")
+    except Exception:
+        pass
+    try:
+        rs = yaml.safe_load((p / "reports" / "run_status.yml").read_text(
+            encoding="utf-8")) or {}
+        out["status"] = rs.get("status")
+        out["run_type"] = out["run_type"] or rs.get("run_type")
+    except Exception:
+        pass
+    return out
+
+
 @router.get("/runs")
 def list_runs() -> list[dict]:
     """Runs available to the app, newest first."""
@@ -54,6 +81,7 @@ def list_runs() -> list[dict]:
                       .replace(".csv", "").replace("_", " ")
                 for f in od.glob("FinalEclReport_scenario_*.csv")),
             "has_frozen_config": (p / "config_used").is_dir(),
+            **_run_labels(p),
         })
     return out
 

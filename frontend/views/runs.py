@@ -9,28 +9,27 @@ import pandas as pd
 import streamlit as st
 
 import api
-from ui import caption, guard, metric_row, money, page_setup, pill
+from ui import (callout, caption, guard, kpis, money, page_setup, pill,
+                style_severity)
 
-page_setup("Runs")
-
-c_top1, c_top2 = st.columns([6, 1])
-if c_top2.button("Refresh", use_container_width=True):
-    api.clear()
-    st.rerun()
+page_setup("Browse runs", "Every run, where it stands in approval, and everything "
+           "it recorded. Select one to open it.")
 
 with guard():
     t = api.runs_table()
 
-c_top1.caption(f"runs directory: `{t['runs_dir']}`  ·  exists: "
-               f"{'yes' if t['exists'] else 'NO — set IFRS9_RUNS_DIR'}  ·  "
-               f"{t['tiles']['total']} runs found")
-
 tiles = t["tiles"]
-metric_row([("Total runs", money(tiles["total"])),
-            ("Approved", money(tiles["approved"])),
-            ("Pending checker", money(tiles["pending_checker"])),
-            ("Unofficial", money(tiles["unofficial"])),
-            ("With validation fails", money(tiles["with_validation_fails"]))])
+kpis([("Runs", money(tiles["total"]), "plum", ""),
+      ("Approved", money(tiles["approved"]), "ok" if tiles["approved"] else "", ""),
+      ("Pending checker", money(tiles["pending_checker"]),
+       "warn" if tiles["pending_checker"] else "", "awaiting approval"),
+      ("Unofficial", money(tiles["unofficial"]), "info" if tiles["unofficial"] else "",
+       "no approval needed"),
+      ("With validation fails", money(tiles["with_validation_fails"]),
+       "err" if tiles["with_validation_fails"] else "ok", "")])
+if not t["exists"]:
+    callout("warn", f"The runs folder `{t['runs_dir']}` does not exist. Set "
+            "`IFRS9_RUNS_DIR`, or start a run on **Run the pipeline**.")
 
 runs = pd.DataFrame(t["runs"])
 if runs.empty:
@@ -61,22 +60,41 @@ show = pd.DataFrame({
     "Portfolio date": runs["portfolio_date"].map(_dash),
     "Run by": runs["user"].map(_dash),
     "Approver": runs["approver"].map(_dash),
-    "Config version": runs["config_version"].map(lambda v: v or "(live config)"),
-    "Calculator": runs.apply(lambda r: r["calculator_label"] or r["calculator_version"]
-                             or "—", axis=1),
+    "Config version": runs["config_version"].map(
+        lambda v: "(live config)" if _dash(v) == "—" else v),
+    "Calculator": runs.apply(lambda r: next((x for x in (r["calculator_label"],
+                                                         r["calculator_version"])
+                                             if _dash(x) != "—"), "—"), axis=1),
     "Engine": runs["engine"].map(_dash),
     "Outputs": runs["n_outputs"],
     "Validation fails": runs["n_validation_failures"],
     "Recon": runs["has_reconciliation"].map({True: "yes", False: "no"}),
     "Readiness": runs["has_readiness"].map({True: "yes", False: "—"}),
 })
-q = st.text_input("Search runs", placeholder="run id, user, purpose, version…",
-                  label_visibility="collapsed")
+c_q, c_r = st.columns([6, 1], vertical_alignment="bottom")
+q = c_q.text_input("Search runs", placeholder="Search: run id, user, purpose, "
+                   "version…", label_visibility="collapsed")
+if c_r.button("Refresh", icon=":material/refresh:", width="stretch"):
+    api.clear()
+    st.rerun()
 if q:
     mask = show.apply(lambda r: q.lower() in " ".join(map(str, r.values)).lower(),
                       axis=1)
     show = show[mask]
-ev = st.dataframe(show, hide_index=True, use_container_width=True, height=360,
+STATUS_COLOURS = {"APPROVED": ("#ecfdf3", "#067647"), "PENDING": ("#fffaeb", "#b54708"),
+                  "REJECTED": ("#fef3f2", "#b42318"), "UNOFFICIAL": ("#eff8ff", "#175cd3")}
+
+
+def _status_style(v):
+    for k, (bg, fg) in STATUS_COLOURS.items():
+        if k in str(v):
+            return f"background-color: {bg}; color: {fg}; font-weight: 600"
+    return ""
+
+
+ev = st.dataframe(show.style.map(_status_style, subset=["Status"]),
+                  hide_index=True, width="stretch",
+                  height=min(420, 38 + 35 * max(len(show), 1)),
                   on_select="rerun", selection_mode="single-row", key="runs_tbl",
                   column_config={
                       "Outputs": st.column_config.NumberColumn(format="%d"),
@@ -91,8 +109,10 @@ run = runs.loc[show.index[sel[0]]]
 run_id = run["run_id"]
 status = run["status"] or "unknown"
 
-st.markdown(f"### Run {run_id} &nbsp; {pill(status.replace('_', ' ').upper(), STATUS_TONE.get(status, 'info'))}",
-            unsafe_allow_html=True)
+st.markdown(f'<div class="pg-head" style="margin-top:.6rem"><div class="pg-title" '
+            f'style="font-size:1.15rem">Run {run_id}</div>'
+            f"{pill(status.replace('_', ' ').upper(), STATUS_TONE.get(status, 'info'))}"
+            "</div>", unsafe_allow_html=True)
 caption(f"`{run['path']}`")
 
 # ---- export -------------------------------------------------------------
@@ -256,19 +276,22 @@ with t_val:
         st.info("No validation report for this run.")
     else:
         c = v["counts"]
-        metric_row([("Checks", money(c["checks"])), ("Passed", money(c["passed"])),
-                    ("Failed", money(c["failed"])), ("Errors", money(c["errors"])),
-                    ("Warnings", money(c["warnings"])),
-                    ("Suppressed", money(c["suppressed"]))])
+        kpis([("Checks", money(c["checks"]), "plum", ""),
+              ("Passed", money(c["passed"]), "ok", ""),
+              ("Errors", money(c["errors"]), "err" if c["errors"] else "ok", ""),
+              ("Warnings", money(c["warnings"]), "warn" if c["warnings"] else "ok", ""),
+              ("Accepted", money(c["suppressed"]), "", "suppressed with a reason")])
         vf = pd.DataFrame(v["rows"])
         fq = st.text_input("Filter checks", key=f"vq_{run_id}",
                            placeholder="id, stage, message…")
         if fq:
             vf = vf[vf.apply(lambda r: fq.lower() in " ".join(map(str, r.values)).lower(),
                              axis=1)]
-        st.dataframe(vf, hide_index=True, use_container_width=True, height=460,
+        st.dataframe(style_severity(vf), hide_index=True, width="stretch", height=460,
                      column_config={"message": st.column_config.TextColumn(width="large"),
                                     "description": st.column_config.TextColumn(width="medium")})
+        caption("The Validation page lists these as readable findings, with why "
+                "each matters and what to do.")
 
 with t_rdy:
     with guard():
@@ -278,20 +301,21 @@ with t_rdy:
                 "readiness check was added do not).")
     else:
         s = rd["summary"]
-        metric_row([("Contracts", money(s["contracts"])),
-                    ("No ECL", money(s["No ECL"]["contracts"])),
-                    ("Blank in LIC", money(s["Blank in LIC"]["contracts"])),
-                    ("Priced — check", money(s["Priced - check"]["contracts"])),
-                    ("Priced", money(s["Priced"]["contracts"]))])
-        if s["No ECL"]["contracts"] or s["Blank in LIC"]["contracts"]:
-            st.error(f"{s['No ECL']['contracts']} contract(s) get no ECL and "
-                     f"{s['Blank in LIC']['contracts']} would be BLANK in LIC.",
-                     icon="🛑")
+        n_no, n_blank = s["No ECL"]["contracts"], s["Blank in LIC"]["contracts"]
+        kpis([("Contracts", money(s["contracts"]), "plum", ""),
+              ("Priced", money(s["Priced"]["contracts"]), "ok", ""),
+              ("Priced — check", money(s["Priced - check"]["contracts"]),
+               "warn" if s["Priced - check"]["contracts"] else "", ""),
+              ("Blank in LIC", money(n_blank), "err" if n_blank else "ok", ""),
+              ("No ECL", money(n_no), "err" if n_no else "ok", "")])
+        if n_no or n_blank:
+            callout("err", f"{n_no} contract(s) get no ECL and {n_blank} would be "
+                    "blank in LIC.", title="Not every contract has a number.")
         if rd["reasons"]:
             st.markdown("**Why**")
-            st.dataframe(pd.DataFrame(rd["reasons"])[
-                ["severity", "check", "contracts", "exposure", "text", "fix"]],
-                hide_index=True, use_container_width=True,
+            st.dataframe(style_severity(pd.DataFrame(rd["reasons"])[
+                ["severity", "check", "contracts", "exposure", "text", "fix"]]),
+                hide_index=True, width="stretch",
                 column_config={"exposure": st.column_config.NumberColumn(format="%,.0f"),
                                "text": st.column_config.TextColumn("what it does", width="large"),
                                "fix": st.column_config.TextColumn("what to do", width="large")})

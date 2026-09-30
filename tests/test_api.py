@@ -123,3 +123,60 @@ class TestRunDiscovery:
         e = d["entries"][0]
         assert e["accepted"] is True and e["has_report"] is False
         assert "FinalEclReport" in e["reason"]
+
+
+class TestWhatThePagesShow:
+    """Fields the interface shows beside a run, a user and an input folder."""
+
+    def test_health_names_who_is_acting(self, monkeypatch):
+        monkeypatch.setenv("IFRS9_USER", "checker7")
+        assert client.get("/api/health").json()["user"] == "checker7"
+
+    def test_a_run_carries_its_date_type_and_status(self, tmp_path, monkeypatch):
+        import json
+
+        import backend.routes.runs as R
+        run = tmp_path / "run_00001"
+        (run / "Output").mkdir(parents=True)
+        (run / "Output" / "FinalEclReport.csv").write_text("Contract Id\n")
+        (run / "reports").mkdir()
+        (run / "reports" / "manifest.json").write_text(json.dumps({
+            "run_metadata": {"portfolio_date": "2026-06-30", "run_type": "official"},
+            "run": {"started_at": "2026-07-02T09:00:00"}}))
+        (run / "reports" / "run_status.yml").write_text("status: pending_approval\n")
+        monkeypatch.setattr(R, "RUNS_DIR", tmp_path)
+        got = R.list_runs()[0]
+        assert (got["portfolio_date"], got["run_type"], got["status"]) == \
+            ("2026-06-30", "official", "pending_approval")
+
+    def test_a_run_without_a_manifest_still_lists(self, tmp_path, monkeypatch):
+        import backend.routes.runs as R
+        (tmp_path / "run_x" / "Output").mkdir(parents=True)
+        (tmp_path / "run_x" / "Output" / "FinalEclReport.csv").write_text("a\n")
+        monkeypatch.setattr(R, "RUNS_DIR", tmp_path)
+        got = R.list_runs()[0]
+        assert got["portfolio_date"] is None and got["status"] is None
+
+    def test_the_input_folder_counts_the_extracts_it_holds(self, tmp_path):
+        from backend.routes.workflow import _found_inputs
+        assert _found_inputs(tmp_path / "missing") == 0
+        assert _found_inputs(tmp_path) == 0
+        # the same extract as .xlsx one quarter and .xls the next counts once
+        for f in ("AccountMaster.xlsx", "AccountMaster.xls", "Collateral.xlsx",
+                  "notes.txt"):
+            (tmp_path / f).write_text("x")
+        assert _found_inputs(tmp_path) == 2
+
+    def test_the_pre_run_check_says_what_can_be_accepted(self, tmp_path):
+        """A missing file cannot be suppressed; the page must not offer to."""
+        from backend.routes.workflow import _not_suppressible
+        blocked = _not_suppressible()
+        assert blocked, "some checks must be beyond suppression"
+        r = client.post("/api/workflow/pre-run-check",
+                        json={"input_dir": str(tmp_path), "version": "__LIVE__"})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["blocked"] is True
+        assert "accept_here" in body and body["suppressions_file"]
+        for f in body["flagged"]:
+            assert f["suppressible"] == (f["id"] not in blocked)

@@ -43,6 +43,9 @@ pip install -e "./ifrs9qdb_py[excel]"   # the engine first
 pip install -e ./ifrs9_app_py           # then this app (".[dev]" adds the test tools)
 ```
 
+After pulling a new version, run the second line again: it upgrades anything
+the app now needs (the interface needs Streamlit 1.64 or later).
+
 ## Where the runs go
 
 `<project>/runs/`, one folder per run, in the R engine's layout -- see
