@@ -306,12 +306,28 @@ def validate_inputs(body: SourceIn) -> dict:
     if d.is_dir():
         try:
             cfg, st, _ = _version_paths(body.version)
+            supp_path = _suppressions_for(cfg)
             pr = pre_run_check(d, static_dir=st, config_dir=cfg,
-                               suppressions_path=_suppressions_for(cfg),
+                               suppressions_path=supp_path,
                                record=False, include_preflight=False)
             f = pr["results"]
             failed = f[~f["passed"].astype(bool)]
-            out["dq"] = {"summary": pr["summary"], "findings": _records(failed)}
+            # A finding a standing suppression accepts is accepted without
+            # asking, in this preview and in every run: say which, and why,
+            # so the page can offer to end them.
+            standing = _standing(supp_path)
+            rows = _annotate(_records(failed), [], standing)
+            hit = {r["id"] for r in rows if r.get("accepted_source") == "standing"}
+            ran = set(f["id"])
+            live = not body.version or body.version == "__LIVE__"
+            out["dq"] = {"summary": pr["summary"], "findings": rows,
+                         "standing": [v for k, v in standing.items() if k in hit],
+                         # in force too, for checks this preview does not run
+                         # (the pre-run check and the dry run do)
+                         "standing_other": [v for k, v in standing.items()
+                                            if k not in ran],
+                         "can_remove_standing": bool(live and cfg is not None),
+                         "suppressions_file": str(supp_path)}
             out["strip_log"] = pr["strip_log"]
             out["extract_date"] = pr["extract_date"]
         except HTTPException:

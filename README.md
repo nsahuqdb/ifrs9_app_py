@@ -66,9 +66,12 @@ stepper across the top (Inputs, Checks, Review & overrides, Finish).
    takes a reason and your name and runs the checks again. Nothing is saved
    for later runs, so the next run asks again. (Missing files, duplicate keys
    and the like cannot be accepted.) A standing suppression -- one added on
-   *Validation suppressions* -- accepts its finding in every run until it
-   expires; the page lists any that apply, with *Remove...* to end them so
-   that each run asks.
+   *Validation suppressions*, or saved by the earlier *Accept with a
+   reason...* button -- accepts its finding in every run, without asking,
+   until it expires. The page says so wherever one applies, from *Validate
+   inputs* on, with who saved it, when and why; *Stop auto-accepting...* ends
+   them (the entries are kept, with who ended them and why), and from then on
+   each run asks.
 4. *Start* -- the run pauses after phase 1 with the customer view for rating,
    stage and restructuring overrides (a reason each), then *Continue and
    finish* prices it. An official run lands in the Approval queue.

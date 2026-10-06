@@ -241,6 +241,54 @@ class TestFindingsAcceptedForOneRun:
             "removed_by": "y"})
         assert again.status_code == 404
 
+    def test_the_input_preview_names_what_a_saved_suppression_accepts(
+            self, tmp_path, monkeypatch):
+        """A finding a standing suppression accepts is accepted without
+        asking, in the preview as in every run: the preview names it, with
+        who saved it and why, so the page can offer to end it."""
+        import pandas as pd
+
+        import backend.routes.workflow as W
+        import ifrs9qdb.prerun as P
+        monkeypatch.setattr(W, "_suppressions_for", lambda cfg: self.supp)
+        for vid in ("INPUT_RS_dates_plausible", "READY_ead_curve_complete",
+                    "INPUT_RS_coverage_ok"):
+            client.post("/api/project-suppressions", json={
+                "validator_id": vid, "reason": "saved by the old Accept button",
+                "approved_by": "maker1"})
+        found = pd.DataFrame([
+            {"id": "INPUT_RS_coverage_ok", "severity": "ERROR",
+             "effective_severity": "ERROR", "passed": True, "suppressed": False},
+            {"id": "INPUT_RS_dates_plausible", "severity": "ERROR",
+             "effective_severity": "INFO", "passed": False, "suppressed": True},
+            {"id": "INPUT_RS_coverage", "severity": "WARN",
+             "effective_severity": "WARN", "passed": False, "suppressed": False}])
+        monkeypatch.setattr(P, "pre_run_check", lambda d, **kw: {
+            "results": found, "summary": {}, "strip_log": {}, "extract_date": None})
+        r = client.post("/api/workflow/validate-inputs",
+                        json={"kind": "folder", "path": str(tmp_path)})
+        assert r.status_code == 200
+        dq = r.json()["dq"]
+        assert [e["validator_id"] for e in dq["standing"]] == \
+            ["INPUT_RS_dates_plausible"]
+        assert (dq["standing"][0]["approved_by"], dq["standing"][0]["reason"]) == \
+            ("maker1", "saved by the old Accept button")
+        assert dq["can_remove_standing"] is True
+        # in force for a check the preview does not run: named too; one for a
+        # check that ran and passed: not
+        assert [e["validator_id"] for e in dq["standing_other"]] == \
+            ["READY_ead_curve_complete"]
+        by = {f["id"]: f for f in dq["findings"]}
+        assert by["INPUT_RS_dates_plausible"]["accepted_source"] == "standing"
+        assert by["INPUT_RS_coverage"]["accepted_source"] == ""
+        # ended: the preview no longer names it
+        client.post("/api/project-suppressions/remove", json={
+            "validator_id": "INPUT_RS_dates_plausible", "reason": "run by run",
+            "removed_by": "maker1"})
+        r = client.post("/api/workflow/validate-inputs",
+                        json={"kind": "folder", "path": str(tmp_path)})
+        assert r.json()["dq"]["standing"] == []
+
     def test_a_run_lists_what_it_accepted(self, tmp_path, monkeypatch):
         import backend.routes.runs as R
         run = tmp_path / "runs" / "run_00001"

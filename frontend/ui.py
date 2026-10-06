@@ -195,6 +195,8 @@ CSS = """
       border-radius: 10px; padding: .6rem .85rem; border: 1px solid;
       font-size: .87rem; line-height: 1.45; margin: .15rem 0 .35rem;}
   .callout .ic {font-weight: 800; flex: none; width: 1.2rem; text-align: center;}
+  .callout ul {margin: .3rem 0 .35rem 1.1rem; padding: 0;}
+  .callout li {margin: .1rem 0;}
   .callout.err {background: var(--err-bg); border-color: var(--err-line); color: #7a271a;}
   .callout.warn {background: var(--warn-bg); border-color: var(--warn-line); color: #7a2e0e;}
   .callout.info {background: var(--info-bg); border-color: var(--info-line); color: #194185;}
@@ -535,13 +537,19 @@ def card_header(title: str, num=None, state: str = "", right: str = "") -> None:
                 unsafe_allow_html=True)
 
 
-def callout(tone: str, text: str, title: str | None = None) -> None:
-    """A one-line verdict, coloured by tone: err, warn, info, ok, muted, plum."""
+def callout(tone: str, text: str, title: str | None = None,
+            items: list[str] | None = None, after: str | None = None) -> None:
+    """A one-line verdict, coloured by tone: err, warn, info, ok, muted, plum.
+    ``items`` are listed under the text, one per line, and ``after`` closes
+    it."""
     icon = {"err": "!", "warn": "!", "info": "i", "ok": "✓", "muted": "•",
             "plum": "›"}.get(tone, "•")
     head = f"<b>{esc(title)}</b> " if title else ""
+    lis = ("<ul>" + "".join(f"<li>{md(i)}</li>" for i in items) + "</ul>"
+           if items else "")
+    tail = md(after) if after else ""
     st.markdown(f'<div class="callout {tone}"><span class="ic {tone}">{icon}</span>'
-                f'<div>{head}{md(text)}</div></div>', unsafe_allow_html=True)
+                f'<div>{head}{md(text)}{lis}{tail}</div></div>', unsafe_allow_html=True)
 
 
 def chips(items) -> None:

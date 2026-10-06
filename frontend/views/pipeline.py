@@ -282,23 +282,24 @@ def _accept_dialog(rows: list[dict]) -> None:
         st.rerun()
 
 
-@st.dialog("Remove standing suppressions", width="large")
+@st.dialog("Stop accepting these automatically", width="large")
 def _remove_dialog(entries: list[dict]) -> None:
     opts = {e["validator_id"]: e for e in entries}
-    caption("A standing suppression in `validation_suppressions.yml` accepts its "
-            "finding in **every** run until it expires. Removing one ends it from "
-            "today: the entry stays in the file with who removed it and why, and "
-            "the audit log records it. The finding then blocks again, and each "
-            "run asks whether to accept it for that run.")
+    caption("Each of these is a standing suppression in "
+            "`validation_suppressions.yml`, which accepts its finding in **every** "
+            "run, without asking, until it expires. Ending one stops that from "
+            "today: the entry stays in the file with who ended it and why, and the "
+            "audit log records it. The finding then blocks again, and each run "
+            "asks whether to accept it, for that run only.")
     pick = st.multiselect(
-        "Suppressions to remove", list(opts), default=list(opts),
-        format_func=lambda i: f"{i} — approved by {opts[i].get('approved_by') or '?'}"
+        "Suppressions to end", list(opts), default=list(opts),
+        format_func=lambda i: f"{i} — saved by {opts[i].get('approved_by') or '?'}"
                               f": {opts[i].get('reason') or ''}"[:140])
     reason = st.text_area("Reason (required)", height=70,
-                          placeholder="e.g. Findings are to be accepted run by run.")
-    who = st.text_input("Removed by", value=S.get("_user") or "")
-    if st.button("Remove and re-check", type="primary", disabled=not pick,
-                 icon=":material/delete:"):
+                          value="Accept findings run by run, not for every run.")
+    who = st.text_input("Ended by", value=S.get("_user") or "")
+    if st.button("End them and check again", type="primary", disabled=not pick,
+                 icon=":material/block:"):
         if not reason.strip() or not who.strip():
             st.error("A reason and a name are required: they go on the audit trail.")
             return
@@ -309,14 +310,84 @@ def _remove_dialog(entries: list[dict]) -> None:
             except api.BackendError as e:
                 failed.append(f"{vid}: {e}")
         if failed:
-            st.error("Not removed: " + "; ".join(failed))
+            st.error("Not ended: " + "; ".join(failed))
             return
-        msg = (f"Removed {len(pick)} standing suppression(s); the checks ran again. "
-               "Those findings are now asked about on each run.")
-        if S.get("wf_last_req"):
-            _request_checks(S["wf_last_req"], msg)
+        msg = (f"Ended {len(pick)} standing suppression(s). Those findings are no "
+               "longer accepted automatically: each run asks.")
+        _forget_standing(set(pick))
+        if S.get("wf_pre") is not None and S.get("wf_last_req"):
+            _request_checks(S["wf_last_req"], msg + " The checks ran again.")
         flash(msg)
         st.rerun()
+
+
+def _forget_standing(ids: set) -> None:
+    """Suppressions ended: the input preview drawn with them now reads as a
+    fresh one would -- those findings no longer accepted, nor offered to end
+    -- without reading the files again (ending one changes nothing else)."""
+    dq = (S.get("wf_val") or {}).get("dq")
+    if not dq:
+        return
+    for k in ("standing", "standing_other"):
+        dq[k] = [e for e in dq.get(k) or [] if e["validator_id"] not in ids]
+    for f in dq.get("findings") or []:
+        if f.get("id") in ids and f.get("accepted_source") == "standing":
+            f.update(suppressed=False, effective_severity=f.get("severity"),
+                     accepted_source="", accepted_reason="", accepted_by="",
+                     accepted_at="", valid_until="")
+
+
+def _saved(e: dict) -> str:
+    return (f"`{e['validator_id']}` — saved by {e.get('approved_by') or '?'}"
+            + (f" on {_nice(e.get('approved_at'))}" if e.get("approved_at") else "")
+            + (f", until {_nice(e.get('valid_until'))}" if e.get("valid_until") else "")
+            + f": *{e.get('reason') or 'no reason given'}*")
+
+
+def _standing_notice(entries: list[dict], can_remove: bool, key: str,
+                     others: list[dict] | None = None) -> None:
+    """Findings a standing suppression accepts: without asking, in every run.
+    Said plainly -- the page otherwise asks run by run, and a suppression
+    saved long ago (the earlier pipeline page saved its acceptances as
+    these) is easy to forget -- with who saved each, when and why, and a way
+    to end them where the page can. ``others`` are in force for checks not
+    run yet (the input preview does not run the pre-run check's): named, and
+    ended with the rest."""
+    others = others or []
+    if not entries and not others:
+        return
+    if entries:
+        tone = "warn"
+        title = f"{len(entries)} finding(s) accepted automatically, without asking."
+        text = ("They are standing suppressions in `validation_suppressions.yml`, "
+                "which apply to every run until they expire or are ended. (The "
+                "earlier *Accept with a reason…* button saved its acceptances "
+                "there.)")
+        items = [_saved(e) for e in entries]
+        if others:
+            items += ["Also saved, for a check the pre-run check runs: " + _saved(e)
+                      for e in others]
+    else:
+        tone = "muted"
+        title = (f"{len(others)} standing suppression(s) in force for checks the "
+                 "pre-run check runs.")
+        text = ("If those checks fail, the findings are accepted automatically, "
+                "without asking, in every run:")
+        items = [_saved(e) for e in others]
+    if not can_remove:
+        callout(tone, text, title=title, items=items,
+                after="They belong to this config version's frozen copy, so they "
+                      "cannot be ended here.")
+        return
+    a, b = st.columns([4, 1.35], vertical_alignment="center")
+    with a:
+        callout(tone, text, title=title, items=items,
+                after="End them, and each run asks whether to accept the "
+                      "finding — for that run only.")
+    if b.button("Stop auto-accepting…", icon=":material/block:",
+                type="primary" if entries else "secondary", width="stretch",
+                key=key):
+        _remove_dialog(entries + others)
 
 
 # ============================================================== stepper ====
@@ -822,13 +893,15 @@ def _input_check(val: dict) -> None:
     dq = val.get("dq") or {}
     rows = dq.get("findings") or []
     c = severity_counts(rows)
+    auto = len(dq.get("standing") or [])
     kpis([("Files found", f"{n_files_ok} of {len(files)}",
            "ok" if n_files_ok == len(files) else "err", ""),
           ("Structure", f"{val['n_pass']} passed", "err" if val["n_fail"] else "ok",
            f"{val['n_fail']} failed" if val["n_fail"] else "all passed"),
           ("Data quality", f"{c['err']} error(s)",
-           "err" if c["err"] else "warn" if c["warn"] else "ok",
-           f"{c['warn']} warning(s) · a preview"),
+           "err" if c["err"] else "warn" if c["warn"] or auto else "ok",
+           f"{c['warn']} warning(s)"
+           + (f" · **{auto} accepted automatically**" if auto else " · a preview")),
           ("Extract date", _nice(val.get("extract_date")), "plum",
            "the EXTRACTDA most rows carry")])
     if not val["ok"]:
@@ -846,6 +919,8 @@ def _input_check(val: dict) -> None:
                 title="Auto-fixed.")
     if val.get("dq_error"):
         callout("warn", f"The data-quality preview could not run: {val['dq_error']}")
+    _standing_notice(dq.get("standing") or [], bool(dq.get("can_remove_standing")),
+                     "wf_stop_val", others=dq.get("standing_other") or [])
     if rows:
         caption("A preview: nothing here blocks yet. The pre-run check runs these "
                 "again with the chosen config version and decides what blocks.")
@@ -911,28 +986,15 @@ def _accepted_banners(pre: dict) -> None:
             S.pop("wf_accepted", None)
             _request_checks(S["wf_last_req"],
                             "Withdrew the acceptances; the checks ran again.")
-    # the standing suppressions that took effect, in the check or the dry run
+    _standing_notice(_standing_hits(pre), bool(pre.get("can_remove_standing")),
+                     "wf_rm_standing")
+
+
+def _standing_hits(pre: dict) -> list[dict]:
+    """The standing suppressions that took effect, in the check or the dry
+    run."""
     hit = {r.get("id") for r in _check_rows() if r.get("accepted_source") == "standing"}
-    standing = [e for e in (pre.get("standing") or []) if e["validator_id"] in hit]
-    if standing:
-        items = "; ".join(
-            f"`{e['validator_id']}` (approved by {e.get('approved_by') or '?'}"
-            + (f", until {e['valid_until']}" if e.get("valid_until") else "")
-            + f": {e.get('reason') or ''})" for e in standing)
-        text = (f"{items}. A standing suppression applies to every run until it "
-                "expires or is removed, so these are not asked about.")
-        title = f"{len(standing)} finding(s) accepted by standing suppressions."
-        if pre.get("can_remove_standing"):
-            a, b = st.columns([4, 1.25], vertical_alignment="center")
-            with a:
-                callout("muted", text + " Remove them to decide run by run.",
-                        title=title)
-            if b.button("Remove…", icon=":material/delete:", width="stretch",
-                        key="wf_rm_standing"):
-                _remove_dialog(standing)
-        else:
-            callout("muted", text + " They belong to this config version's "
-                    "frozen copy and cannot be removed here.", title=title)
+    return [e for e in (pre.get("standing") or []) if e["validator_id"] in hit]
 
 
 def _results(val) -> None:
@@ -984,6 +1046,12 @@ def _results(val) -> None:
                     _accept_dialog(acceptable)
             else:
                 callout("err", text, title="Start is locked.")
+        elif _standing_hits(pre):
+            callout("warn", "Nothing blocks, because saved suppressions accept "
+                    f"**{len(_standing_hits(pre))} finding(s)** automatically "
+                    "(listed below)"
+                    + (f"; **{c['warn']} warning(s)** to review." if c["warn"]
+                       else "."), title="Ready to start.")
         elif c["warn"]:
             callout("warn", f"No blocking findings. **{c['warn']} warning(s)** to "
                     "review; they do not stop the run.", title="Ready to start.")
