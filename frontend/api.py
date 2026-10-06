@@ -734,6 +734,20 @@ def add_project_suppression(validator_id: str, reason: str, approved_by: str,
                  "approved_by": approved_by, "valid_until": valid_until})
 
 
+def remove_project_suppression(validator_id: str, reason: str,
+                               removed_by: str) -> dict:
+    """End a standing suppression from today (the entry is kept, with who
+    ended it and why)."""
+    return post("/project-suppressions/remove",
+                {"validator_id": validator_id, "reason": reason,
+                 "removed_by": removed_by})
+
+
+def run_accepted_findings(run_id: str) -> dict:
+    """Every finding accepted in a run, with the reason, who and when."""
+    return get(f"/runs/{run_id}/accepted-findings")
+
+
 def validator_catalog() -> dict:
     return get("/validator-catalog")
 

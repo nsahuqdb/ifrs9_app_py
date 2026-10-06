@@ -180,3 +180,100 @@ class TestWhatThePagesShow:
         assert "accept_here" in body and body["suppressions_file"]
         for f in body["flagged"]:
             assert f["suppressible"] == (f["id"] not in blocked)
+
+
+class TestFindingsAcceptedForOneRun:
+    """Accepting on the pipeline page is for the run being prepared only;
+    standing suppressions are ended, not deleted; a run says what it accepted."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate(self, tmp_path, monkeypatch):
+        import ifrs9qdb.audit_log as A
+
+        from backend import settings
+        monkeypatch.setattr(A, "_PATH", tmp_path / "etl_audit.jsonl")
+        monkeypatch.setattr(settings, "SUPPRESSIONS_FILE",
+                            tmp_path / "validation_suppressions.yml")
+        self.supp = tmp_path / "validation_suppressions.yml"
+
+    def test_a_check_no_suppression_can_silence_cannot_be_accepted(self, tmp_path):
+        from backend.routes.workflow import _not_suppressible
+        locked = sorted(_not_suppressible())[0]
+        r = client.post("/api/workflow/pre-run-check", json={
+            "input_dir": str(tmp_path), "accepted_findings": [
+                {"validator_id": locked, "reason": "please"}]})
+        assert r.status_code == 400 and "cannot be accepted" in r.text
+
+    def test_an_acceptance_needs_a_reason(self, tmp_path):
+        r = client.post("/api/workflow/pre-run-check", json={
+            "input_dir": str(tmp_path), "accepted_findings": [
+                {"validator_id": "INPUT_RS_dates_plausible", "reason": " "}]})
+        assert r.status_code == 400 and "reason" in r.text
+
+    def test_accepting_writes_nothing_to_the_suppressions_file(self, tmp_path):
+        r = client.post("/api/workflow/pre-run-check", json={
+            "input_dir": str(tmp_path), "accepted_findings": [
+                {"validator_id": "INPUT_RS_dates_plausible", "reason": "known"}]})
+        assert r.status_code == 200
+        body = r.json()
+        assert [a["validator_id"] for a in body["accepted"]] == \
+            ["INPUT_RS_dates_plausible"]
+        assert body["accepted"][0]["accepted_by"]          # the acting user
+        assert not self.supp.exists()
+
+    def test_a_standing_suppression_is_ended_and_kept(self):
+        add = client.post("/api/project-suppressions", json={
+            "validator_id": "INPUT_RS_dates_plausible", "reason": "old way",
+            "approved_by": "maker1"})
+        assert add.status_code == 200
+        assert add.json()["active"] == ["INPUT_RS_dates_plausible"]
+        rm = client.post("/api/project-suppressions/remove", json={
+            "validator_id": "INPUT_RS_dates_plausible",
+            "reason": "accepted run by run now", "removed_by": "checker1"})
+        assert rm.status_code == 200
+        body = rm.json()
+        assert body["active"] == [] and body["removed"] == 1
+        h = body["history"][0]
+        assert (h["status"], h["reason"], h["removed_by"], h["removal_reason"]) == \
+            ("removed", "old way", "checker1", "accepted run by run now")
+        again = client.post("/api/project-suppressions/remove", json={
+            "validator_id": "INPUT_RS_dates_plausible", "reason": "x",
+            "removed_by": "y"})
+        assert again.status_code == 404
+
+    def test_a_run_lists_what_it_accepted(self, tmp_path, monkeypatch):
+        import backend.routes.runs as R
+        run = tmp_path / "runs" / "run_00001"
+        (run / "Output").mkdir(parents=True)
+        (run / "Output" / "FinalEclReport.csv").write_text("Contract Id\n")
+        (run / "reports").mkdir()
+        (run / "reports" / "accepted_findings.csv").write_text(
+            "validator_id,severity,source,reason,accepted_by,accepted_at,"
+            "valid_until,in_effect\n"
+            "INPUT_RS_dates_plausible,ERROR,run,two-digit years,maker1,"
+            "2026-10-06T09:00:00+0300,,TRUE\n")
+        monkeypatch.setattr(R, "RUNS_DIR", tmp_path / "runs")
+        import backend.routes.runs_detail as D
+        monkeypatch.setattr(D, "_run_path", lambda rid: tmp_path / "runs" / rid)
+        r = client.get("/api/runs/run_00001/accepted-findings")
+        assert r.status_code == 200
+        row = r.json()["rows"][0]
+        assert (row["source"], row["reason"], row["accepted_by"]) == \
+            ("run", "two-digit years", "maker1")
+
+
+def test_an_archived_calculator_drops_what_its_phase_one_cannot_take():
+    """run_etl(**meta) passes unknown names on to run_etl_phase1; an archived
+    version older than an argument must drop it, not fail on it."""
+    import types
+
+    from backend.archived_runner import _accepts
+
+    def run_etl(input_dir, runs_dir, overrides=None, **meta):
+        pass
+
+    def run_etl_phase1(input_dir, runs_dir, run_purpose=None):
+        pass
+    old = types.SimpleNamespace(run_etl=run_etl, run_etl_phase1=run_etl_phase1)
+    assert _accepts(old, "overrides") and _accepts(old, "run_purpose")
+    assert not _accepts(old, "accepted_findings")

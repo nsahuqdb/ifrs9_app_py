@@ -4,8 +4,8 @@ import pandas as pd
 import streamlit as st
 
 import api
-from ui import (callout, caption, findings, guard, kpis, money, page_setup,
-                style_severity)
+from ui import (accepted_findings_table, accepted_note, callout, caption,
+                findings, guard, kpis, money, page_setup, style_severity)
 
 run_id = st.session_state.get("run_id")
 if not run_id:
@@ -21,8 +21,29 @@ STATUS_TONE = {"ERROR": "err", "WARN": "warn", "INFO": "info", "SUPPR": "muted",
 LABEL = {"err": "Errors", "warn": "Warnings", "info": "Info", "muted": "Accepted",
          "ok": "Passed"}
 
-tab_rep, tab_rdy, tab_post = st.tabs(["Run validation report", "Pricing readiness",
-                                      "Post-run checks"])
+with guard():
+    acc = api.run_accepted_findings(run_id)
+acc_rows = acc.get("rows") or []
+acc_by_id = {}
+for a in acc_rows:
+    acc_by_id.setdefault(a["validator_id"], a)
+
+tab_rep, tab_acc, tab_rdy, tab_post = st.tabs([
+    "Run validation report", f"Accepted findings · {len(acc_rows)}",
+    "Pricing readiness", "Post-run checks"])
+
+# ======================================================= accepted findings ====
+with tab_acc:
+    caption("Every finding accepted in this run and why: accepted **for this "
+            "run** on the pipeline page, or by a **standing suppression** in "
+            "validation_suppressions.yml that took effect. Each is also in the "
+            "run's validation report and, with the run id, in the Audit log.")
+    if acc_rows and not acc.get("recorded", True):
+        callout("info", "This run was made before runs kept their own list. It is "
+                "rebuilt from the checks the run recorded as suppressed and the "
+                "suppressions file it froze.")
+    accepted_findings_table(acc_rows, empty="Nothing was accepted in this run: "
+                            "every failed check counts at its own severity.")
 
 # ============================================================ run report ====
 with tab_rep:
@@ -47,7 +68,8 @@ with tab_rep:
               ("Errors", money(c["errors"]), "err" if c["errors"] else "ok", ""),
               ("Warnings", money(c["warnings"]), "warn" if c["warnings"] else "ok", ""),
               ("Info", money(c["info"]), "info" if c["info"] else "", ""),
-              ("Accepted", money(c["suppressed"]), "", "suppressed with a reason")])
+              ("Accepted", money(c["suppressed"]), "plum" if c["suppressed"] else "",
+               "see Accepted findings")])
 
         rows = pd.DataFrame(v["rows"])
         order = ["PREFLIGHT", "INPUT", "TRANSFORM", "DERIVED", "READY", "REPORT"]
@@ -78,7 +100,10 @@ with tab_rep:
                      if r.get("context") else r["stage"],
                      "title": r["description"], "message": r["message"],
                      "rationale": r.get("rationale"),
-                     "remediation": r.get("remediation")}
+                     "remediation": r.get("remediation"),
+                     # who accepted it, how and why
+                     "accepted_note": accepted_note(acc_by_id[r["id"]])
+                     if r["status"] == "SUPPR" and r["id"] in acc_by_id else ""}
                     for _, r in shown.iterrows()]
             if not recs:
                 caption("Pick a severity above to list its checks.")

@@ -9,8 +9,8 @@ import pandas as pd
 import streamlit as st
 
 import api
-from ui import (callout, caption, guard, kpis, money, page_setup, pill,
-                style_severity)
+from ui import (accepted_findings_table, callout, caption, guard, kpis, money,
+                page_setup, pill, style_severity)
 
 page_setup("Browse runs", "Every run, where it stands in approval, and everything "
            "it recorded. Select one to open it.")
@@ -280,7 +280,14 @@ with t_val:
               ("Passed", money(c["passed"]), "ok", ""),
               ("Errors", money(c["errors"]), "err" if c["errors"] else "ok", ""),
               ("Warnings", money(c["warnings"]), "warn" if c["warnings"] else "ok", ""),
-              ("Accepted", money(c["suppressed"]), "", "suppressed with a reason")])
+              ("Accepted", money(c["suppressed"]), "plum" if c["suppressed"] else "",
+               "listed below, with the reasons")])
+        with guard():
+            acc = api.run_accepted_findings(run_id)
+        if acc.get("rows"):
+            st.markdown(f"**Accepted findings · {len(acc['rows'])}** — accepted for "
+                        "this run, or by a standing suppression that took effect")
+            accepted_findings_table(acc["rows"])
         vf = pd.DataFrame(v["rows"])
         fq = st.text_input("Filter checks", key=f"vq_{run_id}",
                            placeholder="id, stage, message…")

@@ -382,10 +382,80 @@ def calculators() -> dict:
 
 
 # ------------------------------------------------------ 3. pre-run check ----
+class AcceptedIn(BaseModel):
+    """A finding accepted for the run being prepared -- for that run only."""
+    validator_id: str
+    reason: str
+    accepted_by: str | None = None
+    accepted_at: str | None = None
+
+
 class PreRunIn(BaseModel):
     input_dir: str
     version: str | None = "__LIVE__"
     run_type: str = "unofficial"
+    accepted_findings: list[AcceptedIn] = []
+
+
+def _accepted(items) -> list[dict]:
+    """The findings accepted for the run being prepared, as the engine takes
+    them. They apply to this check, the dry run and the run, and to nothing
+    after: they are never written to validation_suppressions.yml, so the
+    next run asks again. Refused: a check no suppression can silence, and an
+    acceptance without a reason (it is the audit trail)."""
+    blocked = _not_suppressible()
+    out = []
+    for a in items or []:
+        vid = (a.validator_id or "").strip()
+        if not vid:
+            continue
+        if vid in blocked:
+            raise HTTPException(400, f"{vid} cannot be accepted: it is a check no "
+                                     "suppression can silence (a missing file, a "
+                                     "duplicate key...). Fix it at source.")
+        if not (a.reason or "").strip():
+            raise HTTPException(400, f"{vid}: a reason is required (audit trail).")
+        out.append({"validator_id": vid, "reason": a.reason.strip(),
+                    "accepted_by": (a.accepted_by or "").strip()
+                    or settings.current_user(),
+                    "accepted_at": (a.accepted_at or "").strip() or
+                    datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")})
+    return out
+
+
+def _standing(path) -> dict[str, dict]:
+    """The standing suppressions in force in a suppressions file, by id (the
+    first entry in force, as the runner applies them)."""
+    from ifrs9qdb.validation import active_suppression_ids, load_suppressions
+    tbl = load_suppressions(path)
+    active = set(active_suppression_ids(tbl))
+    out: dict[str, dict] = {}
+    for r in tbl.to_dict(orient="records"):
+        if r["validator_id"] in active and r["validator_id"] not in out:
+            out[r["validator_id"]] = r
+    return out
+
+
+def _annotate(rows: list[dict], accepted: list[dict], standing: dict) -> list[dict]:
+    """Say, for each suppressed finding, what accepted it: a standing
+    suppression (reason, approver, expiry) or an acceptance for this run."""
+    acc = {a["validator_id"]: a for a in accepted}
+    for f in rows:
+        f.setdefault("accepted_source", "")
+        if str(f.get("suppressed")).upper() != "TRUE":
+            continue
+        vid = f.get("id")
+        if vid in standing:
+            s = standing[vid]
+            f.update(accepted_source="standing", accepted_reason=s["reason"],
+                     accepted_by=s["approved_by"], accepted_at=s["approved_at"],
+                     valid_until=s["valid_until"])
+        elif vid in acc:
+            a = acc[vid]
+            f.update(accepted_source="run", accepted_reason=a["reason"],
+                     accepted_by=a["accepted_by"], accepted_at=a["accepted_at"],
+                     valid_until="")
+    return rows
 
 
 @router.post("/workflow/pre-run-check")
@@ -397,10 +467,12 @@ def pre_run(body: PreRunIn) -> dict:
     if not d.is_dir():
         raise HTTPException(400, f"No input directory at {d}")
     cfg, st, _ = _version_paths(body.version)
+    accepted = _accepted(body.accepted_findings)
+    supp_path = _suppressions_for(cfg)
     pr = pre_run_check(d, static_dir=st, config_dir=cfg,
                        run_config=_run_config_for(body.version),
                        base_dir=settings.PROJECT_ROOT,
-                       suppressions_path=_suppressions_for(cfg))
+                       suppressions_path=supp_path, accepted_findings=accepted)
     f = pr["results"]
     flagged = f[~f["passed"].astype(bool)].copy()
     flagged["suppressible"] = ~flagged["id"].isin(_not_suppressible())
@@ -411,17 +483,23 @@ def pre_run(body: PreRunIn) -> dict:
         pill = ("warn", f"{s['warnings']} WARN — review then proceed")
     else:
         pill = ("pass", f"All {s['passed']} checks passed")
-    # A finding accepted on the pipeline page goes into the project's
-    # validation_suppressions.yml. That is the file this check, the readiness
-    # dry run and the run itself all read for the default config -- but not
-    # for a config version, which carries its own frozen copy.
+    # Findings accepted on the pipeline page apply to the run being prepared
+    # only (passed back with each check and with Start), so they work on any
+    # config. Standing suppressions are another matter: the page can end one
+    # only in the project's own file -- a config version keeps a frozen copy.
+    standing = _standing(supp_path)
+    rows = _annotate(_records(flagged), accepted, standing)
+    hit = {r["id"] for r in rows if r.get("accepted_source") == "standing"}
     live = not body.version or body.version == "__LIVE__"
     return {"summary": s, "blocked": s["errors"] > 0, "pill": pill,
-            "flagged": _records(flagged), "extract_date": pr["extract_date"],
+            "flagged": rows, "extract_date": pr["extract_date"],
             "strip_log": pr["strip_log"],
             "run_type": run_type_check(body.run_type, body.version or "__LIVE__"),
-            "suppressions_file": str(_suppressions_for(cfg)),
-            "accept_here": bool(live and cfg is not None)}
+            "suppressions_file": str(supp_path),
+            "accepted": accepted,
+            "standing": [{**v, "applies": k in hit} for k, v in standing.items()],
+            "accept_here": True,
+            "can_remove_standing": bool(live and cfg is not None)}
 
 
 @router.post("/workflow/readiness")
@@ -434,9 +512,12 @@ def start_readiness(body: PreRunIn) -> dict:
     if not d.is_dir():
         raise HTTPException(400, f"No input directory at {d}")
     cfg, st, _ = _version_paths(body.version)
+    accepted = _accepted(body.accepted_findings)
+    standing = _standing(_suppressions_for(cfg))
 
     def work(progress):
-        r = pre_run_readiness(d, static_dir=st, config_dir=cfg, progress=progress)
+        r = pre_run_readiness(d, static_dir=st, config_dir=cfg, progress=progress,
+                              accepted_findings=accepted)
         payload = (readiness_payload(r["contracts"], r["funnel"], r["markdown"])
                    if r.get("contracts") is not None else {"exists": False})
         v = r.get("validation")
@@ -448,7 +529,7 @@ def start_readiness(body: PreRunIn) -> dict:
             cols = [c for c in ("id", "severity", "effective_severity",
                                 "context", "description", "message",
                                 "suppressed", "suppressible") if c in vv.columns]
-            ready = _records(vv[cols])
+            ready = _annotate(_records(vv[cols]), accepted, standing)
         return {"ok": r["ok"], "error": r["error"], "readiness": payload,
                 "ready_findings": ready,
                 "steps": r.get("steps") or []}
@@ -466,6 +547,7 @@ class StartIn(BaseModel):
     portfolio_date: str | None = None
     calculator_version: str | None = None
     user: str | None = None
+    accepted_findings: list[AcceptedIn] = []
 
 
 @router.post("/workflow/start")
@@ -482,6 +564,7 @@ def start(body: StartIn) -> dict:
     purpose = body.run_purpose if body.run_purpose in purposes else purposes[0]
     cfg, st, meta = _version_paths(body.version)
     user = (body.user or "").strip() or settings.current_user()
+    accepted = _accepted(body.accepted_findings)
     rc = _run_config_for(body.version)
     policy = str((rc.get("run") or {}).get("on_validation_error") or "warn") \
         if isinstance(rc, dict) else settings.on_validation_error()
@@ -496,7 +579,7 @@ def start(body: StartIn) -> dict:
             run_purpose=purpose, portfolio_date=body.portfolio_date,
             snapshot_meta=meta, calculator_version=body.calculator_version or None,
             input_source=body.input_source, run_config=rc,
-            project_root=settings.PROJECT_ROOT)
+            project_root=settings.PROJECT_ROOT, accepted_findings=accepted)
         if state.done:
             return {"paused": False, "run_id": state.run_id,
                     "result": state.result.as_dict()}
@@ -532,7 +615,15 @@ def _pause_summary(run_id: str) -> dict:
             "started": p["started"], "user": p["user"],
             "version": p["version"], "run_type": st.run_type,
             "run_purpose": st.run_purpose,
-            "pending": {k: len(v_) for k, v_ in p["overrides"].items()}}
+            "pending": {k: len(v_) for k, v_ in p["overrides"].items()},
+            # findings accepted for this run, as recorded in it so far
+            "accepted": _records(_accepted_so_far(st))}
+
+
+def _accepted_so_far(st) -> pd.DataFrame:
+    from ifrs9qdb.validation import accepted_findings_record, combine
+    issues = combine(*st.stage_results).issues if st.stage_results else []
+    return accepted_findings_record(st.accepted, issues, st.standing)
 
 
 @router.get("/workflow/paused")
@@ -704,7 +795,9 @@ def _run_archived(state, code_dir: Path, overrides: dict, progress) -> dict:
                 "calculator_version": state.calculator_version,
                 "input_source": state.input_source,
                 "run_config": state.run_config,
-                "project_root": str(state.project_root)}}
+                "project_root": str(state.project_root),
+                "accepted_findings": [] if state.accepted is None
+                else state.accepted.to_dict(orient="records")}}
     a, r = shim / "args.json", shim / "result.json"
     a.write_text(json.dumps(args, default=str), encoding="utf-8")
     env = dict(os.environ)

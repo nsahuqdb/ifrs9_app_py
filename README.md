@@ -62,16 +62,26 @@ stepper across the top (Inputs, Checks, Review & overrides, Finish).
    leave blank, which are priced from incomplete inputs. An unaccepted ERROR
    locks Start and the page says which.
 3. A blocking finding you have to live with -- a known source issue -- can be
-   accepted there and then: *Accept with a reason...* records it in the
-   project's `validation_suppressions.yml` with the reason, who accepted it
-   and an optional expiry, writes it to the audit log, and runs the checks
-   again. The finding stays on the run's record as ACCEPTED. (Missing files,
-   duplicate keys and the like cannot be accepted, and a config version keeps
-   its own frozen suppressions, so accepting is offered on the default config
-   only.)
+   accepted there and then, **for this run only**: *Accept for this run...*
+   takes a reason and your name and runs the checks again. Nothing is saved
+   for later runs, so the next run asks again. (Missing files, duplicate keys
+   and the like cannot be accepted.) A standing suppression -- one added on
+   *Validation suppressions* -- accepts its finding in every run until it
+   expires; the page lists any that apply, with *Remove...* to end them so
+   that each run asks.
 4. *Start* -- the run pauses after phase 1 with the customer view for rating,
    stage and restructuring overrides (a reason each), then *Continue and
    finish* prices it. An official run lands in the Approval queue.
+
+**What a run accepted, and why.** Every finding accepted in a run -- for that
+run, or by a standing suppression that took effect -- is on the run's own
+record: `reports/accepted_findings.csv` (check, severity, how it was accepted,
+reason, who, when, expiry, whether it took effect), a section at the end of
+`reports/validation.md`, and the manifest. The run's **Validation** page has an
+*Accepted findings* tab, Browse runs and the Approval queue show the same list
+beside the validation report, and the **Audit log** has a *Finding accepted*
+event for each, with the run id. Removing a standing suppression ends it from
+today and keeps the entry, with who removed it and why.
 
 ## The project folder
 

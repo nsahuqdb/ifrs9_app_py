@@ -201,14 +201,71 @@ class ProjectSuppressionIn(BaseModel):
     valid_until: str | None = None
 
 
+class SuppressionRemoveIn(BaseModel):
+    validator_id: str
+    reason: str
+    removed_by: str = ""
+
+
+def _suppression_history(p) -> list[dict]:
+    """Every entry in the file, in order, with where it stands today:
+    active, expired, or removed (ended by remove_suppression, which keeps
+    the entry and records who ended it and why)."""
+    import pandas as pd
+    import yaml
+    from ifrs9qdb.validation import active_suppression_ids
+    if not p.is_file():
+        return []
+    try:
+        raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return []
+    out = []
+    for e in raw.get("suppressions") or []:
+        if not isinstance(e, dict):
+            continue
+        row = {k: ("" if e.get(k) is None else str(e.get(k)))
+               for k in ("validator_id", "reason", "approved_by", "approved_at",
+                         "valid_until", "removed_by", "removed_at",
+                         "removal_reason")}
+        one = pd.DataFrame([{k: row[k] for k in ("validator_id", "reason",
+                                                 "approved_by", "approved_at",
+                                                 "valid_until")}])
+        row["status"] = ("removed" if row["removed_by"] else
+                         "active" if active_suppression_ids(one) else "expired")
+        out.append(row)
+    return out
+
+
 @router.get("/project-suppressions")
 def project_suppressions() -> dict:
-    """The project's suppressions -- what the NEXT pre-run check and run apply."""
+    """The project's suppressions -- what the NEXT pre-run check and run apply
+    -- and the history of the file: every entry, active, expired or removed."""
     from ifrs9qdb.validation import active_suppression_ids, load_suppressions
     p = settings.SUPPRESSIONS_FILE
     table = load_suppressions(p)
     return {"path": str(p), "exists": p.is_file(), "entries": _records(table),
-            "active": sorted(active_suppression_ids(table))}
+            "active": sorted(active_suppression_ids(table)),
+            "history": _suppression_history(p)}
+
+
+@router.post("/project-suppressions/remove")
+def remove_project_suppression(body: SuppressionRemoveIn) -> dict:
+    """End a standing suppression from today -- the entry is kept, with who
+    ended it and why, and the audit log records a suppression_remove event.
+    The finding then blocks again, and is asked about on each run."""
+    from ifrs9qdb.validation import remove_suppression
+    try:
+        n = remove_suppression(settings.SUPPRESSIONS_FILE, body.validator_id,
+                               body.reason,
+                               (body.removed_by or "").strip()
+                               or settings.current_user())
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not n:
+        raise HTTPException(404, f"No suppression of {body.validator_id!r} is in "
+                                 "force.")
+    return {**project_suppressions(), "removed": n}
 
 
 @router.post("/project-suppressions")

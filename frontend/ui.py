@@ -35,7 +35,9 @@ SEQ = [PLUM, PLUM_LIGHT, TEAL, "#c9a9d8", "#7c3aed", "#5eead4", GREY, WARN]
 # Severity -> tone. One mapping, used by every badge, row and tile.
 _TONE = {"ERROR": "err", "FAIL": "err", "WARN": "warn", "WARNING": "warn",
          "INFO": "info", "PASS": "ok", "OK": "ok", "ACCEPTED": "muted",
-         "SUPPRESSED": "muted"}
+         "SUPPRESSED": "muted",
+         # a standing suppression's state
+         "ACTIVE": "info", "EXPIRED": "muted", "REMOVED": "muted"}
 _ORDER = {"err": 0, "warn": 1, "info": 2, "muted": 3, "ok": 4}
 
 CSS = """
@@ -221,6 +223,9 @@ CSS = """
       margin-top: 2px; overflow-wrap: anywhere;}
   .fx-fix {color: var(--muted); font-size: .78rem; margin-top: 3px;}
   .fx-fix b {color: var(--ink-2);}
+  .fx-acc {font-size: .8rem; margin-top: 4px; padding: 3px 8px; border-radius: 6px;
+      background: var(--plum-50); color: var(--plum); border: 1px solid var(--plum-200);
+      display: inline-block;}
   .fx-empty {color: var(--muted); font-size: .86rem; padding: .5rem 0;}
 
   /* ---- KPI tiles */
@@ -587,8 +592,9 @@ def findings(rows, empty: str = "Nothing to report.", why: bool = False) -> None
 
     Each row is a dict with any of: severity (or effective_severity), id,
     context, title (or description), message, where, remediation, rationale,
-    suppressed. A suppressed finding shows as ACCEPTED in grey: it stays on
-    the record but no longer blocks. ``why`` adds the rationale -- why the
+    suppressed, accepted_note. A suppressed finding shows as ACCEPTED in grey:
+    it stays on the record but no longer blocks; ``accepted_note`` says who
+    accepted it, how and why. ``why`` adds the rationale -- why the
     check matters -- for pages where findings are reviewed rather than
     triaged.
     """
@@ -630,8 +636,57 @@ def findings(rows, empty: str = "Nothing to report.", why: bool = False) -> None
             + (f'<div class="fx-fix"><b>Why it matters:</b> {md(rat)}</div>'
                if rat and rat != "nan" else "")
             + (f'<div class="fx-fix">↳ {hint}</div>' if hint else "")
+            + (f'<div class="fx-acc">✓ {md(r["accepted_note"])}</div>'
+               if r.get("accepted_note") else "")
             + "</div></div>")
     st.markdown('<div class="fx">' + "".join(out) + "</div>", unsafe_allow_html=True)
+
+
+def accepted_note(r: dict) -> str:
+    """What accepted a suppressed finding, in one line: an acceptance for
+    this run or a standing suppression, who, and why."""
+    src = r.get("accepted_source") or r.get("source")
+    reason = r.get("accepted_reason") or r.get("reason") or ""
+    who = r.get("accepted_by") or "?"
+    if src == "run":
+        return f"Accepted for this run by **{who}** — {reason}"
+    if src == "standing":
+        until = r.get("valid_until") or ""
+        return (f"Standing suppression approved by **{who}**"
+                + (f", valid until {until}" if until else "") + f" — {reason}")
+    return ""
+
+
+def accepted_findings_table(rows, empty: str | None = None) -> None:
+    """The findings accepted in a run, and why: each check, its severity,
+    whether it was accepted for the run or by a standing suppression, the
+    reason, who, when, until when, and whether it took effect."""
+    rows = list(rows or [])
+    if not rows:
+        if empty:
+            caption(empty)
+        return
+    df = pd.DataFrame(rows)
+
+    def col(c):
+        return df[c] if c in df.columns else pd.Series([""] * len(df))
+    show = pd.DataFrame({
+        "Check": col("validator_id"),
+        "Severity": col("severity"),
+        "Accepted": col("source").map({"run": "for this run",
+                                       "standing": "standing suppression"})
+        .fillna("—"),
+        "Reason": col("reason"),
+        "By": col("accepted_by"),
+        "When": col("accepted_at").astype(str).str[:16].str.replace("T", " "),
+        "Until": col("valid_until"),
+        "In effect": col("in_effect").map(
+            lambda v: "yes" if str(v).upper() == "TRUE" else "no"),
+    })
+    st.dataframe(style_severity(show, cols=("Severity",)), hide_index=True,
+                 width="stretch",
+                 column_config={"Reason": st.column_config.TextColumn(width="large"),
+                                "Check": st.column_config.TextColumn(width="medium")})
 
 
 def severity_counts(rows) -> dict:

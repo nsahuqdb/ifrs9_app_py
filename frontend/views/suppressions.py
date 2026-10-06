@@ -1,11 +1,16 @@
-"""Validation suppressions: findings accepted rather than fixed.
+"""Validation suppressions: findings accepted rather than fixed, standing.
 
 The R app's page. A suppression marks a validator as accepted-failing: it
 still runs and its finding is still recorded, it just stops blocking the pre-run
 check and the run. Every suppression needs a reason and an approver, can carry
 an expiry, and is written to the audit log. They live in the project's
 config/validation_suppressions.yml -- a config version freezes its own copy --
-so they apply to the NEXT pre-run check and run, not to one already made.
+so they apply to the NEXT pre-run check and run, not to one already made, and
+to every run after it until they expire or are removed. Removing one ends it
+from today and keeps the entry, with who removed it and why.
+
+A finding accepted on Run the pipeline is different: it is accepted for that
+run only and the next run asks again.
 """
 from datetime import date
 
@@ -13,14 +18,13 @@ import pandas as pd
 import streamlit as st
 
 import api
-from ui import caption, flash, guard, metric_row, money, page_setup, pill
+from ui import (accepted_findings_table, callout, caption, flash, guard,
+                metric_row, money, page_setup, pill, style_severity)
 
 page_setup("Validation suppressions",
-           "A suppression marks a validator as accepted-failing. The validator "
-           "still runs and the finding is still recorded; it just stops blocking "
-           "the run. Use this for known data issues that have been investigated "
-           "and accepted. Every suppression requires a reason and an approver — "
-           "the audit log captures both.")
+           "Standing acceptances: a suppression accepts its finding in every run "
+           "until it expires or is removed. To accept a finding for one run only, "
+           "use Accept for this run on Run the pipeline — the next run asks again.")
 
 with guard():
     sup = api.project_suppressions()
@@ -87,27 +91,62 @@ with right:
                     f"`{r['id']}` — {r['description']} (last seen in {r['last_seen_run']})"
                     for _, r in sub.iterrows()), unsafe_allow_html=True)
 
-st.markdown("#### Active suppressions")
-caption(f"file: `{sup['path']}` · {len(entries)} entries")
-if entries.empty:
+st.markdown("#### Suppressions, and what became of them")
+caption(f"file: `{sup['path']}` · {len(entries)} entries · nothing is ever "
+        "deleted: an ended suppression stays, with who removed it and why")
+hist = pd.DataFrame(sup.get("history") or [])
+if hist.empty:
     st.info("No suppressions yet.")
 else:
-    entries["active"] = entries["validator_id"].isin(sup["active"]).map(
-        {True: "active", False: "lapsed"})
-    st.dataframe(entries, hide_index=True, use_container_width=True)
+    show = hist[["status", "validator_id", "reason", "approved_by", "approved_at",
+                 "valid_until", "removed_by", "removed_at", "removal_reason"]]
+    st.dataframe(style_severity(show.assign(status=show["status"].str.upper())
+                                .rename(columns={"status": "Status"}),
+                                cols=("Status",)),
+                 hide_index=True, width="stretch",
+                 column_config={"reason": st.column_config.TextColumn(width="large"),
+                                "removal_reason": st.column_config.TextColumn(
+                                    width="medium")})
+    active = sorted(sup["active"])
+    if active:
+        with st.container(border=True):
+            st.markdown("**Remove a suppression**")
+            caption("Ends it from today. The finding then blocks again and is "
+                    "asked about on each run (Accept for this run on Run the "
+                    "pipeline). The audit log records the removal.")
+            with st.form("rm_supp", clear_on_submit=True, border=False):
+                a, b = st.columns([2, 1])
+                vid = a.selectbox("Suppression in force", active)
+                who = b.text_input("Removed by",
+                                   value=st.session_state.get("_user") or "")
+                why = st.text_input("Reason (required)",
+                                    placeholder="e.g. findings are now accepted "
+                                                "run by run")
+                if st.form_submit_button("Remove", type="primary",
+                                         icon=":material/delete:"):
+                    if not why.strip() or not who.strip():
+                        st.error("A reason and a name are required (audit trail).")
+                    else:
+                        try:
+                            api.remove_project_suppression(vid, why.strip(),
+                                                           who.strip())
+                        except api.BackendError as e:
+                            st.error(f"Remove failed: {e}")
+                        else:
+                            api.clear()
+                            flash(f"Removed the suppression of {vid}. From the "
+                                  "next pre-run check it blocks again and is "
+                                  "asked about on each run.")
+                            st.rerun()
 
 run_id = st.session_state.get("run_id")
 if run_id:
-    with st.expander(f"Findings suppressed when {run_id} ran"):
-        caption("Read from the run's validation report: what its frozen config "
-                "accepted at the time. A suppression added now applies from the "
+    with st.expander(f"Findings accepted when {run_id} ran"):
+        caption("What that run accepted, with the reasons: for the run on the "
+                "pipeline page, or by a standing suppression of its frozen "
+                "config. A suppression added or removed now applies from the "
                 "next run.")
         with guard():
-            v = api.run_validation_table(run_id)
-        rows = pd.DataFrame(v["rows"]) if v.get("exists") else pd.DataFrame()
-        if rows.empty or not (rows["status"] == "SUPPR").any():
-            caption("Nothing was suppressed in this run.")
-        else:
-            st.dataframe(rows[rows["status"] == "SUPPR"][["stage", "id", "description",
-                                                          "message"]],
-                         hide_index=True, use_container_width=True)
+            acc = api.run_accepted_findings(run_id)
+        accepted_findings_table(acc.get("rows"),
+                                empty="Nothing was accepted in this run.")

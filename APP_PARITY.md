@@ -34,7 +34,8 @@ the test suites.
 | Pre-run check: config, static and input checks with the version's suppressions; the version's static and model files, the project's input, drop and runs folders; "N ERROR — Run blocked" / "N WARN — review then proceed"; flagged checks; cleared when the run type or version changes | the same | browser: 5 ERROR on the injected-defect drop, 11 WARN on the repaired one |
 | **Pricing readiness** (new in both apps): no ECL, blank in LIC, priced from incomplete inputs; reasons with fixes; row funnel; contracts with a gap | the same; an unsuppressed READY ERROR disables Start, as in the R app | browser |
 | Start, gated; "Start OFFICIAL run" / "Start unofficial run" | the same | browser |
-| A blocking finding is accepted on **Validation suppressions** (reason, approver, expiry), then the check is run again | the same, and also on this page: *Accept with a reason...* writes the same entry to the same file and re-runs the checks (default config only; a config version keeps its frozen suppressions) | browser: 4 ERROR accepted on the garbage drop, Start enabled, run finished |
+| **Accept for this run** (both apps): a blocking finding a suppression can silence is accepted with a reason and a name for the run being prepared only -- passed to the check, the dry run and the run, recorded in the run (`reports/accepted_findings.csv`, validation.md, the manifest, a `finding_accepted` audit event), never written to validation_suppressions.yml; dropped when the inputs, version or run type change, and once the run starts, so the next run asks again | the same | browser, both apps: accepted, run finished with the record, the next run asked again; R and Python record identical files and events for the same acceptances |
+| Standing suppressions that apply to the check are listed with their approver, expiry and reason | the same, with *Remove...* to end them from here (default config) | browser |
 | Pause: customers, investments, findings; customer view with filter; one customer at a time | the same, with paging and a stage filter | browser |
 | Override editor: rating (master scale), stage (worsening only), restructuring; reason required | the same | browser: a reason-less override refused |
 | Pending overrides per kind, with remove | the same | browser (add) |
@@ -81,7 +82,8 @@ the test suites.
 | The project's `config/validation_suppressions.yml`, applying to the next pre-run check and run | the same file | browser |
 | Add: validator, reason (required), approver, optional expiry | the same | browser: a reason-less add refused; the add written in R's schema and audited |
 | Catalogue of failed validators across recent runs, by stage | the same | rendered |
-| Active suppressions | the same, active or lapsed | browser |
+| Every entry with its state (active, expired, removed); **Remove**: ends a suppression from today -- `valid_until` set to yesterday, `removed_by`, `removed_at`, `removal_reason` kept in the entry, a `suppression_remove` audit event; nothing deleted | the same | browser (both apps) |
+| A run's accepted findings, with the reasons: Runs → Validation and the approval review | the same, plus an *Accepted findings* tab on the Validation page | browser |
 
 ## Audit log (`mod_audit_log.R` → `views/audit.py`)
 

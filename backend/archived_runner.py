@@ -21,6 +21,27 @@ import sys
 import traceback
 
 
+def _accepts(pipeline, name: str) -> bool:
+    """Whether the archived run_etl takes ``name``. Its ``**meta`` is passed
+    on to run_etl_phase1, so a name only phase 1 would have to take is
+    checked there: an archived version older than an argument then drops it,
+    and says so, instead of failing with a TypeError."""
+    def takes(fn):
+        sig = inspect.signature(fn)
+        return name in sig.parameters, any(
+            p.kind == p.VAR_KEYWORD for p in sig.parameters.values())
+    named, rest = takes(pipeline.run_etl)
+    if named:
+        return True
+    if not rest:
+        return False
+    phase1 = getattr(pipeline, "run_etl_phase1", None)
+    if phase1 is None:
+        return True
+    named1, rest1 = takes(phase1)
+    return named1 or rest1
+
+
 def main(args_path: str, result_path: str) -> int:
     with open(args_path, encoding="utf-8") as fh:
         args = json.load(fh)
@@ -29,9 +50,7 @@ def main(args_path: str, result_path: str) -> int:
         import ifrs9qdb
         from ifrs9qdb.etl import pipeline
         kw = dict(args.get("kwargs") or {})
-        sig = inspect.signature(pipeline.run_etl)
-        takes_any = any(p.kind == p.VAR_KEYWORD for p in sig.parameters.values())
-        dropped = [] if takes_any else [k for k in kw if k not in sig.parameters]
+        dropped = [k for k in kw if not _accepts(pipeline, k)]
         for k in dropped:
             kw.pop(k)
         r = pipeline.run_etl(args["input_dir"], args["runs_dir"], **kw)

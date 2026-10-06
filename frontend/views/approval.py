@@ -10,8 +10,8 @@ import pandas as pd
 import streamlit as st
 
 import api
-from ui import (caption, flash, guard, kpis, money, page_setup, pill,
-                style_severity)
+from ui import (accepted_findings_table, caption, flash, guard, kpis, money,
+                page_setup, pill, style_severity)
 
 page_setup("Approval queue",
            "Run approval accepts the entire run, overrides included; version "
@@ -48,6 +48,13 @@ def _val_tab(run_id: str):
                 + pill(f"{c['warnings']} warnings", "warn" if c["warnings"] else "ok")
                 + " " + pill(f"{c['suppressed']} accepted", "muted"),
                 unsafe_allow_html=True)
+    with guard():
+        acc = api.run_accepted_findings(run_id)
+    if acc.get("rows"):
+        st.markdown(f"**Accepted findings · {len(acc['rows'])}** — what the maker "
+                    "accepted for this run, and the standing suppressions that "
+                    "took effect, with the reasons. Approving the run accepts them.")
+        accepted_findings_table(acc["rows"])
     st.dataframe(style_severity(pd.DataFrame(v["rows"])[
         ["status", "stage", "id", "description", "message"]]),
                  hide_index=True, width="stretch", height=320,

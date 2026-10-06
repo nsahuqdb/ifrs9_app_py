@@ -109,6 +109,21 @@ def run_validation(run_id: str) -> dict:
                        "suppressed": int((status == "SUPPR").sum())}}
 
 
+@router.get("/runs/{run_id}/accepted-findings")
+def run_accepted_findings(run_id: str) -> dict:
+    """Every finding accepted in the run, and why: accepted for the run on
+    the pipeline page, or by a standing suppression that took effect -- with
+    the reason, who and when (reports/accepted_findings.csv; rebuilt from
+    validation.csv and the run's frozen suppressions file for a run made
+    before that file existed)."""
+    from ifrs9qdb.runs import read_run_accepted_findings
+    df = read_run_accepted_findings(_run_path(run_id))
+    rows = _records(df)
+    return {"exists": bool(len(df)), "rows": rows,
+            "recorded": all(r.get("recorded") == "TRUE" for r in rows) if rows
+            else True}
+
+
 @router.get("/runs/{run_id}/readiness")
 def run_readiness(run_id: str) -> dict:
     """reports/readiness.csv, its funnel and summary -- which contracts get no

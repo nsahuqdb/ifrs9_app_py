@@ -38,3 +38,14 @@ def test_every_severity_has_a_colour():
     assert [ui.tone_of(s) for s in ("ERROR", "warn", "Info", "PASS", "ACCEPTED",
                                     "SUPPR")] == \
         ["err", "warn", "info", "ok", "muted", "muted"]
+
+
+def test_an_accepted_finding_says_who_how_and_why():
+    assert ui.accepted_note({"accepted_source": "run", "accepted_by": "maker1",
+                             "accepted_reason": "two-digit years"}) == \
+        "Accepted for this run by **maker1** — two-digit years"
+    note = ui.accepted_note({"source": "standing", "accepted_by": "checker1",
+                             "reason": "ticket #77", "valid_until": "2099-12-31"})
+    assert note == ("Standing suppression approved by **checker1**, valid until "
+                    "2099-12-31 — ticket #77")
+    assert ui.accepted_note({"severity": "ERROR"}) == ""

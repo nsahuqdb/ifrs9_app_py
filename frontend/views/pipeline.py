@@ -10,7 +10,9 @@
                         would leave blank, which are priced from incomplete
                         inputs -- before anything is committed. A blocking
                         finding that can be accepted is accepted here, with a
-                        reason, and the checks run again
+                        reason, FOR THIS RUN ONLY -- recorded on the run, never
+                        saved for the next one, which asks again -- and the
+                        checks run again
     4  Review           the run pauses with the customer view: rating, stage
                         (worsening only) and restructuring overrides, a
                         reason each
@@ -21,15 +23,16 @@ What the user sets is on the left, what the checks found on the right, so the
 answer to "can I start?" is always beside the button that starts.
 """
 import time
-from datetime import date
+from datetime import date, datetime
 
 import pandas as pd
 import streamlit as st
 
 import api
-from ui import (callout, caption, card_header, empty_state, findings, flash,
-                guard, kpis, money, page_setup, pill, severity_counts, stepper,
-                style_severity, tone_of)
+from ui import (accepted_findings_table, accepted_note, callout, caption,
+                card_header, empty_state, findings, flash, guard, kpis, money,
+                page_setup, pill, severity_counts, stepper, style_severity,
+                tone_of)
 
 S = st.session_state
 S.setdefault("wf_state", "idle")          # idle | paused | done
@@ -86,10 +89,18 @@ def _poll(job_id: str, label: str) -> dict:
         time.sleep(1.0)
 
 
+def _accepted_list() -> list[dict]:
+    """The findings accepted for the run being prepared. They live in this
+    session only: passed with each check and with Start, recorded on the run
+    it starts, and gone after it -- the next run asks again."""
+    return list((S.get("wf_accepted") or {}).values())
+
+
 def _request_checks(req: dict, message: str | None = None) -> None:
     """Ask for the pre-run check and the readiness dry run; the next run of
     the page does them (see _resume_jobs)."""
     _reset_checks()
+    req = {**req, "accepted_findings": _accepted_list()}
     S["wf_check_req"] = S["wf_last_req"] = req
     if message:
         S["wf_check_msg"] = message
@@ -175,16 +186,28 @@ def _reset_checks():
 
 
 def _reset_val():
+    """Other inputs: another run being prepared, so nothing is accepted."""
     S.pop("wf_val", None)
+    S.pop("wf_accepted", None)
+    _reset_checks()
+
+
+def _settings_changed():
+    """Another config version or run type: another run being prepared."""
+    S.pop("wf_accepted", None)
     _reset_checks()
 
 
 def _check_rows() -> list[dict]:
-    """Every finding of the pre-run check and of the readiness dry run."""
-    rows = list((S.get("wf_pre") or {}).get("flagged") or [])
+    """Every finding of the pre-run check and of the readiness dry run, each
+    accepted one with what accepted it."""
+    rows = [dict(f) for f in (S.get("wf_pre") or {}).get("flagged") or []]
     res = (S.get("wf_ready") or {}).get("result") or {}
     for f in res.get("ready_findings") or []:
         rows.append({**f, "where": "Found by the pricing-readiness dry run"})
+    for r in rows:
+        if _truthy(r.get("suppressed")):
+            r["accepted_note"] = accepted_note(r)
     return rows
 
 
@@ -217,50 +240,82 @@ def _findings_view(rows: list[dict], key: str, cap: int = 560) -> None:
 
 
 # ===================================================== accept a finding ====
-@st.dialog("Accept blocking findings", width="large")
+@st.dialog("Accept for this run", width="large")
 def _accept_dialog(rows: list[dict]) -> None:
     opts = {r["id"]: r for r in rows}
-    caption("Accepting records a suppression in the project's "
-            "`validation_suppressions.yml`, with your reason, and writes it to "
-            "the audit log. The finding stays on the run's record, marked "
-            "ACCEPTED, and no longer blocks. Use it for a known source issue "
-            "the run has to live with — not to get past a real error.")
+    caption("Accepted for **this run only**. The finding stays on the run's "
+            "record, marked ACCEPTED with your reason, your name and the time — "
+            "in its validation report, its list of accepted findings and the "
+            "audit log — and no longer blocks this run. Nothing is kept for "
+            "later runs: the next run asks again. Use it for a known source "
+            "issue the run has to live with, not to get past a real error.")
     pick = st.multiselect(
         "Findings to accept", list(opts), default=list(opts),
         format_func=lambda i: f"{i} — {opts[i].get('description') or ''}"[:120])
     reason = st.text_area(
         "Reason (required)", height=90,
         placeholder="e.g. Repayment schedule dates carry two-digit years in the "
-                    "source system; IT ticket #1234 raised. Accepted by FRM "
-                    "until the re-extract.")
-    c1, c2 = st.columns(2)
-    who = c1.text_input("Accepted by", value=S.get("_user") or "")
-    until = c2.date_input("Valid until (optional)", value=None,
-                          min_value=date.today(), format="DD/MM/YYYY")
-    if st.button("Accept and re-check", type="primary", disabled=not pick,
-                 icon=":material/verified:"):
+                    "source system; IT ticket #1234 raised. Accepted for this "
+                    "quarter's run pending the re-extract.")
+    who = st.text_input("Accepted by", value=S.get("_user") or "")
+    if st.button("Accept for this run and re-check", type="primary",
+                 disabled=not pick, icon=":material/verified:"):
         if not reason.strip():
-            st.error("A reason is required: it goes on the audit trail.")
+            st.error("A reason is required: it goes on the run's record and the "
+                     "audit trail.")
             return
         if not who.strip():
             st.error("Say who is accepting them.")
             return
+        now = datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")
+        acc = S.setdefault("wf_accepted", {})
+        for vid in pick:
+            acc[vid] = {"validator_id": vid, "reason": reason.strip(),
+                        "accepted_by": who.strip(), "accepted_at": now}
+        # The checks run again on the page, not in the dialog, with the request
+        # the findings on screen came from; the message shows once they have.
+        msg = (f"Accepted {len(pick)} finding(s) for this run, and ran the checks "
+               "again. The next run will ask again.")
+        if S.get("wf_last_req"):
+            _request_checks(S["wf_last_req"], msg)
+        flash(msg)
+        st.rerun()
+
+
+@st.dialog("Remove standing suppressions", width="large")
+def _remove_dialog(entries: list[dict]) -> None:
+    opts = {e["validator_id"]: e for e in entries}
+    caption("A standing suppression in `validation_suppressions.yml` accepts its "
+            "finding in **every** run until it expires. Removing one ends it from "
+            "today: the entry stays in the file with who removed it and why, and "
+            "the audit log records it. The finding then blocks again, and each "
+            "run asks whether to accept it for that run.")
+    pick = st.multiselect(
+        "Suppressions to remove", list(opts), default=list(opts),
+        format_func=lambda i: f"{i} — approved by {opts[i].get('approved_by') or '?'}"
+                              f": {opts[i].get('reason') or ''}"[:140])
+    reason = st.text_area("Reason (required)", height=70,
+                          placeholder="e.g. Findings are to be accepted run by run.")
+    who = st.text_input("Removed by", value=S.get("_user") or "")
+    if st.button("Remove and re-check", type="primary", disabled=not pick,
+                 icon=":material/delete:"):
+        if not reason.strip() or not who.strip():
+            st.error("A reason and a name are required: they go on the audit trail.")
+            return
         failed = []
         for vid in pick:
             try:
-                api.add_project_suppression(vid, reason.strip(), who.strip(),
-                                            until.isoformat() if until else None)
+                api.remove_project_suppression(vid, reason.strip(), who.strip())
             except api.BackendError as e:
                 failed.append(f"{vid}: {e}")
         if failed:
-            st.error("Not accepted: " + "; ".join(failed))
+            st.error("Not removed: " + "; ".join(failed))
             return
-        # The checks run again on the page, not in the dialog, with the request
-        # the findings on screen came from; the message shows once they have.
-        msg = f"Accepted {len(pick)} finding(s) with your reason"
+        msg = (f"Removed {len(pick)} standing suppression(s); the checks ran again. "
+               "Those findings are now asked about on each run.")
         if S.get("wf_last_req"):
-            _request_checks(S["wf_last_req"], msg + ", and ran the checks again.")
-        flash(msg + ". Run the pre-run check again to apply them.")
+            _request_checks(S["wf_last_req"], msg)
+        flash(msg)
         st.rerun()
 
 
@@ -340,6 +395,10 @@ def _paused_page(run_id: str) -> None:
           ("Pending overrides", money(pending), "info" if pending else "",
            f"rating {n['rating']} · stage {n['stage']} · "
            f"restructuring {n['restructuring']}")])
+    acc = ps.get("accepted") or []
+    if acc:
+        with st.expander(f"Findings accepted in this run so far · {len(acc)}"):
+            accepted_findings_table(acc)
 
     left, right = st.columns([7, 5], gap="medium")
     with left, st.container(border=True):
@@ -496,6 +555,14 @@ def _done_page() -> None:
             callout("warn", "The archived calculator does not support: "
                     + ", ".join(res["dropped_args"])
                     + ". The run was produced without them.")
+        try:
+            acc = api.run_accepted_findings(res["run_id"]).get("rows") or []
+        except api.BackendError:
+            acc = []
+        if acc:
+            st.markdown(f"**Findings accepted in this run · {len(acc)}** — on its "
+                        "record and in the audit log, with the reasons")
+            accepted_findings_table(acc)
         links = st.columns([1, 1, 1, 2])
         links[0].page_link("frontend/views/overview.py", label="See the results",
                            icon=":material/dashboard:", width="stretch")
@@ -631,7 +698,7 @@ def _settings_card(vers: dict, calcs: dict) -> dict:
 
         c1, c2 = st.columns([3, 2])
         vsel = c1.selectbox("Config version", opts, index=opts.index(cur),
-                            key="wf_vsel", on_change=_reset_checks, help=vhelp)
+                            key="wf_vsel", on_change=_settings_changed, help=vhelp)
         version = vlabels.get(vsel, "__LIVE__")
         S["wf_version"] = version
         run_type = S.get("wf_rt2") or "unofficial"
@@ -639,7 +706,8 @@ def _settings_card(vers: dict, calcs: dict) -> dict:
             gate = api.wf_run_type_check(run_type, version)
         c2.segmented_control(
             "Run type", ["unofficial", "official"], default="unofficial",
-            required=True, key="wf_rt2", on_change=_reset_checks, width="stretch",
+            required=True, key="wf_rt2", on_change=_settings_changed,
+            width="stretch",
             format_func=lambda v: {"unofficial": "Unofficial",
                                    "official": "Official"}[v],
             help=("Unofficial: for testing and what-if; skips approval, and its "
@@ -722,7 +790,10 @@ def _actions_card(val, cfg: dict) -> None:
             "version": cfg["version"], "run_type": cfg["run_type"],
             "run_purpose": cfg["purpose"],
             "portfolio_date": cfg["pdate"].isoformat(),
-            "calculator_version": cfg["calc_id"] or None}}
+            "calculator_version": cfg["calc_id"] or None,
+            "accepted_findings": _accepted_list()}}
+        # recorded on the run it starts; the next run asks again
+        S.pop("wf_accepted", None)
         st.rerun()
 
 
@@ -823,6 +894,47 @@ def _readiness_tab(rdy: dict) -> None:
             st.dataframe(pd.DataFrame(p["funnel"]), hide_index=True, width="stretch")
 
 
+def _accepted_banners(pre: dict) -> None:
+    """What is accepted, and how: for this run (with Withdraw), and by
+    standing suppressions that apply to every run (with Remove, where the
+    page can end them)."""
+    mine = _accepted_list()
+    if mine:
+        items = "; ".join(f"`{m['validator_id']}` ({m['reason']})" for m in mine)
+        a, b = st.columns([4, 1.25], vertical_alignment="center")
+        with a:
+            callout("plum", f"{items} — by {mine[0]['accepted_by']}. Recorded on "
+                    "the run with the reasons; the next run asks again.",
+                    title=f"{len(mine)} finding(s) accepted for this run.")
+        if b.button("Withdraw", icon=":material/undo:", width="stretch",
+                    key="wf_withdraw"):
+            S.pop("wf_accepted", None)
+            _request_checks(S["wf_last_req"],
+                            "Withdrew the acceptances; the checks ran again.")
+    # the standing suppressions that took effect, in the check or the dry run
+    hit = {r.get("id") for r in _check_rows() if r.get("accepted_source") == "standing"}
+    standing = [e for e in (pre.get("standing") or []) if e["validator_id"] in hit]
+    if standing:
+        items = "; ".join(
+            f"`{e['validator_id']}` (approved by {e.get('approved_by') or '?'}"
+            + (f", until {e['valid_until']}" if e.get("valid_until") else "")
+            + f": {e.get('reason') or ''})" for e in standing)
+        text = (f"{items}. A standing suppression applies to every run until it "
+                "expires or is removed, so these are not asked about.")
+        title = f"{len(standing)} finding(s) accepted by standing suppressions."
+        if pre.get("can_remove_standing"):
+            a, b = st.columns([4, 1.25], vertical_alignment="center")
+            with a:
+                callout("muted", text + " Remove them to decide run by run.",
+                        title=title)
+            if b.button("Remove…", icon=":material/delete:", width="stretch",
+                        key="wf_rm_standing"):
+                _remove_dialog(standing)
+        else:
+            callout("muted", text + " They belong to this config version's "
+                    "frozen copy and cannot be removed here.", title=title)
+
+
 def _results(val) -> None:
     pre, rdy = S.get("wf_pre"), S.get("wf_ready")
     if val is None:
@@ -855,22 +967,19 @@ def _results(val) -> None:
                     title="Start is locked.")
         elif blocking:
             text = f"**{len(blocking)} blocking finding(s)** stop the run. "
-            if acceptable and pre.get("accept_here"):
-                text += (f"{len(acceptable)} can be accepted with a reason, for a "
-                         "known source issue the run has to live with; ")
+            if acceptable:
+                text += (f"{len(acceptable)} can be accepted **for this run**, with "
+                         "a reason, for a known source issue the run has to live "
+                         "with (the next run asks again); ")
                 text += ("the rest must be fixed at source." if len(acceptable)
                          < len(blocking) else "otherwise fix them at source.")
-            elif acceptable:
-                text += ("This config version carries its own frozen suppressions: "
-                         "fix them at source, or run on the default config to "
-                         "accept them here.")
             else:
                 text += "They must be fixed at source and the inputs validated again."
-            if acceptable and pre.get("accept_here"):
+            if acceptable:
                 a, b = st.columns([4, 1.25], vertical_alignment="center")
                 with a:
                     callout("err", text, title="Start is locked.")
-                if b.button("Accept with a reason…", icon=":material/verified:",
+                if b.button("Accept for this run…", icon=":material/verified:",
                             width="stretch"):
                     _accept_dialog(acceptable)
             else:
@@ -881,10 +990,12 @@ def _results(val) -> None:
         else:
             callout("ok", "Every check passed and every contract will be priced.",
                     title="Ready to start.")
+        _accepted_banners(pre)
         kpis([("Blocking", money(len(blocking)), "err" if blocking else "ok",
                "unaccepted errors"),
               ("Warnings", money(c["warn"]), "warn" if c["warn"] else "ok", ""),
-              ("Accepted", money(c["muted"]), "", "suppressed, with a reason"),
+              ("Accepted", money(c["muted"]), "plum" if c["muted"] else "",
+               "for this run, or standing"),
               ("Contracts priced",
                f"{money((s.get('contracts') or 0) - lost)} of {money(s.get('contracts'))}",
                "err" if lost else "ok",
