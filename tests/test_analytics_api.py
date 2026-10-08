@@ -416,3 +416,56 @@ class TestPackageComparison:
     def test_no_packages_is_refused(self):
         assert client.post(f"/api/stress/{RUN}/compare",
                            json={"packages": []}).status_code == 400
+
+
+class TestBridge:
+    """Why the provision moved, at any level: what the engine's bridge
+    returns, closing exactly, for the book and for a group within it."""
+
+    @needs_pair
+    def test_the_book_closes_on_both_runs_totals(self):
+        prev, curr = PAIR
+        b = client.get("/api/analytics/bridge",
+                       params={"prev": prev, "curr": curr}).json()
+        deltas = sum(s["amount"] for s in b["steps"] if s["kind"] == "delta")
+        assert b["opening"] + deltas == pytest.approx(b["closing"], abs=1e-3)
+        assert abs(b["residual"]) < 1e-3
+        keys = [s["key"] for s in b["steps"]]
+        for k in ("exposure", "stage", "rating", "macro", "model", "lgd"):
+            assert k in keys
+        assert set(b["before"]) >= {"exposure", "ecl", "rating", "worst_stage"}
+
+    @needs_pair
+    def test_a_customer_has_its_own_waterfall(self):
+        prev, curr = PAIR
+        m = client.get("/api/analytics/bridge/members",
+                       params={"prev": prev, "curr": curr, "level": "customer"}).json()
+        assert m and {"value", "label", "ecl_a", "ecl_b", "change"} <= set(m[0])
+        cust = m[0]["value"]
+        b = client.get("/api/analytics/bridge", params={
+            "prev": prev, "curr": curr, "level": "customer",
+            "members": [cust]}).json()
+        assert b["before"]["ecl"] == pytest.approx(m[0]["ecl_a"])
+        assert b["after"]["ecl"] == pytest.approx(m[0]["ecl_b"])
+        deltas = sum(s["amount"] for s in b["steps"] if s["kind"] == "delta")
+        assert b["opening"] + deltas == pytest.approx(b["closing"], abs=1e-3)
+
+    @needs_pair
+    def test_every_segment_closes(self):
+        prev, curr = PAIR
+        by = client.get("/api/analytics/bridge/by", params={
+            "prev": prev, "curr": curr, "level": "segment"}).json()
+        for r in by:
+            steps = sum(v for k, v in r.items()
+                        if k not in ("group", "label", "opening", "closing", "change"))
+            assert r["opening"] + steps == pytest.approx(r["closing"], abs=1e-3)
+        assert all(r["label"] for r in by)
+
+    @needs_pair
+    def test_a_level_needs_a_member_and_a_known_name(self):
+        prev, curr = PAIR
+        assert client.get("/api/analytics/bridge", params={
+            "prev": prev, "curr": curr, "level": "customer"}).status_code == 400
+        assert client.get("/api/analytics/bridge", params={
+            "prev": prev, "curr": curr, "level": "sector",
+            "members": ["x"]}).status_code == 400

@@ -252,6 +252,96 @@ def migration(prev: str, curr: str, top: int = 12,
     }
 
 
+# ----------------------------------------------------------- bridge --------
+def _jsonable(x):
+    """Numbers, text and None only: numpy scalars and NaN are not JSON."""
+    import math
+
+    import numpy as np
+    if isinstance(x, dict):
+        return {str(k): _jsonable(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_jsonable(v) for v in x]
+    if isinstance(x, pd.DataFrame):
+        return _records(x)
+    if isinstance(x, (np.integer,)):
+        return int(x)
+    if isinstance(x, (np.floating, float)):
+        return None if math.isnan(float(x)) else float(x)
+    if isinstance(x, (np.bool_,)):
+        return bool(x)
+    if x is pd.NA or x is pd.NaT:
+        return None
+    return x
+
+
+def _bridge_stamp(run_id: str) -> tuple:
+    p = report_path(run_id)
+    od = _output_dir(RUNS_DIR / run_id)
+    files = [p] + ([od / "StPD.csv"] if od is not None else [])
+    return tuple((str(f), f.stat().st_mtime_ns) for f in files if f and f.is_file())
+
+
+@lru_cache(maxsize=4)
+def _bridge_cached(prev: str, curr: str, stamp: tuple) -> dict:
+    from ifrs9qdb.analytics import ecl_bridge, load_bridge_run
+    a = load_bridge_run(RUNS_DIR / prev, report_path(prev))
+    b = load_bridge_run(RUNS_DIR / curr, report_path(curr))
+    if not (a.ok and b.ok):
+        raise HTTPException(400, a.reason or b.reason)
+    return ecl_bridge(a, b)
+
+
+def _bridge(prev: str, curr: str) -> dict:
+    if report_path(prev) is None or report_path(curr) is None:
+        raise HTTPException(404, "Both runs need an ECL report")
+    return _bridge_cached(prev, curr, _bridge_stamp(prev) + _bridge_stamp(curr))
+
+
+@router.get("/analytics/bridge")
+def bridge(prev: str, curr: str, level: str = "book",
+           members: list[str] = Query(default=[]), top: int = 200) -> dict:
+    """Why the provision moved between two runs, for the whole book or for
+    one or more customers, facilities, account types, segments, stages or
+    ratings: each run's figures for the group, and the waterfall between
+    them -- derecognised, new business, exposure, stage, rating, macro
+    variables, model, LGD and collateral, overlay -- which sums exactly."""
+    from ifrs9qdb.analytics import BRIDGE_LEVELS, bridge_view
+    if level not in BRIDGE_LEVELS:
+        raise HTTPException(400, f"level must be one of {', '.join(BRIDGE_LEVELS)}")
+    if level != "book" and not members:
+        raise HTTPException(400, "Choose at least one member of the level.")
+    br = _bridge(prev, curr)
+    v = bridge_view(br["rows"], level, members, top)
+    return _jsonable({
+        "level": level, "members": v["members"],
+        "opening": v["opening"], "closing": v["closing"],
+        "residual": v["residual"], "steps": v["steps"],
+        "before": v["before"], "after": v["after"], "counts": v["counts"],
+        "contracts": v["contracts"], "changes": br["changes"],
+        "split": br["split"], "notes": br["notes"], "runs": br["runs"],
+    })
+
+
+@router.get("/analytics/bridge/members")
+def bridge_members_route(prev: str, curr: str, level: str, q: str | None = None,
+                         limit: int | None = None) -> list[dict]:
+    """What can be chosen at a level, largest move first: every customer or
+    facility unless ``limit`` says otherwise."""
+    from ifrs9qdb.analytics import bridge_members
+    return _records(bridge_members(_bridge(prev, curr)["rows"], level, q, limit))
+
+
+@router.get("/analytics/bridge/by")
+def bridge_by_route(prev: str, curr: str, level: str) -> list[dict]:
+    """Every group of a level, each with its own waterfall in one row."""
+    from ifrs9qdb.analytics import bridge_by
+    try:
+        return _records(bridge_by(_bridge(prev, curr)["rows"], level))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 # ------------------------------------------------------ attribution --------
 @router.get("/analytics/attribution")
 def attribution(prev: str, curr: str, by: str = Query("portfolio"),

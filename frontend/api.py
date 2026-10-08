@@ -135,6 +135,22 @@ def walk(prev: str, curr: str) -> dict:
     return get("/analytics/walk", prev=prev, curr=curr)
 
 
+@st.cache_data(ttl=600, show_spinner="Repricing both runs, contract by contract…")
+def bridge(prev: str, curr: str, level: str = "book", members: tuple = ()) -> dict:
+    return get("/analytics/bridge", prev=prev, curr=curr, level=level,
+               members=list(members))
+
+
+@st.cache_data(ttl=600, show_spinner="Repricing both runs, contract by contract…")
+def bridge_members(prev: str, curr: str, level: str) -> list[dict]:
+    return get("/analytics/bridge/members", prev=prev, curr=curr, level=level)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def bridge_by(prev: str, curr: str, level: str) -> list[dict]:
+    return get("/analytics/bridge/by", prev=prev, curr=curr, level=level)
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def scope(run_id: str) -> dict:
     return get(f"/stress/{run_id}/scope")

@@ -807,8 +807,13 @@ def bar(df: pd.DataFrame, x: str, y: str, *, horizontal=True, diverging=False,
     st.plotly_chart(fig, use_container_width=True)
 
 
-def waterfall(steps: pd.DataFrame, title: str | None = None):
-    """The ECL walk. Totals are absolute, the rest relative, so the bars connect."""
+def waterfall(steps: pd.DataFrame, title: str | None = None, zoom: bool = False):
+    """The ECL walk. Totals are absolute, the rest relative, so the bars connect.
+
+    ``zoom`` starts the axis near the lowest point the bars reach rather than
+    at zero: beside a provision in the billions the causes are otherwise too
+    small to see. The totals are labelled with their full figure either way.
+    """
     import plotly.graph_objects as go
 
     measure = ["absolute" if k == "total" else "relative" for k in steps["kind"]]
@@ -830,6 +835,15 @@ def waterfall(steps: pd.DataFrame, title: str | None = None):
         font=dict(size=12, color="#4a5162"),
     )
     fig.update_traces(textfont=dict(size=11), width=0.62)
+    if zoom:
+        level, points = 0.0, []
+        for k, v in zip(steps["kind"], steps["amount"]):
+            level = float(v) if k == "total" else level + float(v)
+            points.append(level)
+        lo, hi = min(points), max(points)
+        pad = max((hi - lo) * 0.18, abs(hi) * 0.002, 1.0)
+        if lo - pad > 0:
+            fig.update_yaxes(range=[lo - pad, hi + pad])
     st.plotly_chart(fig, use_container_width=True)
 
 

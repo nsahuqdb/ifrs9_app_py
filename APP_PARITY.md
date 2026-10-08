@@ -100,6 +100,10 @@ Like the R app, the pages read the **overlaid** report when an overlay has been
 applied to a run, and so does the assistant in both apps (grounded on the
 runs, read-only tools), saying so. The help page is present.
 
+| R app | Here | Checked |
+|---|---|---|
+| **Movement** (Compare two runs; new in both apps, replacing the ECL walk): the whole book, or one or more customers, facilities, account types, segments, stages or ratings, picked by id or name with each one's ECL before and after; each run's exposure, ECL, coverage and overlay, rating mix, stage mix, lifetime PD, LGD, contracts, customers and days past due side by side; the waterfall -- Derecognised, Moved out / Moved in, New business, Exposure, Stage migration, Rating migration, Macro variables, Model (when the model changed), LGD & collateral, Overlay, Other -- which sums exactly to the closing ECL; what changed in the model and the macro inputs; the contracts behind it; every group of the level in one table | the same, from the same engine function (`ecl_bridge`) | browser, both apps: September to December 2025 (book, customer, stage, facility) and a pair of runs with the model and the macro inputs both changed; the same figures in both |
+
 ## Where this app differs, deliberately
 
 Earlier differences -- Cancel at the pause, the assistant on an overlaid run,

@@ -190,3 +190,12 @@ segments, risk parameters, scenarios, data quality, validation);
 **Audit log**; **Stress testing** (packages, comparison, lever sensitivity,
 reverse stress, roll forward, what-if, staging threshold, macro path); and
 **Help** (assistant, how this works).
+
+**Movement** answers why the provision moved between two runs. Pick the whole
+book, or one or more customers, facilities, account types, segments, stages or
+ratings: each run's figures for the selection are shown side by side, then a
+waterfall in which every contract is repriced from the previous run to the
+current one a cause at a time -- exposure, stage, rating, the macro variables,
+the model when it changed, LGD and collateral, the overlay -- so the steps sum
+exactly to the current ECL. Macro and model are told apart from the runs'
+frozen config (`config_used`); a run without one shows a single PD-curve step.
