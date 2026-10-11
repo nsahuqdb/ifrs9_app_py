@@ -74,6 +74,10 @@ if st.button("Reprice", type="primary",
         ("vs before", pct(100 * r["delta"] / max(r["before"], 1))),
         ("Priced", money(r["priced"])),
     ])
+    if r.get("note"):
+        # a run priced by an earlier version of the calculation: the change is
+        # measured from the run rebuilt on this engine, not its own provision
+        st.info(r["note"], icon="ℹ️")
     if mode == "auto" and r["delta"] < 0 and any(v < 0 for v in shock.values()):
         st.warning(
             "A worse forecast has LOWERED the provision. That is the weighting "

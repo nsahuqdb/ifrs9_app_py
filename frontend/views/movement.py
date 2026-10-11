@@ -34,6 +34,10 @@ PLURAL = {"customer": "customers", "facility": "facilities",
           "account_type": "account types", "segment": "segments",
           "stage": "stages", "rating": "ratings"}
 WHAT = {
+    "method": "The previous run repriced on this version of the calculation, "
+              "with its own data and config: a change in the method itself "
+              "(how months are counted, the EAD payment dates, the scenario "
+              "weighting). Zero when both runs were priced the same way.",
     "derecognised": "In the previous run and not in this one, at its previous ECL.",
     "moved_out": "Left this selection for another, at its previous ECL.",
     "moved_in": "Joined this selection from another, at its previous ECL; its "
@@ -47,7 +51,8 @@ WHAT = {
     "macro": "PD curves from this run's MEV forecasts, scenario weights and "
              "severities and GDP history, on the previous model.",
     "model": "The model's own change: coefficients, TTC anchor and PDs, the "
-             "model chosen, how the MEV models combine.",
+             "model chosen, how the MEV models combine, and the ECL settings "
+             "(EAD fallback rules, Stage 3 method, exposure cap).",
     "pd_curves": "The PD curves' change, macro and model together: a run has "
                  "no frozen config to tell them apart.",
     "lgd": "Collateral, and so LGD, and the EIR.",
@@ -56,7 +61,8 @@ WHAT = {
              "could not be repriced in both runs.",
 }
 
-LABEL = {"derecognised": "Derecognised", "moved_out": "Moved out",
+LABEL = {"method": "Method change", "derecognised": "Derecognised",
+         "moved_out": "Moved out",
          "moved_in": "Moved in", "new_business": "New business",
          "exposure": "Exposure", "stage": "Stage migration",
          "rating": "Rating migration", "macro": "Macro variables",

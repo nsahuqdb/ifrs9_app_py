@@ -199,3 +199,6 @@ current one a cause at a time -- exposure, stage, rating, the macro variables,
 the model when it changed, LGD and collateral, the overlay -- so the steps sum
 exactly to the current ECL. Macro and model are told apart from the runs'
 frozen config (`config_used`); a run without one shows a single PD-curve step.
+When the previous run was priced by an earlier version of the calculation (a
+run from before 0.29, say), it is first repriced on the current one, and that
+difference is its own step, Method change, rather than spread over the others.

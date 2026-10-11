@@ -186,6 +186,7 @@ def mev(run_id: str, body: MevIn) -> dict:
         raise HTTPException(400, r.get("reason", "Could not reprice."))
     return {
         "before": r["before"], "after": r["after"], "delta": r["delta"],
+        "provision": r.get("provision"), "note": r.get("note"),
         "priced": r["priced"], "weight_mode": r["weight_mode"],
         "by_portfolio": _records(r["by_portfolio"]),
         "movers": _records(r["movers"].head(50)),
