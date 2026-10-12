@@ -3,10 +3,11 @@
 For the whole book, or for one or more customers, facilities, account types,
 segments, stages or ratings: each run's figures for the selection side by
 side, then the waterfall between them. Every contract is repriced from the
-previous run to the current one a cause at a time -- exposure, stage, rating,
-the macro variables, the model when it changed, LGD and collateral -- with the
-contracts that left or arrived and the overlay, and the steps sum exactly to
-the closing provision (ifrs9qdb.analytics.bridge).
+previous run to the current one a cause at a time and shown as: derecognised,
+new business, exposure change, stage migration, rating migration, macro
+variable change, model change, LGD & collateral and overlay (moved out / in for
+a selection, and "Unexplained" only if repricing leaves anything). The steps
+sum exactly to the closing provision (ifrs9qdb.analytics.bridge).
 """
 import pandas as pd
 import streamlit as st
@@ -33,41 +34,67 @@ LEVELS = {"book": "Whole book", "customer": "Customer", "facility": "Facility",
 PLURAL = {"customer": "customers", "facility": "facilities",
           "account_type": "account types", "segment": "segments",
           "stage": "stages", "rating": "ratings"}
+# The waterfall's steps, as they are shown. The engine prices more causes than
+# this (ifrs9qdb.analytics.BRIDGE_COMPONENTS); several are folded together
+# here so the chart reads as the steps a reviewer asks about:
+#   key, label, the engine components it sums, shown even when zero
+GROUPS = [
+    ("derecognised", "Derecognised", ("derecognised",), True),
+    ("new_business", "New business", ("new_business",), True),
+    ("moved_out", "Moved out", ("moved_out",), False),
+    ("moved_in", "Moved in", ("moved_in",), False),
+    ("exposure", "Exposure change", ("exposure",), True),
+    ("stage", "Stage migration", ("stage",), True),
+    ("rating", "Rating migration", ("rating",), True),
+    ("macro", "Macro variable change", ("macro",), True),
+    ("model", "Model change", ("model", "method"), True),
+    ("pd_curves", "Macro and model change", ("pd_curves",), False),
+    ("lgd", "LGD & collateral", ("lgd",), True),
+    ("overlay", "Overlay", ("overlay",), True),
+    ("other", "Unexplained", ("other",), False),
+]
+LABEL = {k: lab for k, lab, _, _ in GROUPS}
 WHAT = {
-    "method": "The previous run repriced on this version of the calculation, "
-              "with its own data and config: a change in the method itself "
-              "(how months are counted, the EAD payment dates, the scenario "
-              "weighting). Zero when both runs were priced the same way.",
     "derecognised": "In the previous run and not in this one, at its previous ECL.",
+    "new_business": "New in this run, at its ECL.",
     "moved_out": "Left this selection for another, at its previous ECL.",
     "moved_in": "Joined this selection from another, at its previous ECL; its "
                 "own causes follow.",
-    "new_business": "New in this run, at its ECL.",
-    "exposure": "Balance, EAD curve and remaining term, at the previous stage, "
-                "rating, PD curves and LGD.",
+    "exposure": "Contracts in both runs: repayments, drawdowns and "
+                "amortisation -- the balance, the EAD curve and the remaining "
+                "term -- at the previous stage, rating, PD curves and LGD.",
     "stage": "Between 12-month and lifetime ECL, or into Stage 3 (booked at "
              "the outstanding balance).",
     "rating": "The new rating, on the previous run's PD curves.",
-    "macro": "PD curves from this run's MEV forecasts, scenario weights and "
-             "severities and GDP history, on the previous model.",
-    "model": "The model's own change: coefficients, TTC anchor and PDs, the "
-             "model chosen, how the MEV models combine, and the ECL settings "
-             "(EAD fallback rules, Stage 3 method, exposure cap).",
-    "pd_curves": "The PD curves' change, macro and model together: a run has "
-                 "no frozen config to tell them apart.",
+    "macro": "The macro inputs: MEV forecasts, scenario weights and "
+             "severities, and the GDP history, on the previous model.",
+    "model": "The macro PD model itself -- its variables, coefficients, TTC "
+             "anchor and PDs, how the variables combine -- and the ECL "
+             "settings (EAD fallback rules, Stage 3 method, exposure cap). "
+             "When the two runs were priced by different versions of the "
+             "engine, the change in the calculation is included here too.",
+    "pd_curves": "Macro inputs and model together: one of the runs has no "
+                 "saved config, so the two cannot be told apart.",
     "lgd": "Collateral, and so LGD, and the EIR.",
-    "overlay": "The post-model overlay.",
-    "other": "What a report holds that repricing does not, and contracts that "
-             "could not be repriced in both runs.",
+    "overlay": "The post-model management overlay.",
+    "other": "Should be zero: what the repricing could not explain, and "
+             "contracts that could not be repriced in both runs.",
 }
 
-LABEL = {"method": "Method change", "derecognised": "Derecognised",
-         "moved_out": "Moved out",
-         "moved_in": "Moved in", "new_business": "New business",
-         "exposure": "Exposure", "stage": "Stage migration",
-         "rating": "Rating migration", "macro": "Macro variables",
-         "model": "Model", "pd_curves": "PD curves (macro and model)",
-         "lgd": "LGD & collateral", "overlay": "Overlay", "other": "Other"}
+
+def _grouped(df: pd.DataFrame) -> pd.DataFrame:
+    """Add one column per shown step, summing the engine's components."""
+    df = df.copy()
+    for key, _, comps, _ in GROUPS:
+        have = [c for c in comps if c in df.columns]
+        df[f"g_{key}"] = df[have].sum(axis=1) if have else 0.0
+    return df
+
+
+def _shown_cols(df: pd.DataFrame) -> list[str]:
+    """The step columns worth a column in a table: non-zero somewhere."""
+    return [k for k, _, _, _ in GROUPS if df[f"g_{k}"].abs().sum() >= 0.5]
+
 
 caption(f"**{compare_id}** (previous) → **{run_id}** (current)")
 level = st.segmented_control("Compare", list(LEVELS), format_func=LEVELS.get,
@@ -81,10 +108,12 @@ def _by_table(lv: str) -> None:
     if len(by) == 0:
         st.info("Nothing to break down.")
         return
-    cols = ["label", "opening"] + [k for k in WHAT if k in by.columns
-                                   and by[k].abs().sum() >= 0.5] + ["closing", "change"]
+    by = _grouped(by)
+    steps = _shown_cols(by)
+    cols = ["label", "opening"] + [f"g_{k}" for k in steps] + ["closing", "change"]
     names = {"label": LEVELS[lv], "opening": "Previous ECL",
-             "closing": "Current ECL", "change": "Change", **LABEL}
+             "closing": "Current ECL", "change": "Change",
+             **{f"g_{k}": LABEL[k] for k in steps}}
     show = by[cols].rename(columns=names)
     st.dataframe(fmt_table(show, money_cols=[c for c in show.columns
                                              if c != LEVELS[lv]]),
@@ -174,28 +203,25 @@ steps = pd.DataFrame(b["steps"])
 changes = b.get("changes") or {}
 
 
-def _keep(r) -> bool:
-    if r["kind"] == "total":
-        return True
-    k, a = r["key"], abs(r["amount"])
-    if k in ("exposure", "stage", "rating", "lgd"):
-        return True
-    if k == "macro":
-        return bool(b.get("split"))
-    if k == "model":
-        return bool(changes.get("model_changed")) or a >= 0.5
-    if k == "pd_curves":
-        return not b.get("split")
-    return a >= 0.5
-
-
-shown = steps[steps.apply(_keep, axis=1)]
+amount = dict(zip(steps["key"], steps["amount"]))
+split = bool(b.get("split"))
+rows = [steps[steps["key"] == "opening"].iloc[0].to_dict()]
+for key, label, comps, always in GROUPS:
+    a = float(sum(amount.get(c, 0.0) for c in comps))
+    if key == "macro" and not split:
+        continue                       # its move is in "Macro and model change"
+    show_it = always or abs(a) >= (1.0 if key == "other" else 0.5)
+    if show_it:
+        rows.append({"key": key, "label": label, "amount": a, "kind": "delta"})
+rows.append(steps[steps["key"] == "closing"].iloc[0].to_dict())
+shown = pd.DataFrame(rows)
 waterfall(shown, zoom=True)
 caption("Each contract is repriced from the previous run to this one a cause "
         "at a time, in the order shown, so the bars sum exactly to the current "
         f"ECL (residual {b['residual']:.2f})."
-        + ("" if changes.get("model_changed") else
-           " The model did not change, so there is no model step."))
+        + ("" if changes.get("model_changed") or abs(amount.get("method", 0.0)) >= 0.5
+           else " Neither the model nor the calculation changed, so the model "
+                "step is zero."))
 for n in b.get("notes") or []:
     callout("info", n)
 
@@ -237,7 +263,8 @@ with t[0]:
         st.info("No contracts.")
     else:
         caption("Largest moves first. Each row's causes sum to its change.")
-        comp = [k for k in WHAT if k in ct.columns and ct[k].abs().sum() >= 0.5]
+        ct = _grouped(ct)
+        comp = _shown_cols(ct)
         # the stage and rating moves, as text, beside the components of the
         # same names (Stage migration, Rating migration)
         ct["stage_move"] = [f"{'' if pd.isna(x) else int(x)} → {'' if pd.isna(y) else int(y)}"
@@ -247,10 +274,10 @@ with t[0]:
         ct["customer"] = ct["customer_b"].fillna(ct["customer_a"])
         text = {"contract": "Contract", "customer": "Customer", "name": "Name",
                 "status": "Status", "stage_move": "Stage", "rating_move": "Rating"}
-        cols = list(text) + ["ecl_a", "ecl_b", "change"] + comp
+        cols = list(text) + ["ecl_a", "ecl_b", "change"] + [f"g_{k}" for k in comp]
         show = ct[cols].rename(columns={**text, "ecl_a": "ECL previous",
                                         "ecl_b": "ECL current", "change": "Change",
-                                        **LABEL})
+                                        **{f"g_{k}": LABEL[k] for k in comp}})
         st.dataframe(fmt_table(show, money_cols=[c for c in show.columns
                                                  if c not in text.values()]),
                      hide_index=True, width="stretch")

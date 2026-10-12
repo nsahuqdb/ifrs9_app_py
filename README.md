@@ -195,10 +195,12 @@ reverse stress, roll forward, what-if, staging threshold, macro path); and
 book, or one or more customers, facilities, account types, segments, stages or
 ratings: each run's figures for the selection are shown side by side, then a
 waterfall in which every contract is repriced from the previous run to the
-current one a cause at a time -- exposure, stage, rating, the macro variables,
-the model when it changed, LGD and collateral, the overlay -- so the steps sum
-exactly to the current ECL. Macro and model are told apart from the runs'
-frozen config (`config_used`); a run without one shows a single PD-curve step.
-When the previous run was priced by an earlier version of the calculation (a
-run from before 0.29, say), it is first repriced on the current one, and that
-difference is its own step, Method change, rather than spread over the others.
+current one a cause at a time, so the steps sum exactly to the current ECL. The
+steps shown are Derecognised, New business, Exposure change, Stage migration,
+Rating migration, Macro variable change, Model change, LGD & collateral and
+Overlay; Moved out / Moved in appear for a selection whose contracts changed
+group, and Unexplained only if the repricing leaves anything over. Macro and
+model are told apart from the runs' frozen config (`config_used`); a run
+without one shows a single "Macro and model change" step. When the previous
+run was priced by an earlier version of the engine it is first repriced on the
+current one, and that difference is part of Model change.
