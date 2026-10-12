@@ -302,7 +302,8 @@ def validate_inputs(body: SourceIn) -> dict:
     out = {"input_dir": str(d), "input_source": source,
            "structural": _records(check), "n_fail": n_fail,
            "n_pass": int((check["status"] == "PASS").sum()),
-           "ok": n_fail == 0, "dq": None, "strip_log": {}, "extract_date": None}
+           "ok": n_fail == 0, "dq": None, "strip_log": {}, "clean_log": {},
+           "extract_date": None}
     if d.is_dir():
         try:
             cfg, st, _ = _version_paths(body.version)
@@ -329,6 +330,7 @@ def validate_inputs(body: SourceIn) -> dict:
                          "can_remove_standing": bool(live and cfg is not None),
                          "suppressions_file": str(supp_path)}
             out["strip_log"] = pr["strip_log"]
+            out["clean_log"] = pr.get("clean_log") or {}
             out["extract_date"] = pr["extract_date"]
         except HTTPException:
             raise
@@ -510,6 +512,7 @@ def pre_run(body: PreRunIn) -> dict:
     return {"summary": s, "blocked": s["errors"] > 0, "pill": pill,
             "flagged": rows, "extract_date": pr["extract_date"],
             "strip_log": pr["strip_log"],
+            "clean_log": pr.get("clean_log") or {},
             "run_type": run_type_check(body.run_type, body.version or "__LIVE__"),
             "suppressions_file": str(supp_path),
             "accepted": accepted,

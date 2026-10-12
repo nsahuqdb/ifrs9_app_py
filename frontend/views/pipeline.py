@@ -911,12 +911,13 @@ def _input_check(val: dict) -> None:
         fails = structural[structural["status"] == "FAIL"]
         findings([{"severity": "ERROR", "title": r["check"], "message": r["detail"]}
                   for _, r in fails.iterrows()])
-    strips = val.get("strip_log") or {}
-    if sum(strips.values()):
-        callout("ok", "Removed " + ", ".join(f"{v} repeated header row(s) from {k}"
-                                             for k, v in strips.items())
-                + " before checking. They recur at the export's page interval.",
-                title="Auto-fixed.")
+    detail = val.get("clean_log") or {
+        k: {"header": v} for k, v in (val.get("strip_log") or {}).items() if v}
+    if detail:
+        callout("ok", "Removed before checking: " + _cleaned(detail)
+                + ". Rows like these are not data, so they are not findings. "
+                "Two rows with the same id that differ are not removed.",
+                title="Cleaned automatically.")
     if val.get("dq_error"):
         callout("warn", f"The data-quality preview could not run: {val['dq_error']}")
     _standing_notice(dq.get("standing") or [], bool(dq.get("can_remove_standing")),
@@ -927,6 +928,22 @@ def _input_check(val: dict) -> None:
         _findings_view(rows, "val", cap=620)
     elif dq:
         callout("ok", "Every data-quality check passed.")
+
+
+_CLEANED = {"header": "repeated header", "trailer": "row-count trailer",
+            "blank": "blank", "total": "total line",
+            "duplicate": "exact duplicate"}
+
+
+def _cleaned(detail: dict) -> str:
+    """'OriginationInvestments.xls: 1 exact duplicate row; ...'."""
+    out = []
+    for f, kinds in detail.items():
+        bits = [f"{int(n)} {_CLEANED.get(k, k)} row{'s' if int(n) != 1 else ''}"
+                for k, n in kinds.items() if int(n)]
+        if bits:
+            out.append(f"{f}: " + ", ".join(bits))
+    return "; ".join(out)
 
 
 def _readiness_tab(rdy: dict) -> None:
