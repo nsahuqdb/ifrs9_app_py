@@ -5,10 +5,11 @@ segments, stages or ratings: each run's figures for the selection side by
 side, then the waterfall between them. Every contract is repriced from the
 previous run to the current one a cause at a time and shown as: derecognised,
 new business, exposure change, stage migration, rating migration, macro
-variable change, model change, LGD & collateral and overlay (moved out / in for
-a selection, methodology change when the ECL settings or the engine version
-differ, and "Unexplained" only if repricing leaves anything). The steps sum
-exactly to the closing provision (ifrs9qdb.analytics.bridge).
+variable change, model change, LGD & collateral and overlay (methodology change
+when the ECL settings or the engine version differ, and "Unexplained" only if
+repricing leaves anything). The steps sum exactly to the closing provision
+(ifrs9qdb.analytics.bridge). A contract counts in one group: the one it is in
+now, or, if derecognised, the one it was in.
 """
 import pandas as pd
 import streamlit as st
@@ -42,8 +43,6 @@ PLURAL = {"customer": "customers", "facility": "facilities",
 GROUPS = [
     ("derecognised", "Derecognised", ("derecognised",), True),
     ("new_business", "New business", ("new_business",), True),
-    ("moved_out", "Moved out", ("moved_out",), False),
-    ("moved_in", "Moved in", ("moved_in",), False),
     ("exposure", "Exposure change", ("exposure",), True),
     ("stage", "Stage migration", ("stage",), True),
     ("rating", "Rating migration", ("rating",), True),
@@ -59,9 +58,6 @@ LABEL = {k: lab for k, lab, _, _ in GROUPS}
 WHAT = {
     "derecognised": "In the previous run and not in this one, at its previous ECL.",
     "new_business": "New in this run, at its ECL.",
-    "moved_out": "Left this selection for another, at its previous ECL.",
-    "moved_in": "Joined this selection from another, at its previous ECL; its "
-                "own causes follow.",
     "exposure": "Contracts in both runs: repayments, drawdowns and "
                 "amortisation -- the balance, the EAD curve and the remaining "
                 "term -- at the previous stage, rating, PD curves and LGD.",
@@ -105,6 +101,12 @@ caption(f"**{compare_id}** (previous) → **{run_id}** (current)")
 level = st.segmented_control("Compare", list(LEVELS), format_func=LEVELS.get,
                              default="book", required=True, key="mv_level",
                              width="stretch")
+if level != "book":
+    caption(f"A contract counts in the {LEVELS[level].lower()} it is in now "
+            "(a derecognised one in the one it left), so Previous ECL is what "
+            "these contracts had in the previous run"
+            + (f", not the previous run's total for that {LEVELS[level].lower()}."
+               if level in ("stage", "rating", "segment", "account_type") else "."))
 
 
 def _by_table(lv: str) -> None:
