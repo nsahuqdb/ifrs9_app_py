@@ -6,8 +6,9 @@ side, then the waterfall between them. Every contract is repriced from the
 previous run to the current one a cause at a time and shown as: derecognised,
 new business, exposure change, stage migration, rating migration, macro
 variable change, model change, LGD & collateral and overlay (moved out / in for
-a selection, and "Unexplained" only if repricing leaves anything). The steps
-sum exactly to the closing provision (ifrs9qdb.analytics.bridge).
+a selection, methodology change when the ECL settings or the engine version
+differ, and "Unexplained" only if repricing leaves anything). The steps sum
+exactly to the closing provision (ifrs9qdb.analytics.bridge).
 """
 import pandas as pd
 import streamlit as st
@@ -47,7 +48,8 @@ GROUPS = [
     ("stage", "Stage migration", ("stage",), True),
     ("rating", "Rating migration", ("rating",), True),
     ("macro", "Macro variable change", ("macro",), True),
-    ("model", "Model change", ("model", "method"), True),
+    ("model", "Model change", ("model",), True),
+    ("methodology", "Methodology change", ("settings", "method"), False),
     ("pd_curves", "Macro and model change", ("pd_curves",), False),
     ("lgd", "LGD & collateral", ("lgd",), True),
     ("overlay", "Overlay", ("overlay",), True),
@@ -68,11 +70,14 @@ WHAT = {
     "rating": "The new rating, on the previous run's PD curves.",
     "macro": "The macro inputs: MEV forecasts, scenario weights and "
              "severities, and the GDP history, on the previous model.",
-    "model": "The macro PD model itself -- its variables, coefficients, TTC "
-             "anchor and PDs, how the variables combine -- and the ECL "
-             "settings (EAD fallback rules, Stage 3 method, exposure cap). "
-             "When the two runs were priced by different versions of the "
-             "engine, the change in the calculation is included here too.",
+    "model": "The macro PD model itself: its variables, coefficients, TTC "
+             "anchor and PDs, and how the variables combine. Zero when the "
+             "model did not change.",
+    "methodology": "How the ECL is calculated rather than with what: the ECL "
+                   "settings in model.yml (EAD fallback rules, Stage 3 method, "
+                   "exposure cap) and, when the previous run was priced by an "
+                   "earlier version of the engine, the change in the "
+                   "calculation itself. Shown only when it is not zero.",
     "pd_curves": "Macro inputs and model together: one of the runs has no "
                  "saved config, so the two cannot be told apart.",
     "lgd": "Collateral, and so LGD, and the EIR.",
@@ -219,9 +224,8 @@ waterfall(shown, zoom=True)
 caption("Each contract is repriced from the previous run to this one a cause "
         "at a time, in the order shown, so the bars sum exactly to the current "
         f"ECL (residual {b['residual']:.2f})."
-        + ("" if changes.get("model_changed") or abs(amount.get("method", 0.0)) >= 0.5
-           else " Neither the model nor the calculation changed, so the model "
-                "step is zero."))
+        + ("" if changes.get("model_changed")
+           else " The PD model did not change, so Model change is zero."))
 for n in b.get("notes") or []:
     callout("info", n)
 
@@ -235,12 +239,14 @@ st.dataframe(fmt_table(tbl[["label", "amount", "% of previous", "What it is"]]
              hide_index=True, width="stretch",
              column_config={"What it is": st.column_config.TextColumn(width="large")})
 
-with st.expander("What changed in the model and the macro inputs"):
+with st.expander("What changed in the model, the macro inputs and the ECL settings"):
     if not changes.get("known"):
         st.write("A run has no frozen config, so this cannot be said.")
     else:
-        for part, flag in (("model", "model_changed"), ("macro", "macro_changed")):
-            st.markdown(f"**{'Model' if part == 'model' else 'Macro inputs'}** — "
+        for part, flag, title in (("model", "model_changed", "PD model"),
+                                  ("macro", "macro_changed", "Macro inputs"),
+                                  ("settings", "settings_changed", "ECL settings")):
+            st.markdown(f"**{title}** — "
                         + ("changed" if changes.get(flag) else "unchanged"))
             items = changes.get(part) or []
             if items:
