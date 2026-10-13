@@ -181,15 +181,26 @@ tests/          API tests; set IFRS9_PROJECT_ROOT to a project with runs to
                 run the ones that need runs
 ```
 
-The pages, grouped as in the navigation: **Runs** (browse runs, run the
-pipeline, approval queue); **Config** (config versions, calculator versions,
-ECL overlays, validation suppressions, live configuration, model
-assumptions); **Portfolio** (overview, staging, concentration, distributions,
-segments, risk parameters, scenarios, data quality, validation);
+The pages, grouped as in the navigation: **Runs** (run the pipeline, browse
+runs, validation, approval queue); **Portfolio** (overview, staging, risk
+parameters, concentration, segments, scenarios, data quality);
 **Comparison** (movement, attribution, migration, reconcile & export);
-**Audit log**; **Stress testing** (packages, comparison, lever sensitivity,
-reverse stress, roll forward, what-if, staging threshold, macro path); and
-**Help** (assistant, how this works).
+**Stress testing** (packages, package comparison, lever sensitivity, reverse
+stress, roll forward, what-if, staging threshold, macro path, scenario
+weights); **Governance** (config versions, calculator versions, ECL overlays,
+validation suppressions, live configuration, model assumptions, audit log);
+and **Help** (assistant, how this works). The menu holding the page on screen
+is highlighted, as the page is in its list.
+
+**Portfolio** shows one run as it was booked, and nothing else: staging is
+read on the run's own policy (its frozen Stage 2 DPD threshold), and the
+scenarios page shows the five scenario provisions behind the weighted figure.
+What a different threshold or a different weighting would cost is a stress
+question, on **Stress testing → Staging threshold** and **Scenario weights**.
+**Risk parameters** has one tab each for PD (by stage, portfolio, rating or
+account type, and the term structure), LGD & collateral, and exposure
+(remaining maturity, ticket size, origination year, days past due, and the
+run-off of the supplied EAD curves).
 
 **Movement** answers why the provision moved between two runs. Pick the whole
 book, or one or more customers, facilities, account types, segments, stages or

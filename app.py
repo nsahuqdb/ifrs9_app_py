@@ -53,9 +53,13 @@ pages = {
         st.Page(P + "pipeline.py", title="Run the pipeline",
                 icon=":material/play_circle:"),
         st.Page(P + "runs.py", title="Browse runs", icon=":material/list_alt:"),
+        # Whether a run is safe to sign is a question about the run, asked
+        # before approving it, so it sits with the runs rather than the book.
+        st.Page(P + "validation.py", title="Validation", icon=":material/verified:"),
         st.Page(P + "approval.py", title="Approval queue",
                 icon=":material/how_to_reg:"),
     ],
+    # The book in one run, as priced. What-ifs live under Stress testing.
     "Portfolio": [
         # The landing page. Before the first run it says so and links to Run
         # the pipeline (ui.no_runs); a fixed default keeps every page's URL
@@ -63,15 +67,12 @@ pages = {
         st.Page(P + "overview.py", title="Overview", icon=":material/dashboard:",
                 default=True),
         st.Page(P + "staging.py", title="Staging", icon=":material/layers:"),
+        st.Page(P + "risk.py", title="Risk parameters", icon=":material/monitoring:"),
         st.Page(P + "concentration.py", title="Concentration",
                 icon=":material/scatter_plot:"),
-        st.Page(P + "distributions.py", title="Distributions",
-                icon=":material/bar_chart:"),
         st.Page(P + "segments.py", title="Segments", icon=":material/grid_view:"),
-        st.Page(P + "risk.py", title="Risk parameters", icon=":material/monitoring:"),
         st.Page(P + "scenarios.py", title="Scenarios", icon=":material/alt_route:"),
         st.Page(P + "quality.py", title="Data quality", icon=":material/rule:"),
-        st.Page(P + "validation.py", title="Validation", icon=":material/verified:"),
     ],
     "Comparison": [
         st.Page(P + "movement.py", title="Movement", icon=":material/timeline:"),
@@ -92,6 +93,8 @@ pages = {
         st.Page(P + "whatif.py", title="What-if", icon=":material/edit_note:"),
         st.Page(P + "threshold.py", title="Staging threshold", icon=":material/tune:"),
         st.Page(P + "macro.py", title="Macro path", icon=":material/public:"),
+        st.Page(P + "reweight.py", title="Scenario weights",
+                icon=":material/balance:"),
     ],
     "Governance": [
         st.Page(P + "snapshots.py", title="Config versions",
@@ -116,15 +119,18 @@ pages = {
 # Which pages read a run, and which compare two. The picker is drawn in the
 # page's title row (ui.page_setup); a page that needs a run is not opened
 # without one.
-NEEDS_RUN = {"Overview", "Staging", "Concentration", "Distributions", "Segments",
+NEEDS_RUN = {"Overview", "Staging", "Concentration", "Segments",
              "Risk parameters", "Scenarios", "Data quality", "Validation",
              "Stress packages", "Package comparison", "Lever sensitivity",
              "Reverse stress", "Roll forward", "What-if", "Staging threshold",
-             "Macro path", "Model assumptions"}
+             "Macro path", "Scenario weights", "Model assumptions"}
 COMPARES = {"Movement", "Attribution", "Migration", "Reconcile & export"}
 OPTIONAL_RUN = {"ECL overlays", "Assistant", "Audit log"}
 
 nav = st.navigation(pages, position="top")
+# The menu holding the page on screen is marked like the page in its list.
+ui.mark_section(next((i for i, ps in enumerate(pages.values())
+                      if any(p.title == nav.title for p in ps)), None))
 
 if S.get("run_id") not in ids:
     S["run_id"] = ids[0] if ids else None

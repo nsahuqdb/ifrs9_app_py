@@ -16,8 +16,9 @@ st.markdown("""
    still be there.
 2. **Read the validation.** A run that completes is not the same as a run that
    is safe to sign. 114 checks say which it is.
-3. **Look at the portfolio.** Overview, staging, concentration, risk
-   parameters, scenarios and data quality all read the same priced report.
+3. **Look at the portfolio.** Overview, staging, risk parameters,
+   concentration, segments, scenarios and data quality all read the same
+   priced report, as booked. What-ifs are under Stress testing.
 4. **Compare.** Movement against the previous quarter, attribution and
    migration to say why it moved, and reconciliation against a reference run.
 5. **Overlay, then approve.** Management overlays sit on top of a completed
@@ -35,7 +36,9 @@ st.markdown("""
 | Who moved? | Migration |
 | What assumptions produced it? | Model assumptions |
 | What would a different policy cost? | Staging threshold, Stress testing |
-| How is the book spread? | Distributions, Segments |
+| What would different scenario weights cost? | Scenario weights |
+| How is the book spread? | Risk parameters (Exposure), Segments |
+| Is the run safe to sign? | Validation |
 | Anything, in plain language | Assistant |
 
 **Attribution comes in two forms.** The default splits the move into

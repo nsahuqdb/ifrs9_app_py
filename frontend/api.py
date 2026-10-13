@@ -111,7 +111,8 @@ def profile(run_id: str, by: str = "portfolio") -> list[dict]:
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def staging(run_id: str, dpd_threshold: float = 60) -> dict:
+def staging(run_id: str, dpd_threshold: float | None = None) -> dict:
+    """Read on the run's own staging policy unless a threshold is given."""
     return get(f"/analytics/{run_id}/staging", dpd_threshold=dpd_threshold)
 
 
@@ -443,7 +444,8 @@ def segments(run_id: str, rows: str = "portfolio", cols: str = "stage",
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def staging_detail(run_id: str, dpd_threshold: float = 60) -> dict:
+def staging_detail(run_id: str, dpd_threshold: float | None = None) -> dict:
+    """Read on the run's own staging policy unless a threshold is given."""
     return get(f"/analytics/{run_id}/staging-detail", dpd_threshold=dpd_threshold)
 
 

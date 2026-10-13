@@ -16,7 +16,6 @@ page_setup("Overview", "The headline provision and how it splits")
 with guard():
     s = api.summary(run_id)
     pf = pd.DataFrame(api.profile(run_id, "portfolio"))
-    mp = pd.DataFrame(api.maturity(run_id))
 
 metric_row([
     ("Contracts", money(s["contracts"])),
@@ -51,17 +50,3 @@ with c2:
                   money_cols=("contracts", "exposure", "ecl"),
                   pct_cols=("coverage",)),
         width="stretch", hide_index=True, height=min(320, 38 + 35 * len(pf)))
-
-if len(mp):
-    st.subheader("Run-off profile")
-    caption("Longer-dated exposure normally carries higher coverage, because "
-            "lifetime PD accumulates over more months.")
-    c1, c2 = st.columns([3, 2])
-    with c1:
-        bar(mp, "band", "exposure", horizontal=False, title="Exposure")
-    with c2:
-        st.dataframe(
-            fmt_table(mp[["band", "contracts", "exposure", "coverage"]],
-                      money_cols=("contracts", "exposure"),
-                      pct_cols=("coverage",)),
-            width="stretch", hide_index=True, height=min(330, 38 + 35 * len(mp)))

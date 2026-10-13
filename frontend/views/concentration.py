@@ -11,13 +11,14 @@ if not run_id:
     st.info("No run selected. Build one on **Run the pipeline**, or point the "
             "backend at a folder of existing runs.", icon="👈")
     st.stop()
-page_setup("Concentration")
+page_setup("Concentration", "How much of the provision sits with how few names")
 
 level = st.radio("Measure by", ["customer", "contract"], horizontal=True,
                  help="Customer is the right unit: one borrower with ten "
                       "facilities is a single exposure, not ten.")
 with guard():
     c = api.concentration(run_id, level)
+    lz = pd.DataFrame(api.distributions(run_id)["lorenz"])
 
 band = c["band"]
 tone = {"ok": "ok", "warn": "warn", "err": "err"}.get(band["tone"], "info")
@@ -41,9 +42,16 @@ with c1:
                            pct_cols=("share",)),
                  use_container_width=True, hide_index=True)
 with c2:
-    st.subheader("Largest contributors")
-    cols = [x for x in ("customer", "contract", "portfolio", "rating", "stage",
-                        "exposure", "ecl", "share") if x in top.columns]
-    st.dataframe(fmt_table(top[cols], money_cols=("exposure", "ecl"),
-                           pct_cols=("share",)),
-                 use_container_width=True, hide_index=True, height=340)
+    if len(lz):
+        line(lz.rename(columns={"pct_contracts": "% of customers, largest first",
+                                "pct_ecl": "% of the provision"}),
+             "% of customers, largest first", "% of the provision",
+             title="Share of the provision held by the largest customers",
+             yfmt=".0f", height=300)
+
+st.subheader("Largest contributors")
+cols = [x for x in ("customer", "contract", "portfolio", "rating", "stage",
+                    "exposure", "ecl", "share") if x in top.columns]
+st.dataframe(fmt_table(top[cols], money_cols=("exposure", "ecl"),
+                       pct_cols=("share",)),
+             use_container_width=True, hide_index=True, height=340)

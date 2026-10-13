@@ -35,6 +35,7 @@ from ifrs9qdb.analytics import (  # noqa: F401  -- distributions and flows
     pd_by_rating, pd_distribution, vintage_profile,
 )
 from ifrs9qdb.analytics.model_view import config_used
+from ifrs9qdb.stress import staging_threshold
 
 router = APIRouter(tags=["analytics"])
 from ..settings import RUNS_DIR  # noqa: E402
@@ -108,12 +109,22 @@ def by_portfolio(run_id: str, by: str = Query("portfolio")) -> list[dict]:
     return _records(run_profile(_report(run_id), by))
 
 
+def _threshold(run_id: str, given: float | None) -> float:
+    """The Stage 2 DPD threshold to read a run's staging on: the one asked
+    for, else the one the run froze with its config."""
+    if given is not None:
+        return given
+    return staging_threshold(_output_dir(RUNS_DIR / run_id))
+
+
 @router.get("/analytics/{run_id}/staging")
-def staging(run_id: str, dpd_threshold: float = 60) -> dict:
+def staging(run_id: str, dpd_threshold: float | None = None) -> dict:
     d = _report(run_id)
+    thr = _threshold(run_id, dpd_threshold)
     return {
+        "dpd_threshold": thr,
         "distribution": _records(staging_distribution(d)),
-        "triggers": _records(stage2_triggers(d, dpd_threshold)),
+        "triggers": _records(stage2_triggers(d, thr)),
     }
 
 
@@ -224,14 +235,17 @@ def segments(run_id: str, rows: str = Query("portfolio"),
 
 # ---------------------------------------------------------- staging --------
 @router.get("/analytics/{run_id}/staging-detail")
-def staging_detail(run_id: str, dpd_threshold: float = 60) -> dict:
+def staging_detail(run_id: str, dpd_threshold: float | None = None) -> dict:
     """Staging read from the outcome: what triggered it, and where it
-    disagrees with the rule that produced it."""
+    disagrees with the rule that produced it -- the run's own rule unless a
+    threshold is given."""
     d = _report(run_id)
-    consistency = staging_consistency(d, dpd_threshold)
+    thr = _threshold(run_id, dpd_threshold)
+    consistency = staging_consistency(d, thr)
     return {
+        "dpd_threshold": thr,
         "dpd_by_stage": _records(dpd_by_stage(d)),
-        "trigger_overlap": _records(stage2_trigger_overlap(d, dpd_threshold)),
+        "trigger_overlap": _records(stage2_trigger_overlap(d, thr)),
         "stage3_drivers": _records(stage3_drivers(d)),
         "consistency": {k: v for k, v in consistency.items() if k != "findings"},
         "findings": _records(consistency.get("findings")),

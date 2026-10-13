@@ -342,6 +342,22 @@ def inject_css() -> None:
     st.html(CSS)
 
 
+def mark_section(i: int | None) -> None:
+    """Mark the top menu holding the page on screen, as Streamlit marks the
+    page in that menu's list; otherwise the only way to tell which menu you
+    are in is to open each one. ``i`` is the menu's position, from 0.
+
+    Streamlit gives the menu buttons no "current" state of their own, so the
+    i-th one is picked out by position (each sits in its own wrapper)."""
+    if i is None:
+        return
+    st.html(f"""<style>
+  [data-testid="stToolbar"] div:nth-child({i + 1}) >
+      button[data-testid="stTopNavSection"] {{
+      background: rgba(165, 142, 210, .25); color: var(--plum);}}
+</style>""")
+
+
 def _nice_date(v) -> str:
     """"2026-06-30" or R's "6/30/2026" as "30 Jun 2026"; "" when unknown."""
     from datetime import date, datetime
@@ -791,7 +807,9 @@ def bar(df: pd.DataFrame, x: str, y: str, *, horizontal=True, diverging=False,
     # reading it off the bar, and these are numbers people quote.
     fig.update_traces(
         marker_color=colours, marker_line_width=0,
-        text=[f"{v:,.{dp}f}" for v in d[y]], textposition="outside",
+        # a value that rounds to nothing is labelled 0, not -0
+        text=[f"{(v if abs(v) >= 0.5 * 10 ** -dp else 0):,.{dp}f}" for v in d[y]],
+        textposition="outside",
         textfont=dict(size=11, color="#4a5162"), cliponaxis=False,
         hovertemplate=f"%{{y}}<br>{fmt}<extra></extra>")
     fig.update_layout(

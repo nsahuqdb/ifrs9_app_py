@@ -77,11 +77,27 @@ class TestStagingDetail:
     @needs_run
     def test_the_rule_is_re_applied_and_the_result_reported(self):
         body = client.get(f"/api/analytics/{RUN}/staging-detail").json()
-        assert set(body) == {"dpd_by_stage", "trigger_overlap",
+        assert set(body) == {"dpd_threshold", "dpd_by_stage", "trigger_overlap",
                              "stage3_drivers", "consistency", "findings"}
         c = body["consistency"]
         assert c["rule_available"] is True
         assert c["checked"] > 0
+
+    @needs_run
+    def test_it_reads_the_run_on_its_own_policy(self):
+        """No threshold given: the one the run froze, not a hardcoded 60."""
+        from backend.routes.analytics import RUNS_DIR, _output_dir
+        from ifrs9qdb.stress import staging_threshold
+        used = staging_threshold(_output_dir(RUNS_DIR / RUN))
+        for path in ("staging", "staging-detail"):
+            body = client.get(f"/api/analytics/{RUN}/{path}").json()
+            assert body["dpd_threshold"] == used
+            asked = client.get(f"/api/analytics/{RUN}/{path}",
+                               params={"dpd_threshold": 30}).json()
+            assert asked["dpd_threshold"] == 30
+        trig = client.get(f"/api/analytics/{RUN}/staging",
+                          params={"dpd_threshold": 30}).json()["triggers"]
+        assert any(r["trigger"] == "DPD 30-90" for r in trig)
 
     @needs_run
     def test_trigger_combinations_are_additive(self):

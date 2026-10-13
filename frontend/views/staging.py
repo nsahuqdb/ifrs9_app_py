@@ -1,4 +1,8 @@
-"""Staging: the split, and why each Stage 2 contract is there."""
+"""Staging: the split, and why each contract is in its stage.
+
+Read on the run's own staging policy. What a different threshold would cost
+is a stress question, answered on Stress testing -> Staging threshold.
+"""
 import pandas as pd
 import streamlit as st
 
@@ -15,25 +19,26 @@ page_setup("Staging",
            "customer with any Stage 2 facility has its Stage 1 facilities "
            "bumped by contagion.")
 
-threshold = st.slider("Stage 2 DPD threshold", 0, 90, 60, 5,
-                      help="The rule is DPD greater than this, up to 90.")
 with guard():
-    d = api.staging(run_id, threshold)
+    d = api.staging(run_id)
+    detail = api.staging_detail(run_id)
 
+thr = d.get("dpd_threshold")
 sd = pd.DataFrame(d["distribution"])
-metric_row([(r["stage"], f"{int(r['customers']):,}",
-             f"{int(r['contracts']):,} contracts") for _, r in sd.iterrows()])
 st.dataframe(
     fmt_table(sd[["stage", "customers", "contracts", "exposure", "ecl",
                   "coverage", "pct_ecl"]],
               money_cols=("customers", "contracts", "exposure", "ecl"),
               pct_cols=("coverage", "pct_ecl")),
     use_container_width=True, hide_index=True)
+if thr is not None:
+    caption(f"Days past due under this run's policy: Stage 2 above {thr:g}, "
+            "Stage 3 above 90. The other triggers are below.")
 
 t = pd.DataFrame(d["triggers"])
 if len(t) == 0:
-    # Not a reason to stop: the Stage 3 drivers and the consistency check
-    # below are about the rest of the book and still have something to say.
+    # Not a reason to stop: the Stage 3 drivers and the check against the
+    # rule below are about the rest of the book.
     st.info("No Stage 2 contracts in this run.")
 else:
     st.subheader("Why each Stage 2 contract is in Stage 2")
@@ -43,8 +48,8 @@ else:
     for tab, basis, note in (
         (tab1, "any", "Triggers overlap, so these shares add to more than 100%."),
         (tab2, "sole", "Only where that trigger is the single cause, so these "
-                       'are additive. "Stage override" is a stage forced in '
-                       "the source data."),
+                       'add up. "Stage override" is a stage forced in the '
+                       "source data."),
     ):
         with tab:
             caption(note)
@@ -60,24 +65,15 @@ else:
                               pct_cols=("pct_contracts",)),
                     use_container_width=True, hide_index=True)
 
-
-# ------------------------------------------- the outcome, read from outside
-with guard():
-    detail = api.staging_detail(run_id, threshold)
-
 st.divider()
 overlap_tab, dpd_tab, s3_tab, check_tab = st.tabs(
     ["Trigger combinations", "Days past due", "Stage 3 drivers",
      "Against the rule"])
 
 with overlap_tab:
-    caption("The per-trigger view above double-counts: a name that is both "
-            "watchlisted and restructured appears under each. Here it appears "
-            "once, under the combination, so the rows are additive and the "
-            "overlaps are visible. A Stage 2 contract with no trigger at all "
-            "is not an error — it is there by contagion from another of the "
-            "customer's facilities, or by an override — so it gets its own "
-            "row rather than being dropped.")
+    caption("Each Stage 2 contract once, under its combination of triggers, so "
+            "the rows add up. One with no trigger is there by contagion or an "
+            "override.")
     ov = pd.DataFrame(detail["trigger_overlap"])
     if len(ov) == 0:
         st.info("No Stage 2 contracts in this run.")
@@ -89,17 +85,16 @@ with overlap_tab:
             use_container_width=True, hide_index=True)
 
 with dpd_tab:
-    caption("At customer level, because staging is decided per customer. "
-            "Counting contracts would show one customer once per facility.")
+    caption("Customers by stage and days past due: staging is decided per "
+            "customer.")
     dd = pd.DataFrame(detail["dpd_by_stage"])
     if len(dd):
         piv = dd.pivot(index="stage", columns="band", values="customers")
         st.dataframe(piv, use_container_width=True)
 
 with s3_tab:
-    caption("These do NOT add to 100%: a defaulted customer is usually over "
-            "90 days AND flagged, and each driver counts them. The question "
-            "is which signals are present, not how to partition them.")
+    caption("A defaulted customer is usually over 90 days and flagged, so the "
+            "drivers overlap and do not add to 100%.")
     s3 = pd.DataFrame(detail["stage3_drivers"])
     if len(s3) == 0:
         st.info("No Stage 3 customers in this run.")
@@ -124,11 +119,9 @@ with check_tab:
                 f"report, reproduces the stage on all {c['checked']:,} "
                 "contracts.")
         else:
-            caption("A difference is not automatically a defect. The report "
-                    "does not carry AccountMaster.Stage, so a manual override "
-                    "cannot be replayed and shows up here — which is why the "
-                    "two directions are separated. Staged BETTER than the rule "
-                    "is the one worth chasing.")
+            caption("The report does not carry AccountMaster.Stage, so a "
+                    "manual override shows here as a difference. Staged "
+                    "better than the rule is the one worth chasing.")
             for _, f in findings.iterrows():
                 icon = "⚠️" if f["severity"] == "warn" else "ℹ️"
                 with st.expander(f"{icon}  {f['check']} — "
