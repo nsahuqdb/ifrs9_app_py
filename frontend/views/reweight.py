@@ -1,17 +1,23 @@
 """What a different scenario weighting would cost.
 
-The booked figure is a weighted sum of the five scenario runs, so any other
-set of weights can be priced exactly from the same five reports, with nothing
-re-run. Moved here from Portfolio -> Scenarios: the portfolio pages show the
-run as booked, and a different weighting is a stress question.
+Repriced, not interpolated: the PD chain is rebuilt from the run's frozen
+config with the weights entered, exactly as a run builds it, and the book is
+priced with the engine's own ECL function (ifrs9qdb.stress.
+scenario_weights_stress). At the run's own weights that is the booked figure.
+The weights are the internal scale's -- the QDB grades; Investments and Banks
+& FIs keep their own, which follow GCC growth year by year. Moved here from
+Portfolio -> Scenarios: the portfolio pages show the run as booked, and a
+different weighting is a stress question.
 """
 import pandas as pd
 import streamlit as st
 
 import api
-from ui import bar, caption, fmt_table, guard, metric_row, money, page_setup, pct, signed
+from ui import (bar, callout, caption, fmt_table, guard, metric_row, money,
+                page_setup, pct, signed)
 
-run_id = st.session_state.get("run_id")
+S = st.session_state
+run_id = S.get("run_id")
 if not run_id:
     st.info("No run selected. Build one on **Run the pipeline**, or point the "
             "backend at a folder of existing runs.", icon="👈")
@@ -20,54 +26,76 @@ page_setup("Scenario weights", "What a different weighting of the five scenarios
            "would cost")
 
 with guard():
-    s = api.scenarios(run_id)
-
-if not s.get("available"):
-    st.info(s.get("reason", "This run wrote no per-scenario reports."))
-    caption("Reweighting needs the five per-scenario reports a run writes. "
-            "Portfolio → Scenarios can rebuild the scenario provisions from the "
-            "run's frozen config.")
+    rw = api.scenario_weights(run_id)
+if not rw.get("ok"):
+    st.info(rw.get("reason", "This run's scenario weights could not be resolved."))
+    caption("Reweighting rebuilds the PD chain from the run's frozen config, "
+            "so it needs the config the run froze (config_used).")
     st.stop()
 
-comp = pd.DataFrame(s["comparison"])
-caption("Weights are normalised over the scenarios this run actually priced, "
-        "so a weight naming one it did not cannot quietly shrink the total. "
-        "Anything dropped is listed rather than assumed harmless.")
+own = rw["internal"]
+names = list(own)
+caption("The weights the run was priced with, as the engine works them out "
+        "from its frozen config. These are the internal scale's (the QDB "
+        "grades); Investments and Banks & FIs keep their own, which follow GCC "
+        "growth year by year. Weights are normalised to 100%.")
 
-names = list(comp["scenario"])
-default = {n: round(1 / len(names), 4) for n in names}
 cols = st.columns(len(names))
-weights = {}
+entered = {}
 for col, n in zip(cols, names):
-    weights[n] = col.number_input(n, min_value=0.0, max_value=1.0,
-                                  value=float(default[n]), step=0.01,
-                                  format="%.4f", key=f"w_{n}")
+    entered[n] = col.number_input(n, min_value=0.0, max_value=100.0,
+                                  value=round(100 * own[n], 2), step=0.5,
+                                  format="%.2f", key=f"w_{run_id}_{n}")
+# An input left at its (rounded) starting value means the run's own weight,
+# exactly, so the run's own weights reprice to the booked figure to the cent.
+weights = {n: own[n] if v == round(100 * own[n], 2) else v / 100
+           for n, v in entered.items()}
+total = 100 * sum(weights.values())
+st.caption(f"These weights sum to {total:.2f}%. The run's own: "
+           + ", ".join(f"{n} {100 * own[n]:.2f}%" for n in names) + ".")
 
-total = sum(weights.values())
-st.caption(f"These weights sum to {total:.4f}.")
-if st.button("Reweight", type="primary", disabled=total <= 0):
-    with guard():
-        r = api.reweight(run_id, weights)
-    booked_v = r.get("booked") or 0
+key = (run_id, tuple(round(v, 6) for v in weights.values()))
+c1, c2 = st.columns([1, 3])
+if c1.button("Reprice at these weights", type="primary", disabled=total <= 0):
+    with guard(), st.spinner("Rebuilding the PD curves and repricing the book…"):
+        S["rw_result"] = (key, api.reweight(run_id, weights))
+if c2.button("Move ten points onto each scenario", disabled=total <= 0):
+    with guard(), st.spinner("Repricing the book once per scenario…"):
+        S["rw_sens"] = (key, api.reweight_sensitivity(run_id, weights))
+
+res = S.get("rw_result")
+if res and res[0] == key:
+    r = res[1]
     metric_row([
-        ("Booked", money(booked_v)),
-        ("Reweighted", money(r["total"])),
-        ("Difference", signed(r["total"] - booked_v)),
-        ("vs booked", pct(100 * (r["total"] - booked_v) / max(booked_v, 1))),
+        ("This run", money(r["before"])),
+        ("At these weights", money(r["after"])),
+        ("Difference", signed(r["delta"])),
+        ("vs this run", pct(100 * r["delta"] / r["before"]) if r["before"] else "—"),
     ])
-    if r.get("missing"):
-        st.warning(f"Not priced by this run, so dropped: "
-                   f"{', '.join(r['missing'])}", icon="⚠️")
+    if r.get("note"):
+        callout("info", r["note"])
+    by = pd.DataFrame(r.get("by_portfolio") or [])
+    if len(by):
+        st.dataframe(fmt_table(by, money_cols=("contracts", "before", "after",
+                                               "change")),
+                     use_container_width=True, hide_index=True)
+    caption("Every contract repriced with the engine's ECL function on PD "
+            "curves rebuilt with these weights. Investments and Banks & FIs "
+            "do not move: their weights are their own.")
 
-    sens = pd.DataFrame(r["sensitivity"])
-    if len(sens):
+sens = S.get("rw_sens")
+if sens and sens[0] == key:
+    sv = pd.DataFrame(sens[1])
+    if len(sv):
         st.subheader("Moving ten points onto each scenario")
         caption("Each row takes 10% of probability mass from the others — pro "
-                "rata, so their relative standing is unchanged — and gives it "
-                "to one. That is the question a committee actually asks.")
-        bar(sens, "scenario", "change", diverging=True,
-            title="Change in provision")
-        st.dataframe(fmt_table(sens, money_cols=("ecl_scenario", "ecl_base",
+                "rata, so their relative standing is unchanged — gives it to "
+                "one, and reprices the book. That is the question a committee "
+                "actually asks.")
+        bar(sv, "scenario", "change", diverging=True, title="Change in provision")
+        show = sv.assign(weight_before=100 * sv["weight_before"],
+                         weight_after=100 * sv["weight_after"])
+        st.dataframe(fmt_table(show, money_cols=("ecl_scenario", "ecl_base",
                                                  "ecl_shifted", "change"),
-                               pct_cols=("pct",)),
+                               pct_cols=("weight_before", "weight_after", "pct")),
                      use_container_width=True, hide_index=True)

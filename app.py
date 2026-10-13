@@ -74,9 +74,11 @@ pages = {
         st.Page(P + "scenarios.py", title="Scenarios", icon=":material/alt_route:"),
         st.Page(P + "quality.py", title="Data quality", icon=":material/rule:"),
     ],
+    # Two runs side by side. Why the provision moved is Movement alone: the
+    # bridge reprices every contract with the pipeline's own ECL function, so
+    # there is no second attribution here to disagree with it.
     "Comparison": [
         st.Page(P + "movement.py", title="Movement", icon=":material/timeline:"),
-        st.Page(P + "attribution.py", title="Attribution", icon=":material/insights:"),
         st.Page(P + "migration.py", title="Migration", icon=":material/swap_horiz:"),
         st.Page(P + "reconcile.py", title="Reconcile & export",
                 icon=":material/compare_arrows:"),
@@ -124,7 +126,7 @@ NEEDS_RUN = {"Overview", "Staging", "Concentration", "Segments",
              "Stress packages", "Package comparison", "Lever sensitivity",
              "Reverse stress", "Roll forward", "What-if", "Staging threshold",
              "Macro path", "Scenario weights", "Model assumptions"}
-COMPARES = {"Movement", "Attribution", "Migration", "Reconcile & export"}
+COMPARES = {"Movement", "Migration", "Reconcile & export"}
 OPTIONAL_RUN = {"ECL overlays", "Assistant", "Audit log"}
 
 nav = st.navigation(pages, position="top")

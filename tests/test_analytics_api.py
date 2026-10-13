@@ -1,4 +1,4 @@
-"""The analytics endpoints added for risk, scenarios, attribution and migration.
+"""The analytics endpoints added for risk, scenarios, movement and migration.
 
 The API must not become a second implementation. Each of these checks that the
 endpoint returns what the engine returns, and that a run missing the inputs an
@@ -109,69 +109,20 @@ class TestStagingDetail:
         assert sum(r["contracts"] for r in detail["trigger_overlap"]) == s2
 
 
-class TestAttribution:
-    @needs_pair
-    def test_the_indicative_split_sums_to_the_move(self):
-        prev, curr = PAIR
-        body = client.get("/api/analytics/attribution",
-                          params={"prev": prev, "curr": curr}).json()
-        eff = body["indicative"]
-        assert sum(e["effect"] for e in eff) == pytest.approx(
-            eff[0]["actual_change"], abs=1e-6)
-
-    @needs_pair
-    def test_the_bridge_sums_to_the_change_in_coverage(self):
-        prev, curr = PAIR
-        body = client.get("/api/analytics/attribution",
-                          params={"prev": prev, "curr": curr}).json()
-        a = client.get(f"/api/analytics/{prev}/summary").json()
-        b = client.get(f"/api/analytics/{curr}/summary").json()
-        assert sum(r["total_effect"] for r in body["bridge"]) == pytest.approx(
-            b["coverage"] - a["coverage"], abs=1e-6)
-
-    @needs_pair
-    def test_the_exact_split_reconciles_or_explains_itself(self):
-        prev, curr = PAIR
-        body = client.get("/api/analytics/attribution",
-                          params={"prev": prev, "curr": curr,
-                                  "exact": True}).json()
-        if body["exact"] is None:
-            assert body["exact_reason"], "an empty chart is not an answer"
-            return
-        ex = body["exact"]
-        scale = max(abs(ex["opening"]), abs(ex["closing"]), 1.0)
-        assert abs(ex["residual"]) / scale < 1e-12
-        assert [e["factor"] for e in ex["effects"]] == \
-            ["Horizon", "EAD", "PD", "LGD"]
-
-    @needs_pair
-    def test_an_unknown_bridge_grouping_is_refused(self):
-        prev, curr = PAIR
-        r = client.get("/api/analytics/attribution",
-                       params={"prev": prev, "curr": curr, "by": "sector"})
-        assert r.status_code == 400
-
-
 class TestMigration:
     @needs_pair
-    def test_customers_and_contracts_give_different_counts(self):
-        """Rating is a customer attribute; a contract view inflates the cells."""
-        prev, curr = PAIR
-        cust = client.get("/api/analytics/migration",
-                          params={"prev": prev, "curr": curr}).json()
-        ctr = client.get("/api/analytics/migration",
-                         params={"prev": prev, "curr": curr,
-                                 "by_customer": False}).json()
-        assert sum(r["n"] for r in cust["rating"]) < \
-            sum(r["n"] for r in ctr["rating"])
-
-    @needs_pair
-    def test_the_movers_are_exactly_the_off_diagonal(self):
+    def test_the_stage_matrix_counts_customers_once(self):
+        """Stage is a customer attribute: a customer in both runs is one cell,
+        however many facilities it holds."""
         prev, curr = PAIR
         m = client.get("/api/analytics/migration",
                        params={"prev": prev, "curr": curr}).json()
-        moved = sum(r["customers"] for r in m["stage"] if r["from"] != r["to"])
-        assert len(m["movers"]) == min(moved, 200)
+        cells = m["stage"]
+        assert cells, "two runs of one book share customers"
+        assert {r["from"] for r in cells} <= {1, 2, 3}
+        assert {r["to"] for r in cells} <= {1, 2, 3}
+        n = client.get(f"/api/analytics/{curr}/summary").json()
+        assert sum(r["customers"] for r in cells) <= n["customers"]
 
 
 class TestScenarios:
@@ -185,28 +136,36 @@ class TestScenarios:
         assert z == sorted(z)
 
     @needs_run
-    def test_reweighting_reports_what_it_dropped(self):
-        """A weight naming a scenario the run did not price must not silently
-        shrink the total."""
-        body = client.get(f"/api/analytics/{RUN}/scenarios").json()
-        if not body.get("available"):
-            pytest.skip("no per-scenario reports")
-        names = [r["scenario"] for r in body["comparison"]]
-        w = {n: 1 / len(names) for n in names}
-        w["Mild Panic"] = 0.5
-        r = client.post(f"/api/analytics/{RUN}/scenarios/reweight",
-                        json={"weights": w}).json()
-        assert r["missing"] == ["Mild Panic"]
-        assert sum(r["normalised_weights"].values()) == pytest.approx(1.0)
+    def test_the_weights_shown_are_the_ones_the_run_was_priced_with(self):
+        w = client.get(f"/api/analytics/{RUN}/scenarios/weights").json()
+        if not w.get("ok"):
+            pytest.skip(w.get("reason", "no frozen config"))
+        assert sum(w["internal"].values()) == pytest.approx(1.0)
+        assert sum(w["external"].values()) == pytest.approx(1.0, abs=1e-6)
 
     @needs_run
-    def test_weights_naming_nothing_priced_are_refused(self):
-        body = client.get(f"/api/analytics/{RUN}/scenarios").json()
-        if not body.get("available"):
-            pytest.skip("no per-scenario reports")
+    def test_reweighting_at_the_runs_own_weights_changes_nothing(self):
+        """Repriced, not interpolated: the run's own weights give its own
+        provision back."""
+        w = client.get(f"/api/analytics/{RUN}/scenarios/weights").json()
+        if not w.get("ok"):
+            pytest.skip(w.get("reason", "no frozen config"))
         r = client.post(f"/api/analytics/{RUN}/scenarios/reweight",
-                        json={"weights": {"Mild Panic": 1.0}})
+                        json={"weights": w["internal"]})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["delta"] == pytest.approx(0.0, abs=1e-3)
+        assert body["after"] == pytest.approx(body["provision"], abs=1e-2)
+
+    @needs_run
+    def test_weights_naming_an_unknown_scenario_are_refused(self):
+        w = client.get(f"/api/analytics/{RUN}/scenarios/weights").json()
+        if not w.get("ok"):
+            pytest.skip(w.get("reason", "no frozen config"))
+        r = client.post(f"/api/analytics/{RUN}/scenarios/reweight",
+                        json={"weights": {**w["internal"], "Mild Panic": 0.5}})
         assert r.status_code == 400
+        assert "Mild Panic" in r.json()["detail"]
 
 
 class TestModelAssumptions:
@@ -219,6 +178,9 @@ class TestModelAssumptions:
         assert body["severity"] and body["mev_weights"]
         assert sum(r["weight"] or 0 for r in body["mev_weights"]) == \
             pytest.approx(1.0)
+        # the scenario weights it is priced with, beside what the file states
+        used = body["weights_used"]
+        assert used and sum(used["internal"].values()) == pytest.approx(1.0)
 
 
 class TestQualityAndLookup:
@@ -330,7 +292,7 @@ class TestWhatIf:
                            json={"rules": []}).status_code == 400
 
 
-class TestDistributionsAndFlows:
+class TestDistributions:
     @needs_run
     def test_the_profiles_over_every_contract_conserve_the_book(self):
         """Days past due and ticket size are defined for every contract, so a
@@ -365,49 +327,6 @@ class TestDistributionsAndFlows:
     def test_the_lorenz_curve_ends_at_a_hundred(self):
         lz = client.get(f"/api/analytics/{RUN}/distributions").json()["lorenz"]
         assert lz and lz[-1]["pct_ecl"] == pytest.approx(100.0, abs=1e-6)
-
-    @needs_pair
-    def test_the_flows_are_the_contracts_that_arrived_or_left(self):
-        prev, curr = PAIR
-        f = client.get("/api/analytics/flows",
-                       params={"prev": prev, "curr": curr}).json()
-        labels = {r["flow"] for r in f["flows"]}
-        assert labels == {"New business", "Derecognised"}
-        # Two runs of the same book have neither, and say so with zeros.
-        assert all(r["contracts"] >= 0 for r in f["flows"])
-        assert all(r["contracts"] > 0 or not r.get("ecl") for r in f["flows"])
-
-    @needs_pair
-    def test_every_drill_down_ties_to_its_step(self):
-        """The walk has no plug, so neither can the detail behind it."""
-        prev, curr = PAIR
-        f = client.get("/api/analytics/flows",
-                       params={"prev": prev, "curr": curr, "n": 10**9}).json()
-        w = client.get("/api/analytics/walk",
-                       params={"prev": prev, "curr": curr}).json()
-        steps = {s["label"]: s["amount"] for s in w["steps"]}
-        for label, rows in f["detail"].items():
-            if not rows:
-                continue
-            assert sum(r["amount"] for r in rows) == pytest.approx(
-                steps[label], abs=1e-4), label
-
-    @needs_pair
-    def test_the_segment_movement_sums_to_the_whole_move(self):
-        prev, curr = PAIR
-        f = client.get("/api/analytics/flows",
-                       params={"prev": prev, "curr": curr}).json()
-        a = client.get(f"/api/analytics/{prev}/summary").json()
-        b = client.get(f"/api/analytics/{curr}/summary").json()
-        assert sum(r["change"] for r in f["by_segment"]) == pytest.approx(
-            b["ecl"] - a["ecl"], abs=1e-4)
-
-    @needs_pair
-    def test_an_unknown_breakdown_is_refused(self):
-        prev, curr = PAIR
-        r = client.get("/api/analytics/flows",
-                       params={"prev": prev, "curr": curr, "by": "sector"})
-        assert r.status_code == 400
 
 
 class TestPackageComparison:

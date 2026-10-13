@@ -131,11 +131,6 @@ def maturity(run_id: str) -> list[dict]:
     return get(f"/analytics/{run_id}/maturity")
 
 
-@st.cache_data(ttl=600, show_spinner="Comparing the runs…")
-def walk(prev: str, curr: str) -> dict:
-    return get("/analytics/walk", prev=prev, curr=curr)
-
-
 @st.cache_data(ttl=600, show_spinner="Repricing both runs, contract by contract…")
 def bridge(prev: str, curr: str, level: str = "book", members: tuple = ()) -> dict:
     return get("/analytics/bridge", prev=prev, curr=curr, level=level,
@@ -450,16 +445,8 @@ def staging_detail(run_id: str, dpd_threshold: float | None = None) -> dict:
 
 
 @st.cache_data(ttl=600, show_spinner="Matching the two books…")
-def migration(prev: str, curr: str, top: int = 12,
-              by_customer: bool = True) -> dict:
-    return get("/analytics/migration", prev=prev, curr=curr, top=top,
-               by_customer=by_customer)
-
-
-@st.cache_data(ttl=600, show_spinner="Attributing the movement…")
-def attribution(prev: str, curr: str, by: str = "portfolio",
-                exact: bool = False) -> dict:
-    return get("/analytics/attribution", prev=prev, curr=curr, by=by, exact=exact)
+def migration(prev: str, curr: str, top: int = 12) -> dict:
+    return get("/analytics/migration", prev=prev, curr=curr, top=top)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -467,9 +454,19 @@ def scenarios(run_id: str) -> dict:
     return get(f"/analytics/{run_id}/scenarios")
 
 
-def reweight(run_id: str, weights: dict, shift: float = 0.10) -> dict:
-    return post(f"/analytics/{run_id}/scenarios/reweight",
-                {"weights": weights, "shift": shift})
+@st.cache_data(ttl=600, show_spinner=False)
+def scenario_weights(run_id: str) -> dict:
+    """The weights the run is priced with, as the engine resolves them."""
+    return get(f"/analytics/{run_id}/scenarios/weights")
+
+
+def reweight(run_id: str, weights: dict) -> dict:
+    return post(f"/analytics/{run_id}/scenarios/reweight", {"weights": weights})
+
+
+def reweight_sensitivity(run_id: str, weights: dict, shift: float = 0.10) -> list:
+    return post(f"/analytics/{run_id}/scenarios/sensitivity?shift={shift}",
+                {"weights": weights})
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -510,11 +507,6 @@ def whatif(run_id: str, rules: list) -> dict:
 @st.cache_data(ttl=600, show_spinner=False)
 def distributions(run_id: str) -> dict:
     return get(f"/analytics/{run_id}/distributions")
-
-
-@st.cache_data(ttl=600, show_spinner="Matching the two books…")
-def flows(prev: str, curr: str, by: str = "portfolio", n: int = 25) -> dict:
-    return get("/analytics/flows", prev=prev, curr=curr, by=by, n=n)
 
 
 def scenarios_rebuild(run_id: str) -> dict:

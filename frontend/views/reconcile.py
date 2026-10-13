@@ -1,9 +1,13 @@
-"""Reconciling this run against another, and packaging it."""
+"""Reconciling this run against another, file by file, and packaging it.
+
+Why the provision moved is on Movement, priced by the ECL bridge; this page
+says which files differ, which is what explains it.
+"""
 import pandas as pd
 import streamlit as st
 
 import api
-from ui import caption, guard, metric_row, money, page_setup, pct, waterfall
+from ui import caption, guard, metric_row, money, page_setup, pct, signed
 
 run_id = st.session_state.get("run_id")
 if not run_id:
@@ -11,35 +15,11 @@ if not run_id:
     st.stop()
 
 page_setup("Reconcile and export",
-           "Why this run differs from another, and everything needed to "
+           "Which files differ from another run, and everything needed to "
            "defend the figure in one package.")
 
-tab_rec, tab_files, tab_exp = st.tabs(["Movement", "File by file", "Export"])
+tab_files, tab_exp = st.tabs(["File by file", "Export"])
 other = st.session_state.get("compare_id")
-
-with tab_rec:
-    if not other:
-        st.info("Select a second run at the top to compare against.")
-    else:
-        with guard():
-            r = api.reconcile(run_id, other)
-        w = r.get("walk")
-        if not w:
-            st.warning("One of the runs has no ECL report.")
-        else:
-            metric_row([
-                ("Opening", money(w["opening"])),
-                ("Closing", money(w["closing"])),
-                ("Movement", money(w["closing"] - w["opening"])),
-                ("% change", pct(100 * (w["closing"] - w["opening"])
-                                 / max(w["opening"], 1))),
-                ("Files matching", f"{r['files_matching']} of {r['files_compared']}"),
-            ])
-            waterfall(pd.DataFrame(w["steps"]))
-            caption(f"Residual {w['residual']:.6f}. "
-                    f"{w['counts']['arrived']:,} contracts arrived, "
-                    f"{w['counts']['left']:,} left, "
-                    f"{w['counts']['migrated']:,} changed stage.")
 
 with tab_files:
     if not other:
@@ -47,6 +27,19 @@ with tab_files:
     else:
         with guard():
             r = api.reconcile(run_id, other)
+        ecl = r.get("ecl") or {}
+        if ecl:
+            move = ecl["run"] - ecl["reference"]
+            metric_row([
+                (f"ECL {other}", money(ecl["reference"])),
+                (f"ECL {run_id}", money(ecl["run"])),
+                ("Difference", signed(move)),
+                ("% change", pct(100 * move / ecl["reference"])
+                 if ecl["reference"] else "—"),
+                ("Files matching", f"{r['files_matching']} of {r['files_compared']}"),
+            ])
+            caption("Why the provision moved, cause by cause, is on "
+                    "Comparison → Movement.")
         f = pd.DataFrame(r["files"])
         differing = f[f["status"] != "match"]
         if len(differing) == 0:

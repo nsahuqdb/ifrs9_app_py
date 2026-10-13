@@ -19,8 +19,9 @@ st.markdown("""
 3. **Look at the portfolio.** Overview, staging, risk parameters,
    concentration, segments, scenarios and data quality all read the same
    priced report, as booked. What-ifs are under Stress testing.
-4. **Compare.** Movement against the previous quarter, attribution and
-   migration to say why it moved, and reconciliation against a reference run.
+4. **Compare.** Movement against the previous quarter says how much the
+   provision moved and why, cause by cause; Migration says who moved stage
+   or rating; Reconcile & export says which files differ.
 5. **Overlay, then approve.** Management overlays sit on top of a completed
    run rather than inside it, so the engine's number stays visible underneath.
 
@@ -31,8 +32,7 @@ st.markdown("""
 | How much, and where does it sit? | Overview, Staging, Concentration |
 | What is it made of? | Risk parameters |
 | What would a worse world cost? | Scenarios, Macro path |
-| How much did it move? | Movement |
-| *Why* did it move? | Attribution |
+| How much did it move, and *why*? | Movement |
 | Who moved? | Migration |
 | What assumptions produced it? | Model assumptions |
 | What would a different policy cost? | Staging threshold, Stress testing |
@@ -41,12 +41,12 @@ st.markdown("""
 | Is the run safe to sign? | Validation |
 | Anything, in plain language | Assistant |
 
-**Attribution comes in two forms.** The default splits the move into
-exposure, PD and LGD by multiplying them out — which is not what the engine
-does, so the three effects are rescaled to fit the actual move and the result
-is marked indicative. Turning on *Reprice through the engine* instead prices
-each contract five times, substituting one ingredient at a time, so the
-effects sum to the move exactly and the residual is zero.
+**Movement reprices, it does not apportion.** Every contract is priced with
+the same ECL function the pipeline uses, once per cause, changing one input at
+a time from the previous run to this one (exposure, then stage, rating, macro
+inputs, PD model, LGD and collateral, overlay), so the steps sum exactly to
+the closing provision. Stress tests, what-ifs and the roll forward reprice
+with that same function, so a number on one page cannot disagree with another.
 
 **The macro path rebuilds the whole PD chain** from the config the run froze,
 with the forecast edited. The scenario-weight switch on that page is not a

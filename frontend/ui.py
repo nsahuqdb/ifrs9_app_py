@@ -826,7 +826,7 @@ def bar(df: pd.DataFrame, x: str, y: str, *, horizontal=True, diverging=False,
 
 
 def waterfall(steps: pd.DataFrame, title: str | None = None, zoom: bool = False):
-    """The ECL walk. Totals are absolute, the rest relative, so the bars connect.
+    """A waterfall. Totals are absolute, the rest relative, so the bars connect.
 
     ``zoom`` starts the axis near the lowest point the bars reach rather than
     at zero: beside a provision in the billions the causes are otherwise too

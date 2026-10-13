@@ -1,15 +1,16 @@
-"""Who moved between two runs, on rating and on stage.
+"""Who moved between two runs, on stage and on rating.
 
-Counted as CUSTOMERS by default, because rating and stage are customer
-attributes at QDB: a contract view counts one customer once per facility and
-inflates every cell by that customer's facility count.
+Counted as CUSTOMERS, because rating and stage are customer attributes at QDB:
+a contract view counts one customer once per facility and inflates every cell
+by that customer's facility count. What the moves cost is on Movement (Stage
+migration and Rating migration), priced by the ECL bridge.
 """
 import pandas as pd
 import streamlit as st
 
 import api
 from ui import (bar, caption, fmt_table, guard, metric_row, money, page_setup,
-                pct, signed)
+                pct)
 
 run_id = st.session_state.get("run_id")
 compare_id = st.session_state.get("compare_id")
@@ -21,16 +22,14 @@ if not compare_id:
     st.info("Two runs are needed. Add another run to the runs folder.")
     st.stop()
 page_setup("Migration", f"{compare_id} → {run_id}")
-
-by_customer = st.toggle("Count customers rather than contracts", value=True,
-                        help="Rating and stage are customer attributes; a "
-                             "contract count over-weights large relationships.")
+caption("Customers, not contracts: stage and rating are set per customer. "
+        "What each move cost, and which contracts carried it, is on Movement "
+        "(Stage migration and Rating migration).")
 
 with guard():
-    m = api.migration(compare_id, run_id, by_customer=by_customer)
+    m = api.migration(compare_id, run_id)
 
-rating_tab, stage_tab, movers_tab = st.tabs(
-    ["Rating", "Stage", "Who moved"])
+stage_tab, rating_tab = st.tabs(["Stage", "Rating"])
 
 with rating_tab:
     summary = pd.DataFrame(m["rating_summary"])
@@ -88,20 +87,3 @@ with stage_tab:
             bar(moved.assign(
                 cell=[f"{a} → {b}" for a, b in zip(moved["from"], moved["to"])]),
                 "cell", "ecl", title="Provision carried by each migration")
-
-with movers_tab:
-    movers = pd.DataFrame(m["movers"])
-    if len(movers) == 0:
-        st.info("No customer changed stage between these two runs.")
-    else:
-        caption("The matrix says how many moved; a review asks which. Sorted "
-                "by the size of the provision move, so the names that explain "
-                "the headline come first.")
-        show = movers.copy()
-        show["ecl_change"] = show["ecl_change"].map(signed)
-        st.dataframe(
-            fmt_table(show[["customer", "stage_prev", "stage_curr", "direction",
-                            "exposure_curr", "ecl_prev", "ecl_curr",
-                            "ecl_change"]],
-                      money_cols=("exposure_curr", "ecl_prev", "ecl_curr")),
-            use_container_width=True, hide_index=True)

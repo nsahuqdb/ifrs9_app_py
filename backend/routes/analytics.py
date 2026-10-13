@@ -16,23 +16,21 @@ from pydantic import BaseModel
 
 from .runs import _output_dir
 from ifrs9qdb.analytics import (
-    collateral_analysis, concentration, coverage_bridge, customer_lookup,
+    collateral_analysis, concentration, customer_lookup,
     customer_stage_migration, customer_view, data_quality,
-    data_quality_detail, dpd_by_stage, ead_runoff, ecl_factor_attribution,
-    ecl_walk, factor_attribution_diagnosis, factor_attribution_exact, hhi,
+    data_quality_detail, dpd_by_stage, ead_runoff, hhi,
     hhi_band, hhi_equivalent_n, lgd_floor_stats, lgd_vs_collateral,
     maturity_profile, mev_forecast_table, mev_weights_table, migration_summary,
     normalise, pd_profile, pd_term_structure, rating_migration, run_profile,
-    scenario_comparison, scenario_ecl_from_outputs, scenario_reweight,
-    scenario_sensitivity, scenario_severity, scenario_stage_split,
+    scenario_comparison, scenario_ecl_from_outputs, scenario_severity,
+    scenario_stage_split,
     scenario_weights, segment_matrix, stage2_trigger_overlap, stage2_triggers,
-    stage3_drivers, stage_movers, staging_consistency, staging_distribution,
+    stage3_drivers, staging_consistency, staging_distribution,
     top_contributors,
 )
-from ifrs9qdb.analytics import (  # noqa: F401  -- distributions and flows
-    collateral_bands, dpd_profile, ecl_walk_detail, exposure_bands,
-    flow_profile, lgd_distribution, lorenz_curve, movement_by,
-    pd_by_rating, pd_distribution, vintage_profile,
+from ifrs9qdb.analytics import (  # noqa: F401  -- distributions
+    collateral_bands, dpd_profile, exposure_bands, lgd_distribution,
+    lorenz_curve, pd_by_rating, pd_distribution, vintage_profile,
 )
 from ifrs9qdb.analytics.model_view import config_used
 from ifrs9qdb.stress import staging_threshold
@@ -151,19 +149,6 @@ def maturity(run_id: str) -> list[dict]:
     return _records(maturity_profile(_report(run_id)))
 
 
-@router.get("/analytics/walk")
-def walk(prev: str, curr: str) -> dict:
-    """Movement between two runs. The steps sum exactly to the closing balance."""
-    w = ecl_walk(_report(prev), _report(curr))
-    if not w:
-        raise HTTPException(400, "Both runs need an ECL report")
-    return {
-        "opening": w["opening"], "closing": w["closing"],
-        "residual": w["residual"], "counts": w["counts"],
-        "steps": _records(w["steps"]),
-    }
-
-
 # ------------------------------------------------------------- risk --------
 @lru_cache(maxsize=8)
 def _inputs(run_id: str):
@@ -253,16 +238,17 @@ def staging_detail(run_id: str, dpd_threshold: float | None = None) -> dict:
 
 
 @router.get("/analytics/migration")
-def migration(prev: str, curr: str, top: int = 12,
-              by_customer: bool = True) -> dict:
-    """Who moved, on rating and on stage, between two runs."""
+def migration(prev: str, curr: str, top: int = 12) -> dict:
+    """Who moved, on rating and on stage, between two runs.
+
+    Counted as customers: rating and stage are customer attributes, so a
+    contract count would count one customer once per facility.
+    """
     a, b = _report(prev), _report(curr)
     return {
-        "rating": _records(rating_migration(a, b, top=top,
-                                            by_customer=by_customer)),
+        "rating": _records(rating_migration(a, b, top=top, by_customer=True)),
         "rating_summary": _records(migration_summary(a, b)),
         "stage": _records(customer_stage_migration(a, b)),
-        "movers": _records(stage_movers(a, b).head(200)),
     }
 
 
@@ -356,41 +342,6 @@ def bridge_by_route(prev: str, curr: str, level: str) -> list[dict]:
         raise HTTPException(400, str(exc)) from exc
 
 
-# ------------------------------------------------------ attribution --------
-@router.get("/analytics/attribution")
-def attribution(prev: str, curr: str, by: str = Query("portfolio"),
-                exact: bool = False) -> dict:
-    """Why the provision moved.
-
-    ``exact`` reprices every contract through the engine, which takes a
-    second or two on a full book; the default indicative split is instant.
-    """
-    a, b = _report(prev), _report(curr)
-    try:
-        bridge = coverage_bridge(a, b, by)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-    out = {"indicative": _records(ecl_factor_attribution(a, b)),
-           "bridge": _records(bridge)}
-    if not exact:
-        return out
-
-    ia, ib = _inputs(prev), _inputs(curr)
-    res = factor_attribution_exact(ia, a, ib, b) if ia and ib else {}
-    if not res:
-        out["exact"] = None
-        out["exact_reason"] = (factor_attribution_diagnosis(ia, a, ib, b)
-                               or "The exact attribution could not be built.")
-        return out
-    out["exact"] = {
-        "effects": _records(res["effects"]),
-        **{k: res[k] for k in ("covered", "uncovered", "opening", "closing",
-                               "contracts", "residual")},
-    }
-    return out
-
-
 # -------------------------------------------------------- scenarios --------
 @router.get("/analytics/{run_id}/scenarios")
 def scenarios(run_id: str) -> dict:
@@ -410,29 +361,54 @@ def scenarios(run_id: str) -> dict:
     }
 
 
+@router.get("/analytics/{run_id}/scenarios/weights")
+def scenario_weights_used(run_id: str) -> dict:
+    """The scenario weights the run is priced with, both scales, as the engine
+    resolves them from the run's frozen config -- not the config's rounded
+    snapshot."""
+    from ifrs9qdb.stress import run_scenario_weights
+    return run_scenario_weights(_run_output(run_id))
+
+
 class Reweight(BaseModel):
     weights: dict[str, float]
-    shift: float = 0.10
+
+
+def _reweight_inputs(run_id: str):
+    out_dir = _run_output(run_id)
+    inputs = _inputs(run_id)
+    if inputs is None:
+        raise HTTPException(400, "This run's engine inputs could not be read.")
+    return out_dir, inputs
 
 
 @router.post("/analytics/{run_id}/scenarios/reweight")
 def reweight(run_id: str, body: Reweight) -> dict:
-    """What the provision would be under a different set of weights."""
-    out_dir = _run_output(run_id)
-    ecl = scenario_ecl_from_outputs(out_dir)
-    if not ecl.get("ok"):
-        raise HTTPException(400, ecl.get("reason", "No scenario reports"))
-    got = scenario_reweight(ecl["ecl"], body.weights)
-    if got is None:
-        raise HTTPException(400, "None of those weights name a priced scenario")
-    return {
-        "total": got["total"],
-        "normalised_weights": got["normalised_weights"],
-        "missing": got["missing"],
-        "booked": ecl.get("weighted"),
-        "sensitivity": _records(
-            scenario_sensitivity(ecl["ecl"], body.weights, body.shift)),
-    }
+    """What the provision would be under different internal scenario weights.
+
+    The PD chain is rebuilt from the run's frozen config with these weights
+    and the book repriced with the engine's compute_ecl (stress.
+    scenario_weights_stress), so at the run's own weights it is the booked
+    figure, exactly.
+    """
+    from ifrs9qdb.stress import scenario_weights_stress
+    out_dir, inputs = _reweight_inputs(run_id)
+    r = scenario_weights_stress(inputs, _report(run_id), out_dir,
+                                body.weights)
+    if not r.get("ok"):
+        raise HTTPException(400, r.get("reason", "The weights could not be priced."))
+    return {k: (_records(v) if isinstance(v, pd.DataFrame) else v)
+            for k, v in r.items() if k not in ("stpd", "path", "movers")}
+
+
+@router.post("/analytics/{run_id}/scenarios/sensitivity")
+def reweight_sensitivity(run_id: str, body: Reweight, shift: float = 0.10) -> list[dict]:
+    """Moving ``shift`` of probability onto each scenario in turn, each
+    repriced as ``/reweight`` does."""
+    from ifrs9qdb.stress import scenario_weights_sensitivity
+    out_dir, inputs = _reweight_inputs(run_id)
+    return _records(scenario_weights_sensitivity(
+        inputs, _report(run_id), out_dir, body.weights, shift))
 
 
 # ------------------------------------------------------- the model ---------
@@ -445,10 +421,16 @@ def model(run_id: str) -> dict:
         return {"available": False,
                 "reason": "This run has no frozen config (config_used), so "
                           "the assumptions behind it cannot be shown."}
+    from ifrs9qdb.stress import run_scenario_weights
+    used = run_scenario_weights(out_dir)
     return {
         "available": True,
         "severity": _records(scenario_severity(out_dir)),
         "weights": _records(scenario_weights(cu["config"])),
+        # what the run is priced with, as the engine resolves them -- on an
+        # automatic mode not the file's explicit block above
+        "weights_used": ({"internal": used["internal"], "external": used["external"]}
+                         if used.get("ok") else None),
         "mev_forecast": _records(mev_forecast_table(out_dir)),
         "mev_weights": _records(mev_weights_table(out_dir)),
     }
@@ -490,26 +472,6 @@ def distributions(run_id: str) -> dict:
         "pd": _records(pd_distribution(d)),
         "pd_by_rating": _records(pd_by_rating(d)),
         "lorenz": _records(lorenz_curve(d, level="customer")),
-    }
-
-
-@router.get("/analytics/flows")
-def flows(prev: str, curr: str, by: str = Query("portfolio"),
-          n: int = 25) -> dict:
-    """Arrivals, departures, and the detail behind each step of the walk.
-
-    The walk says the provision moved; this says which contracts carried the
-    movement. Every drill-down sums back to its own step, which is asserted in
-    the package's tests rather than hoped for.
-    """
-    if by not in ("portfolio", "stage", "rating", "account_type"):
-        raise HTTPException(400, "by must be portfolio, stage, rating or account_type")
-    a, b = _report(prev), _report(curr)
-    detail = ecl_walk_detail(a, b, n=n)
-    return {
-        "flows": _records(flow_profile(a, b)),
-        "by_segment": _records(movement_by(a, b, by)),
-        "detail": {label: _records(frame) for label, frame in detail.items()},
     }
 
 

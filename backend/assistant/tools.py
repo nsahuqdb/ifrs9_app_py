@@ -379,13 +379,23 @@ def model_spec(run_id: str | None = None, **_) -> dict:
     mevs = mev_weights_table(out)
     weights = scenario_weights(cu["config"])
     severity = scenario_severity(out)
+    from ifrs9qdb.stress import run_scenario_weights
+    used = run_scenario_weights(out)
+    used_tbl = (pd.DataFrame({"scenario": list(used["internal"]),
+                              "internal": list(used["internal"].values()),
+                              "external_average": [used["external"].get(k)
+                                                   for k in used["internal"]]})
+                if used.get("ok") else pd.DataFrame())
 
     horizons = (model or {}).get("horizons", {}) or {}
     parts = [f"Model specification frozen by run {run.name}.",
              f"TTC anchor PD: {(model or {}).get('ttc_anchor_pd')}",
              f"Horizons: {horizons}",
              "", "MEV components:", _table(mevs),
-             "", "Scenario weights as written in the config:", _table(weights),
+             "", "Scenario weights the run is priced with (as the engine "
+             "resolves them from the frozen config):", _table(used_tbl),
+             "", "Scenario weights as written in the config file (not used on "
+             "an automatic mode):", _table(weights),
              "", "Scenario severity:", _table(severity)]
     return {"ok": True, "summary": "\n".join(parts)}
 

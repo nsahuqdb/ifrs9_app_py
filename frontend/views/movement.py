@@ -257,20 +257,16 @@ with st.expander("What changed in the model, the macro inputs and the ECL settin
                     hide_index=True, width="stretch")
 
 # ----------------------------------------------------------- the detail ----
-tabs = ["Contracts behind it"]
-if level != "book":
-    tabs.append(f"Every {LEVELS[level].lower()}")
-else:
-    tabs.append("By segment")
-tabs.append("Arrivals and departures")
-t = st.tabs(tabs)
+t = st.tabs(["Contracts behind it",
+             f"Every {LEVELS[level].lower()}" if level != "book" else "By segment"])
 
 with t[0]:
     ct = pd.DataFrame(b.get("contracts") or [])
     if len(ct) == 0:
         st.info("No contracts.")
     else:
-        caption("Largest moves first. Each row's causes sum to its change.")
+        caption("Largest moves first. Each row's causes sum to its change; "
+                "Status says which contracts are new and which left the book.")
         ct = _grouped(ct)
         comp = _shown_cols(ct)
         # the stage and rating moves, as text, beside the components of the
@@ -292,18 +288,3 @@ with t[0]:
 
 with t[1]:
     _by_table(level if level != "book" else "segment")
-
-with t[2]:
-    with guard():
-        f = api.flows(compare_id, run_id, "portfolio")
-    fl = pd.DataFrame(f["flows"])
-    if len(fl) == 0:
-        st.info("No contracts arrived or left between these two runs.")
-    else:
-        caption("New business and derecognition are the steps that are not about "
-                "the existing book changing. Their coverage is the column to read: "
-                "business arriving at a higher coverage than the book it joins "
-                "moves the headline on its own.")
-        st.dataframe(fmt_table(fl, money_cols=("contracts", "exposure", "ecl"),
-                               pct_cols=("coverage",)),
-                     hide_index=True, width="stretch")

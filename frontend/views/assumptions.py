@@ -34,16 +34,25 @@ caption("Severity is expressed as a z-score: −1.28 is a once-in-ten-years "
 st.dataframe(sev, use_container_width=True, hide_index=True)
 
 st.subheader("Scenario weights")
+used = m.get("weights_used")
+if used:
+    caption("What the run is priced with, as the engine works them out from "
+            "this frozen config. The two rating scales carry their OWN "
+            "weights: the internal scale is driven by the non-oil GDP "
+            "forecast, the external one by the GCC growth path (one vector a "
+            "year; the average is shown).")
+    st.dataframe(pd.DataFrame({"scenario": list(used["internal"]),
+                               "internal": list(used["internal"].values()),
+                               "external": [used["external"].get(k)
+                                            for k in used["internal"]]}),
+                 use_container_width=True, hide_index=True)
 if len(weights) == 0:
     st.info("This config states no explicit weights.")
 else:
-    caption("The two rating scales carry their OWN weights: the internal scale "
-            "is driven by the non-oil GDP forecast, the external one by the "
-            "GCC growth path. Applying one set to both is a real defect this "
-            "port has already had once. These are what the file states — the "
-            "internal scale runs on auto_non_oil_gdp_cdf, so the engine may "
-            "compute them instead, and the explicit block is a rounded "
-            "snapshot of that calculation.")
+    caption("As written in the config file's explicit_weights. On an "
+            "automatic mode (auto_non_oil_gdp_cdf, auto_gcc_cdf) the engine "
+            "computes the weights instead and this block is not used — it can "
+            "be a snapshot of an earlier method's weights.")
     metric_row([
         ("Internal weights sum", f"{weights['internal'].sum():.4f}"),
         ("External weights sum", f"{weights['external'].sum():.4f}"),

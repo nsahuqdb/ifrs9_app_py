@@ -184,7 +184,7 @@ tests/          API tests; set IFRS9_PROJECT_ROOT to a project with runs to
 The pages, grouped as in the navigation: **Runs** (run the pipeline, browse
 runs, validation, approval queue); **Portfolio** (overview, staging, risk
 parameters, concentration, segments, scenarios, data quality);
-**Comparison** (movement, attribution, migration, reconcile & export);
+**Comparison** (movement, migration, reconcile & export);
 **Stress testing** (packages, package comparison, lever sensitivity, reverse
 stress, roll forward, what-if, staging threshold, macro path, scenario
 weights); **Governance** (config versions, calculator versions, ECL overlays,
