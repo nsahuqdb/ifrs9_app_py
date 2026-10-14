@@ -1,7 +1,8 @@
 """Staging: the split, and why each contract is in its stage.
 
 Read on the run's own staging policy. What a different threshold would cost
-is a stress question, answered on Stress testing -> Staging threshold.
+is a stress question, answered on Stress testing -> Sensitivity (Staging
+threshold), or any policy on Stress test.
 """
 import pandas as pd
 import streamlit as st

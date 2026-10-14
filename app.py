@@ -59,7 +59,7 @@ pages = {
         st.Page(P + "approval.py", title="Approval queue",
                 icon=":material/how_to_reg:"),
     ],
-    # The book in one run, as priced. What-ifs live under Stress testing.
+    # The book in one run, as priced. What-ifs are stress tests.
     "Portfolio": [
         # The landing page. Before the first run it says so and links to Run
         # the pipeline (ui.no_runs); a fixed default keeps every page's URL
@@ -83,20 +83,17 @@ pages = {
         st.Page(P + "reconcile.py", title="Reconcile & export",
                 icon=":material/compare_arrows:"),
     ],
+    # One stress function behind every page (ifrs9qdb.stress.apply_stress):
+    # a stress test names who it reaches and what changes, so a what-if on
+    # named customers, a staging-policy change and a standard package are all
+    # stress tests; the sensitivity pages move its levers one at a time.
     "Stress testing": [
-        st.Page(P + "stress.py", title="Stress packages", icon=":material/bolt:"),
-        st.Page(P + "compare.py", title="Package comparison",
-                icon=":material/compare:"),
-        st.Page(P + "sensitivity.py", title="Lever sensitivity",
+        st.Page(P + "stress.py", title="Stress test", icon=":material/bolt:"),
+        st.Page(P + "sensitivity.py", title="Sensitivity",
                 icon=":material/equalizer:"),
-        st.Page(P + "reverse.py", title="Reverse stress", icon=":material/search:"),
+        st.Page(P + "macro.py", title="Macro & scenarios", icon=":material/public:"),
         st.Page(P + "rollforward.py", title="Roll forward",
                 icon=":material/fast_forward:"),
-        st.Page(P + "whatif.py", title="What-if", icon=":material/edit_note:"),
-        st.Page(P + "threshold.py", title="Staging threshold", icon=":material/tune:"),
-        st.Page(P + "macro.py", title="Macro path", icon=":material/public:"),
-        st.Page(P + "reweight.py", title="Scenario weights",
-                icon=":material/balance:"),
     ],
     "Governance": [
         st.Page(P + "snapshots.py", title="Config versions",
@@ -123,9 +120,8 @@ pages = {
 # without one.
 NEEDS_RUN = {"Overview", "Staging", "Concentration", "Segments",
              "Risk parameters", "Scenarios", "Data quality", "Validation",
-             "Stress packages", "Package comparison", "Lever sensitivity",
-             "Reverse stress", "Roll forward", "What-if", "Staging threshold",
-             "Macro path", "Scenario weights", "Model assumptions"}
+             "Stress test", "Sensitivity", "Macro & scenarios", "Roll forward",
+             "Model assumptions"}
 COMPARES = {"Movement", "Migration", "Reconcile & export"}
 OPTIONAL_RUN = {"ECL overlays", "Assistant", "Audit log"}
 

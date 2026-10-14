@@ -1,29 +1,32 @@
-"""Stress and what-if endpoints.
+"""Stress-testing endpoints, one stress function behind all of them.
 
-Loading a run's engine inputs is the slow part - the eighteen CSVs, the PD and
-EAD curves - so it is cached per run. The pricing itself is fast.
+A package, a what-if on named customers and a staging-policy change are all
+``apply_stress`` with a different scope and levers; several are several calls
+to /apply, and the lever sensitivity, the reverse stress and the threshold
+sweep price through it too.
+Loading a run's engine inputs is the slow part -- the eighteen CSVs, the PD
+and EAD curves -- so it is cached per run. The pricing itself is fast.
 """
 from __future__ import annotations
 
-import os
 from functools import lru_cache
-from pathlib import Path
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from .runs import _output_dir
-from ifrs9qdb.analytics import normalise
+from ifrs9qdb.analytics import normalise, scenario_files
 from ifrs9qdb.inputs import load_engine_inputs
 from ifrs9qdb.stress import (
-    Rule, StressSpec, apply_stress, compare_packages, match_rules, mev_stress,
-    reprice_rules, reverse_stress_all, roll_forward, staging_threshold,
-    staging_threshold_sweep, tornado, TORNADO_LEVERS,
+    StressSpec, apply_stress, mev_stress, read_packages,
+    reverse_stress_all, roll_forward, scenario_weights_sensitivity,
+    staging_threshold, staging_threshold_sweep, standard_packages, tornado,
+    write_packages, TORNADO_LEVERS,
 )
 
 router = APIRouter(tags=["stress"])
-from ..settings import RUNS_DIR  # noqa: E402
+from ..settings import RUNS_DIR, STRESS_PACKAGES_FILE  # noqa: E402
 
 
 @lru_cache(maxsize=8)
@@ -48,66 +51,90 @@ def _records(df):
 
 @router.get("/stress/{run_id}/scope")
 def scope(run_id: str) -> dict:
-    """Portfolios available, and which price against the internal PD curves.
-
-    Externally-rated portfolios do not resolve against those curves, so a
-    stress leaves them untouched. They are excluded by default and named, so
-    that is visible rather than surprising.
-    """
+    """What a stress can reach and what it starts from: the portfolios (and
+    which price against the internal PD curves), the scenarios the run wrote
+    curves for, the run's own staging threshold and LGD parameters, the
+    standard packages and the levers the sensitivity moves."""
     inputs, report = _load(run_id)
+    internal = inputs.internal_portfolios()
+    out = _output_dir(RUNS_DIR / run_id)
     return {
-        "internal": inputs.internal_portfolios(),
+        "internal": internal,
         "external": inputs.external_portfolios(),
         "all": sorted(report["portfolio"].dropna().unique().tolist()),
+        "scenarios": sorted(scenario_files(out)),
+        "run_threshold": staging_threshold(out),
+        "lgd_base": inputs.ctx.lgd_base,
+        "lgd_floor": inputs.ctx.lgd_floor,
+        "standard": [p.to_dict() for p in standard_packages(internal)],
         "levers": TORNADO_LEVERS,
     }
 
 
 class SpecIn(BaseModel):
+    """One stress: who it reaches (portfolios AND stages AND customers, an
+    empty list not narrowing it) and what changes. A blank threshold or LGD
+    parameter is the run's own."""
     name: str = "Stress"
     portfolios: list[str] = Field(default_factory=list)
-    dpd_threshold: float = 60
+    stages: list[int] = Field(default_factory=list)
+    customers: list[str] = Field(default_factory=list)
+    dpd_threshold: float | None = None
     contagion: bool = True
     tasdeer_collective: bool = True
     watchlist_triggers: bool = True
     local_triggers: bool = True
+    stage_to: int | None = None
+    default_top_n: int = 0
     pd_multiplier: float = 1.0
-    lgd_base: float = 0.45
-    lgd_floor: float = 0.5
+    pd_scenario: str = ""
+    rating_notches: int = 0
+    lgd_base: float | None = None
+    lgd_floor: float | None = None
     collateral_pct: float = 100.0
     exposure_pct: float = 100.0
-    rating_notches: int = 0
     maturity_years: float = 0.0
-    default_top_n: int = 0
+
+
+def _spec(p: SpecIn) -> StressSpec:
+    return StressSpec.from_dict(p.model_dump())
 
 
 @router.post("/stress/{run_id}/apply")
 def apply(run_id: str, spec: SpecIn) -> dict:
     inputs, report = _load(run_id)
-    s = StressSpec(**spec.model_dump())
-    if not s.portfolios:
-        s.portfolios = inputs.internal_portfolios()
-    r = apply_stress(inputs, report, s)
+    r = apply_stress(inputs, report, _spec(spec))
     if not r.get("ok"):
         raise HTTPException(400, r.get("reason", "Could not apply the stress."))
     return {
         "name": r["name"], "before": r["before"], "after": r["after"],
-        "delta": r["delta"], "priced": r["priced"], "moved": r["moved"],
-        "customers_moved": r["customers_moved"], "defaulted": r["defaulted"],
+        "delta": r["delta"], "priced": r["priced"], "scoped": r["scoped"],
+        "moved": r["moved"], "customers_moved": r["customers_moved"],
+        "defaulted": r["defaulted"], "notes": r["notes"],
         "by_portfolio": _records(r["by_portfolio"]),
+        "migration": _records(r["migration"]),
         "by_customer": _records(r["by_customer"].head(50)),
     }
 
 
-@router.get("/stress/{run_id}/rollforward")
-def rollforward(run_id: str, months: int = 12) -> dict:
-    inputs, report = _load(run_id)
-    r = roll_forward(inputs, report, months, inputs.internal_portfolios())
-    if not r.get("ok"):
-        raise HTTPException(400, r.get("reason", "Could not roll forward."))
-    return r
+class PackagesIn(BaseModel):
+    packages: list[SpecIn] = Field(default_factory=list)
 
 
+@router.get("/stress/packages")
+def packages_saved() -> list[dict]:
+    """The saved packages: the project's config/stress_packages.yml, which
+    the R app reads and writes too."""
+    return [p.to_dict() for p in read_packages(STRESS_PACKAGES_FILE)]
+
+
+@router.put("/stress/packages")
+def packages_save(body: PackagesIn) -> dict:
+    p = write_packages([_spec(x) for x in body.packages], STRESS_PACKAGES_FILE)
+    return {"saved": len(body.packages), "path": str(p)}
+
+
+# ------------------------------------------------------------ sensitivity --
 @router.get("/stress/{run_id}/tornado")
 def tornado_run(run_id: str) -> dict:
     inputs, report = _load(run_id)
@@ -125,7 +152,6 @@ def reverse(run_id: str, target_pct: float = 25.0) -> list[dict]:
     return _records(out)
 
 
-# --------------------------------------------------- staging and macro -----
 @router.get("/stress/{run_id}/threshold-sweep")
 def threshold_sweep(run_id: str, thresholds: str = "0,15,30,45,60,75,90") -> dict:
     """Reprice the book at each candidate Stage 2 DPD threshold.
@@ -142,21 +168,27 @@ def threshold_sweep(run_id: str, thresholds: str = "0,15,30,45,60,75,90") -> dic
         raise HTTPException(400, f"thresholds must be numbers: {exc}") from exc
     if not values:
         raise HTTPException(400, "give at least one threshold")
-
-    out = _output_dir(RUNS_DIR / run_id)
-    used = staging_threshold(out)
-    if used not in values:
-        values = sorted(values + [used])
     sweep = staging_threshold_sweep(
-        inputs, report, thresholds=values, reference=used,
+        inputs, report, thresholds=values,
         base=StressSpec(name="sweep", portfolios=inputs.internal_portfolios()))
     if len(sweep) == 0:
         raise HTTPException(400, "Nothing could be repriced for this run.")
-    return {"run_threshold": used, "rows": _records(sweep)}
+    return {"run_threshold": sweep.attrs["reference"], "rows": _records(sweep)}
+
+
+# ---------------------------------------------------------- time and macro --
+@router.get("/stress/{run_id}/rollforward")
+def rollforward(run_id: str, months: int = 12) -> dict:
+    inputs, report = _load(run_id)
+    r = roll_forward(inputs, report, months, inputs.internal_portfolios())
+    if not r.get("ok"):
+        raise HTTPException(400, r.get("reason", "Could not roll forward."))
+    return r
 
 
 class MevIn(BaseModel):
-    """An edit to the macro path. Cells are set first, then shocks applied."""
+    """An edit to the macro path and the scenario weights. Cells are set
+    first, then shocks applied; ``custom`` weights are the internal scale's."""
     cells: list[dict] = Field(default_factory=list,
                               description="rows of {year, idx, value}")
     shock: dict[str, float] = Field(default_factory=dict,
@@ -167,11 +199,11 @@ class MevIn(BaseModel):
 
 @router.post("/stress/{run_id}/mev")
 def mev(run_id: str, body: MevIn) -> dict:
-    """Reprice on a different macroeconomic path.
+    """Reprice on a different macroeconomic path or scenario weighting.
 
     The whole PD chain is rebuilt from the run's own frozen config, so the
     shift factors, the scenario curves and the monthly StPD all follow from
-    the new path as they would in a real run.
+    the new path and weights as they would in a real run.
     """
     inputs, report = _load(run_id)
     out = _output_dir(RUNS_DIR / run_id)
@@ -188,92 +220,22 @@ def mev(run_id: str, body: MevIn) -> dict:
         "before": r["before"], "after": r["after"], "delta": r["delta"],
         "provision": r.get("provision"), "note": r.get("note"),
         "priced": r["priced"], "weight_mode": r["weight_mode"],
+        "weights_used": r.get("weights_used"),
         "by_portfolio": _records(r["by_portfolio"]),
         "movers": _records(r["movers"].head(50)),
         "path": _records(r["path"]),
     }
 
 
-class RuleIn(BaseModel):
-    """One what-if rule: who it applies to, and what changes for them."""
-    label: str = "Rule 1"
-    customers: list[str] = Field(default_factory=list)
-    portfolios: list[str] = Field(default_factory=list)
-    stages: list[int] = Field(default_factory=list)
-    stage_to: int | None = None
-    rating_notches: int = 0
-    collateral_pct: float = 100.0
-    exposure_pct: float = 100.0
-    maturity_years: float = 0.0
-    pd_scenario: str = ""
+class WeightsIn(BaseModel):
+    weights: dict[str, float] | None = None
 
 
-class RulesIn(BaseModel):
-    rules: list[RuleIn] = Field(default_factory=list)
-
-
-@router.post("/stress/{run_id}/whatif/match")
-def whatif_match(run_id: str, body: RulesIn) -> dict:
-    """Who each rule claims, and which contracts two of them claim.
-
-    Separate from applying them, so a conflict can be seen and resolved before
-    anything is priced.
-    """
-    _, report = _load(run_id)
-    if not body.rules:
-        raise HTTPException(400, "give at least one rule")
-    m = match_rules(report, [Rule(**r.model_dump()) for r in body.rules])
-    assignment = m["assignment"]
-    labels = [r.label for r in body.rules]
-    counts = [{"rule": labels[j],
-               "contracts": int((assignment == j).fillna(False).sum())}
-              for j in range(len(labels))]
-    return {"matched": int(assignment.notna().sum()),
-            "contracts": int(len(report)),
-            "by_rule": counts,
-            "conflicts": _records(m["conflicts"])}
-
-
-@router.post("/stress/{run_id}/whatif")
-def whatif(run_id: str, body: RulesIn) -> dict:
-    """Apply the rules and reprice. Rules do not stack."""
+@router.post("/stress/{run_id}/weights-sensitivity")
+def weights_sensitivity(run_id: str, body: WeightsIn, shift: float = 0.10) -> list[dict]:
+    """Moving ``shift`` of probability onto each scenario in turn, each
+    repriced as ``/mev`` does with custom weights."""
     inputs, report = _load(run_id)
-    if not body.rules:
-        raise HTTPException(400, "give at least one rule")
-    r = reprice_rules(inputs, report, [Rule(**x.model_dump()) for x in body.rules])
-    if not r.get("ok"):
-        raise HTTPException(400, r.get("reason", "Could not reprice."))
-    return {
-        "before": r["before"], "after": r["after"], "delta": r["delta"],
-        "priced": r["priced"], "matched": r["matched"],
-        "by_rule": _records(r["by_rule"]),
-        "conflicts": _records(r["conflicts"]),
-        "movers": _records(r["movers"].head(50)),
-    }
-
-
-class PackagesIn(BaseModel):
-    packages: list[SpecIn] = Field(default_factory=list)
-
-
-@router.post("/stress/{run_id}/compare")
-def compare(run_id: str, body: PackagesIn) -> list[dict]:
-    """Several stress packages side by side, priced through the same engine.
-
-    One package answers "what if". Several answer "which of these hurts most",
-    which is the question a committee actually puts, and pricing them together
-    keeps them on identical inputs.
-    """
-    inputs, report = _load(run_id)
-    if not body.packages:
-        raise HTTPException(400, "give at least one package")
-    specs = []
-    for p in body.packages:
-        s = StressSpec(**p.model_dump())
-        if not s.portfolios:
-            s.portfolios = inputs.internal_portfolios()
-        specs.append(s)
-    out = compare_packages(inputs, report, specs)
-    if len(out) == 0:
-        raise HTTPException(400, "None of those packages could be priced.")
-    return _records(out)
+    out = _output_dir(RUNS_DIR / run_id)
+    return _records(scenario_weights_sensitivity(inputs, report, out,
+                                                 body.weights, shift))

@@ -460,15 +460,6 @@ def scenario_weights(run_id: str) -> dict:
     return get(f"/analytics/{run_id}/scenarios/weights")
 
 
-def reweight(run_id: str, weights: dict) -> dict:
-    return post(f"/analytics/{run_id}/scenarios/reweight", {"weights": weights})
-
-
-def reweight_sensitivity(run_id: str, weights: dict, shift: float = 0.10) -> list:
-    return post(f"/analytics/{run_id}/scenarios/sensitivity?shift={shift}",
-                {"weights": weights})
-
-
 @st.cache_data(ttl=600, show_spinner=False)
 def model_assumptions(run_id: str) -> dict:
     return get(f"/analytics/{run_id}/model")
@@ -480,8 +471,9 @@ def quality_detail(run_id: str, n: int = 200) -> dict:
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def customers(run_id: str, ids: str) -> dict:
-    return get(f"/analytics/{run_id}/customers", ids=ids)
+def customers(run_id: str, ids: str, spaces: bool = True) -> dict:
+    return get(f"/analytics/{run_id}/customers", ids=ids,
+               spaces=str(spaces).lower())
 
 
 @st.cache_data(ttl=600, show_spinner="Repricing at each threshold…")
@@ -496,14 +488,6 @@ def mev_stress(run_id: str, cells: list, shock: dict, weight_mode: str,
                  "weights": weights})
 
 
-def whatif_match(run_id: str, rules: list) -> dict:
-    return post(f"/stress/{run_id}/whatif/match", {"rules": rules})
-
-
-def whatif(run_id: str, rules: list) -> dict:
-    return post(f"/stress/{run_id}/whatif", {"rules": rules})
-
-
 @st.cache_data(ttl=600, show_spinner=False)
 def distributions(run_id: str) -> dict:
     return get(f"/analytics/{run_id}/distributions")
@@ -513,8 +497,19 @@ def scenarios_rebuild(run_id: str) -> dict:
     return post(f"/analytics/{run_id}/scenarios/rebuild", {})
 
 
-def compare_packages(run_id: str, packages: list) -> list:
-    return post(f"/stress/{run_id}/compare", {"packages": packages})
+def packages_saved() -> list:
+    """The saved stress packages (config/stress_packages.yml, shared with
+    the R app)."""
+    return get("/stress/packages")
+
+
+def packages_save(packages: list) -> dict:
+    return request("PUT", "/stress/packages", {"packages": packages})
+
+
+def weights_sensitivity(run_id: str, weights: dict | None, shift: float = 0.10) -> list:
+    return post(f"/stress/{run_id}/weights-sensitivity?shift={shift}",
+                {"weights": weights})
 
 
 @st.cache_data(ttl=30, show_spinner=False)

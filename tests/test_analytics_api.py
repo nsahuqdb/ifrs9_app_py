@@ -150,22 +150,35 @@ class TestScenarios:
         w = client.get(f"/api/analytics/{RUN}/scenarios/weights").json()
         if not w.get("ok"):
             pytest.skip(w.get("reason", "no frozen config"))
-        r = client.post(f"/api/analytics/{RUN}/scenarios/reweight",
-                        json={"weights": w["internal"]})
+        r = client.post(f"/api/stress/{RUN}/mev",
+                        json={"weight_mode": "custom", "weights": w["internal"]})
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["delta"] == pytest.approx(0.0, abs=1e-3)
-        assert body["after"] == pytest.approx(body["provision"], abs=1e-2)
+        assert body["weights_used"] == pytest.approx(w["internal"])
 
     @needs_run
     def test_weights_naming_an_unknown_scenario_are_refused(self):
         w = client.get(f"/api/analytics/{RUN}/scenarios/weights").json()
         if not w.get("ok"):
             pytest.skip(w.get("reason", "no frozen config"))
-        r = client.post(f"/api/analytics/{RUN}/scenarios/reweight",
-                        json={"weights": {**w["internal"], "Mild Panic": 0.5}})
+        r = client.post(f"/api/stress/{RUN}/mev",
+                        json={"weight_mode": "custom",
+                              "weights": {**w["internal"], "Mild Panic": 0.5}})
         assert r.status_code == 400
         assert "Mild Panic" in r.json()["detail"]
+
+    @needs_run
+    def test_ten_points_onto_the_worst_scenario_costs_more(self):
+        w = client.get(f"/api/analytics/{RUN}/scenarios/weights").json()
+        if not w.get("ok"):
+            pytest.skip(w.get("reason", "no frozen config"))
+        rows = client.post(f"/api/stress/{RUN}/weights-sensitivity",
+                           json={"weights": None}).json()
+        assert {r["scenario"] for r in rows} == set(w["internal"])
+        worst = max(rows, key=lambda r: r["ecl_scenario"])
+        best = min(rows, key=lambda r: r["ecl_scenario"])
+        assert worst["change"] > 0 > best["change"]
 
 
 class TestModelAssumptions:
@@ -250,46 +263,56 @@ class TestStagingThresholdAndMacro:
         assert r.status_code == 400
 
 
-class TestWhatIf:
-    """Rules do not stack: the conflict path is the one worth testing."""
+class TestStressTest:
+    """One stress function behind the page: a scope and the levers moved for
+    it. A what-if on named exposures and a package are both this."""
 
     @needs_run
-    def test_matching_reports_who_each_rule_claims(self):
-        r = client.post(f"/api/stress/{RUN}/whatif/match", json={"rules": [
-            {"label": "Off BS", "portfolios": ["Off BS"], "stage_to": 2}]})
-        body = r.json()
-        assert body["matched"] > 0
-        assert body["by_rule"][0]["rule"] == "Off BS"
-        assert body["conflicts"] == []
+    def test_only_the_scope_moves(self):
+        body = client.post(f"/api/stress/{RUN}/apply", json={
+            "name": "Off BS to Stage 2", "portfolios": ["Off BS"],
+            "stage_to": 2}).json()
+        assert body["delta"] > 0 and body["moved"] > 0
+        moved = {r["portfolio"] for r in body["by_portfolio"]
+                 if abs(r["change"]) > 1e-6}
+        assert moved == {"Off BS"}
 
     @needs_run
-    def test_two_rules_claiming_one_contract_conflict(self):
-        body = client.post(f"/api/stress/{RUN}/whatif/match", json={"rules": [
-            {"label": "A", "portfolios": ["Off BS"], "stage_to": 2},
-            {"label": "B", "stages": [1], "collateral_pct": 50}]}).json()
-        assert body["conflicts"], "an overlap must be reported, not resolved"
-        assert " + " in body["conflicts"][0]["rules"]
-
-    @needs_run
-    def test_conflicted_contracts_are_not_repriced(self):
-        body = client.post(f"/api/stress/{RUN}/whatif", json={"rules": [
-            {"label": "A", "portfolios": ["Off BS"], "stage_to": 2},
-            {"label": "B", "stages": [1], "collateral_pct": 50}]}).json()
-        claimed = sum(r["contracts"] for r in body["by_rule"])
-        assert claimed == body["matched"]
-        assert len(body["conflicts"]) > 0
-
-    @needs_run
-    def test_a_rule_that_changes_nothing_moves_nothing(self):
-        """The baseline is priced by the same function as the what-if."""
-        body = client.post(f"/api/stress/{RUN}/whatif", json={"rules": [
-            {"label": "no change", "portfolios": ["Off BS"]}]}).json()
+    def test_a_stress_that_changes_nothing_moves_nothing(self):
+        """The baseline is priced by the same function as the stress."""
+        body = client.post(f"/api/stress/{RUN}/apply",
+                           json={"portfolios": ["Off BS"]}).json()
         assert body["delta"] == pytest.approx(0.0, abs=1e-6)
+        assert body["moved"] == 0
 
     @needs_run
-    def test_no_rules_is_refused(self):
-        assert client.post(f"/api/stress/{RUN}/whatif",
-                           json={"rules": []}).status_code == 400
+    def test_a_harsher_standard_package_costs_more(self):
+        std = {p["name"]: p for p in
+               client.get(f"/api/stress/{RUN}/scope").json()["standard"]}
+        got = {n: client.post(f"/api/stress/{RUN}/apply", json=std[n]).json()
+               for n in ("Mild downturn", "Severe downturn")}
+        assert got["Severe downturn"]["delta"] > got["Mild downturn"]["delta"] > 0
+        assert got["Severe downturn"]["before"] == \
+            pytest.approx(got["Mild downturn"]["before"])
+
+    @needs_run
+    def test_a_scope_matching_nothing_is_refused(self):
+        r = client.post(f"/api/stress/{RUN}/apply", json={"portfolios": ["Nope"]})
+        assert r.status_code == 400 and "scope" in r.json()["detail"]
+
+    def test_saved_packages_read_back_as_written(self, tmp_path, monkeypatch):
+        import backend.routes.stress as R
+        monkeypatch.setattr(R, "STRESS_PACKAGES_FILE", tmp_path / "stress_packages.yml")
+        assert client.get("/api/stress/packages").json() == []
+        pkgs = [{"name": "named", "customers": ["A B", "C"], "stages": [2],
+                 "stage_to": 3, "pd_multiplier": 1.5},
+                {"name": "policy", "dpd_threshold": 30, "contagion": False}]
+        assert client.put("/api/stress/packages",
+                          json={"packages": pkgs}).json()["saved"] == 2
+        back = client.get("/api/stress/packages").json()
+        assert [b["name"] for b in back] == ["named", "policy"]
+        assert back[0]["customers"] == ["A B", "C"] and back[0]["stage_to"] == 3
+        assert back[1]["dpd_threshold"] == 30 and back[1]["contagion"] is False
 
 
 class TestDistributions:
@@ -327,30 +350,6 @@ class TestDistributions:
     def test_the_lorenz_curve_ends_at_a_hundred(self):
         lz = client.get(f"/api/analytics/{RUN}/distributions").json()["lorenz"]
         assert lz and lz[-1]["pct_ecl"] == pytest.approx(100.0, abs=1e-6)
-
-
-class TestPackageComparison:
-    @needs_run
-    def test_a_harsher_package_costs_more(self):
-        """Priced together on identical inputs, so the ranking means something."""
-        rows = client.post(f"/api/stress/{RUN}/compare", json={"packages": [
-            {"name": "mild", "pd_multiplier": 1.25},
-            {"name": "severe", "pd_multiplier": 2.0}]}).json()
-        by = {r["name"]: r for r in rows}
-        assert by["severe"]["delta"] > by["mild"]["delta"] > 0
-        assert by["severe"]["before"] == pytest.approx(by["mild"]["before"])
-
-    @needs_run
-    def test_the_ranking_puts_the_worst_first(self):
-        rows = client.post(f"/api/stress/{RUN}/compare", json={"packages": [
-            {"name": "mild", "pd_multiplier": 1.1},
-            {"name": "severe", "pd_multiplier": 3.0}]}).json()
-        assert rows[0]["name"] == "severe"
-
-    @needs_run
-    def test_no_packages_is_refused(self):
-        assert client.post(f"/api/stress/{RUN}/compare",
-                           json={"packages": []}).status_code == 400
 
 
 class TestBridge:

@@ -46,6 +46,8 @@ UPLOAD_DIR = _env_path("IFRS9_UPLOAD_DIR", PROJECT_ROOT / "uploads")
 AUDIT_LOG = _env_path("IFRS9_AUDIT_LOG", PROJECT_ROOT / "logs" / "etl_audit.jsonl")
 OVERLAYS_FILE = _env_path("IFRS9_OVERLAYS", CONFIG_DIR / "overlays.yml")
 SUPPRESSIONS_FILE = CONFIG_DIR / "validation_suppressions.yml"
+# saved stress packages, the file the R app reads and writes too
+STRESS_PACKAGES_FILE = CONFIG_DIR / "stress_packages.yml"
 
 
 def ensure_project() -> list[str]:

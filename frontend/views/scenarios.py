@@ -3,7 +3,7 @@
 "The provision is 2.28bn" means little beside "it is 2.28bn, and it would be
 2.44bn in the severe downturn we give 15% weight to". This page is the second
 sentence. What a different weighting would cost is a stress question, on
-Stress testing -> Scenario weights.
+Stress testing -> Macro & scenarios.
 """
 import pandas as pd
 import streamlit as st
@@ -80,4 +80,4 @@ if len(split):
                  use_container_width=True, hide_index=True)
 
 caption("What a different weighting would cost is on Stress testing → "
-        "Scenario weights.")
+        "Macro & scenarios.")

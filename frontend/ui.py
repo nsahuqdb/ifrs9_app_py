@@ -756,12 +756,16 @@ def money(v, dp: int = 0) -> str:
 def pct(v, dp: int = 2) -> str:
     if v is None or pd.isna(v):
         return "—"
+    if abs(v) < 0.5 * 10 ** -dp:
+        v = 0.0                      # a rounding residue is not "-0.00%"
     return f"{v:,.{dp}f}%"
 
 
 def signed(v) -> str:
     if v is None or pd.isna(v):
         return "—"
+    if abs(v) < 0.5:
+        return "0"                   # nor is it "-0"
     return f"{v:+,.0f}"
 
 

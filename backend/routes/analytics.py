@@ -12,7 +12,6 @@ from pathlib import Path
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
 
 from .runs import _output_dir
 from ifrs9qdb.analytics import (
@@ -370,47 +369,6 @@ def scenario_weights_used(run_id: str) -> dict:
     return run_scenario_weights(_run_output(run_id))
 
 
-class Reweight(BaseModel):
-    weights: dict[str, float]
-
-
-def _reweight_inputs(run_id: str):
-    out_dir = _run_output(run_id)
-    inputs = _inputs(run_id)
-    if inputs is None:
-        raise HTTPException(400, "This run's engine inputs could not be read.")
-    return out_dir, inputs
-
-
-@router.post("/analytics/{run_id}/scenarios/reweight")
-def reweight(run_id: str, body: Reweight) -> dict:
-    """What the provision would be under different internal scenario weights.
-
-    The PD chain is rebuilt from the run's frozen config with these weights
-    and the book repriced with the engine's compute_ecl (stress.
-    scenario_weights_stress), so at the run's own weights it is the booked
-    figure, exactly.
-    """
-    from ifrs9qdb.stress import scenario_weights_stress
-    out_dir, inputs = _reweight_inputs(run_id)
-    r = scenario_weights_stress(inputs, _report(run_id), out_dir,
-                                body.weights)
-    if not r.get("ok"):
-        raise HTTPException(400, r.get("reason", "The weights could not be priced."))
-    return {k: (_records(v) if isinstance(v, pd.DataFrame) else v)
-            for k, v in r.items() if k not in ("stpd", "path", "movers")}
-
-
-@router.post("/analytics/{run_id}/scenarios/sensitivity")
-def reweight_sensitivity(run_id: str, body: Reweight, shift: float = 0.10) -> list[dict]:
-    """Moving ``shift`` of probability onto each scenario in turn, each
-    repriced as ``/reweight`` does."""
-    from ifrs9qdb.stress import scenario_weights_sensitivity
-    out_dir, inputs = _reweight_inputs(run_id)
-    return _records(scenario_weights_sensitivity(
-        inputs, _report(run_id), out_dir, body.weights, shift))
-
-
 # ------------------------------------------------------- the model ---------
 @router.get("/analytics/{run_id}/model")
 def model(run_id: str) -> dict:
@@ -445,9 +403,11 @@ def quality_detail(run_id: str, n: int = 200) -> dict:
 
 
 @router.get("/analytics/{run_id}/customers")
-def customers(run_id: str, ids: str = Query(...)) -> dict:
-    """Look several customers up at once. Ids may be pasted any way."""
-    got = customer_lookup(_report(run_id), ids)
+def customers(run_id: str, ids: str = Query(...), spaces: bool = True) -> dict:
+    """Look several customers up at once. Ids may be pasted any way;
+    ``spaces=false`` reads them as a stress's scope does, so a name with
+    spaces is one id."""
+    got = customer_lookup(_report(run_id), ids, spaces=spaces)
     if not got:
         raise HTTPException(400, "No customer ids were given")
     return {"found": _records(got["found"]), "missing": got["missing"]}

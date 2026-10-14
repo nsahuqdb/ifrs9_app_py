@@ -18,7 +18,8 @@ st.markdown("""
    is safe to sign. 114 checks say which it is.
 3. **Look at the portfolio.** Overview, staging, risk parameters,
    concentration, segments, scenarios and data quality all read the same
-   priced report, as booked. What-ifs are under Stress testing.
+   priced report, as booked. What-ifs are stress tests, under Stress
+   testing.
 4. **Compare.** Movement against the previous quarter says how much the
    provision moved and why, cause by cause; Migration says who moved stage
    or rating; Reconcile & export says which files differ.
@@ -31,12 +32,14 @@ st.markdown("""
 | --- | --- |
 | How much, and where does it sit? | Overview, Staging, Concentration |
 | What is it made of? | Risk parameters |
-| What would a worse world cost? | Scenarios, Macro path |
+| What would a worse world cost? | Scenarios, Macro & scenarios |
 | How much did it move, and *why*? | Movement |
 | Who moved? | Migration |
 | What assumptions produced it? | Model assumptions |
-| What would a different policy cost? | Staging threshold, Stress testing |
-| What would different scenario weights cost? | Scenario weights |
+| What if these customers, or this portfolio, deteriorated? | Stress test |
+| What would a different staging policy cost? | Stress test, Sensitivity (Staging threshold) |
+| Which lever matters most, and how far would it have to go? | Sensitivity |
+| What would different scenario weights cost? | Macro & scenarios |
 | How is the book spread? | Risk parameters (Exposure), Segments |
 | Is the run safe to sign? | Validation |
 | Anything, in plain language | Assistant |
@@ -45,11 +48,19 @@ st.markdown("""
 the same ECL function the pipeline uses, once per cause, changing one input at
 a time from the previous run to this one (exposure, then stage, rating, macro
 inputs, PD model, LGD and collateral, overlay), so the steps sum exactly to
-the closing provision. Stress tests, what-ifs and the roll forward reprice
-with that same function, so a number on one page cannot disagree with another.
+the closing provision. Stress tests reprice with that same function, so a
+number on one page cannot disagree with another.
 
-**The macro path rebuilds the whole PD chain** from the config the run froze,
-with the forecast edited. The scenario-weight switch on that page is not a
+**A stress test is one thing.** It names who it reaches -- portfolios, stages
+and customers, together -- and what changes for them: the staging policy, a
+forced stage, the largest customers defaulting, the PD, a downgrade, the LGD,
+collateral, exposure, the term. A what-if on named customers, a staging-policy
+change and a standard package are all stress tests, priced by one engine
+function, and every lever reaches the scope and nothing else. Several run side
+by side; saved ones are shared with the R app.
+
+**Macro & scenarios rebuilds the whole PD chain** from the config the run
+froze, with the forecast or the scenario weights edited. The scenario-weight switch on that page is not a
 detail: the internal weights are derived from the first forecast years of the
 same matrix, so editing non-oil GDP moves the weights *and* the curves, and
 the two can point in opposite directions. Holding the weights isolates the PD

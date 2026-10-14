@@ -185,9 +185,8 @@ The pages, grouped as in the navigation: **Runs** (run the pipeline, browse
 runs, validation, approval queue); **Portfolio** (overview, staging, risk
 parameters, concentration, segments, scenarios, data quality);
 **Comparison** (movement, migration, reconcile & export);
-**Stress testing** (packages, package comparison, lever sensitivity, reverse
-stress, roll forward, what-if, staging threshold, macro path, scenario
-weights); **Governance** (config versions, calculator versions, ECL overlays,
+**Stress testing** (stress test, sensitivity, macro & scenarios, roll
+forward); **Governance** (config versions, calculator versions, ECL overlays,
 validation suppressions, live configuration, model assumptions, audit log);
 and **Help** (assistant, how this works). The menu holding the page on screen
 is highlighted, as the page is in its list.
@@ -196,7 +195,8 @@ is highlighted, as the page is in its list.
 read on the run's own policy (its frozen Stage 2 DPD threshold), and the
 scenarios page shows the five scenario provisions behind the weighted figure.
 What a different threshold or a different weighting would cost is a stress
-question, on **Stress testing → Staging threshold** and **Scenario weights**.
+question, on **Stress testing → Sensitivity** (Staging threshold) and **Macro &
+scenarios**.
 **Risk parameters** has one tab each for PD (by stage, portfolio, rating or
 account type, and the term structure), LGD & collateral, and exposure
 (remaining maturity, ticket size, origination year, days past due, and the
@@ -218,3 +218,22 @@ model are told apart from the runs' frozen config (`config_used`); a run
 without one shows a single "Macro and model change" step. When the previous
 run was priced by an earlier version of the engine it is first repriced on the
 current one, and that difference is part of Model change.
+
+**Stress testing** is one stress function (`ifrs9qdb.stress.apply_stress`)
+behind four pages. A **Stress test** names who it reaches -- portfolios,
+stages and customer ids, together; an empty one does not narrow it -- and
+what changes for them: the Stage 2 days-past-due threshold and the staging
+triggers, a forced stage, the largest N customers defaulting, a PD multiplier
+or one scenario's PD curves, rating notches, the LGD base and floor,
+collateral, exposure and maturity. A what-if on named customers, a
+staging-policy change and the standard packages (mild and severe downturn,
+collateral revaluation, staging tightened to 30 days, the largest five
+defaulting) are all stress tests; several are run side by side, and saved to
+the project's `config/stress_packages.yml`, which the R app reads too. Every
+lever reaches the scope and nothing else. **Sensitivity** moves those levers
+one at a time: each lever ranked by effect, how far each must go to reach a
+target increase (reverse stress), and the book at each candidate staging
+threshold. **Macro & scenarios** rebuilds the PD chain from the run's frozen
+config with a shocked forecast or different scenario weights (follow the new
+path, hold the run's, or set your own), and moves ten points onto each
+scenario in turn. **Roll forward** advances the book n months.
