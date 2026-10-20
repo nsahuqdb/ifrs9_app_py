@@ -403,3 +403,50 @@ class TestBridge:
         assert client.get("/api/analytics/bridge", params={
             "prev": prev, "curr": curr, "level": "sector",
             "members": ["x"]}).status_code == 400
+
+
+class TestCustomerCalculator:
+    """The customer ECL calculator: the customer list, and the workbook as an
+    .xlsx attachment, logged to the audit trail."""
+
+    @needs_run
+    def test_the_customers_and_one_workbook(self):
+        body = client.get(f"/api/analytics/{RUN}/calculator/customers").json()
+        assert body["customers"], "a run with a report has customers"
+        cust = body["customers"][0]["customer_id"]
+        r = client.get(f"/api/analytics/{RUN}/calculator",
+                       params={"customer": cust})
+        assert r.status_code == 200
+        assert r.content[:2] == b"PK"
+        assert "attachment" in r.headers["content-disposition"]
+
+    @needs_run
+    def test_an_unknown_customer_is_a_404(self):
+        r = client.get(f"/api/analytics/{RUN}/calculator",
+                       params={"customer": "no such customer"})
+        assert r.status_code == 404
+
+    def test_an_unknown_run_is_a_404(self):
+        assert client.get("/api/analytics/no_such_run/calculator",
+                          params={"customer": "1"}).status_code == 404
+        assert client.get("/api/analytics/no_such_run/calculator/customers"
+                          ).status_code == 404
+
+    def test_the_export_is_audited(self, monkeypatch, tmp_path):
+        import ifrs9qdb.audit_log as al
+        import ifrs9qdb.calc_workbook as cw
+        from backend.routes import analytics as an
+        (tmp_path / "run_x" / "Output").mkdir(parents=True)
+        monkeypatch.setattr(an, "RUNS_DIR", tmp_path)
+        monkeypatch.setattr(cw, "customer_ecl_workbook",
+                            lambda run, cust: b"PK fake workbook")
+        seen = []
+        monkeypatch.setattr(al, "audit_event", lambda e: seen.append(e))
+        r = client.get("/api/analytics/run_x/calculator",
+                       params={"customer": "C 1", "user": "tester"})
+        assert r.status_code == 200 and r.content == b"PK fake workbook"
+        assert 'filename="ECL_calculator_run_x_C_1.xlsx"' in \
+            r.headers["content-disposition"]
+        assert seen == [{"event": "customer_calculator_exported",
+                         "run_id": "run_x", "customer_id": "C 1",
+                         "user": "tester"}]

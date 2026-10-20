@@ -476,6 +476,28 @@ def customers(run_id: str, ids: str, spaces: bool = True) -> dict:
                spaces=str(spaces).lower())
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def calculator_customers(run_id: str) -> list:
+    """The customers the ECL calculator can be exported for, largest first."""
+    return get(f"/analytics/{run_id}/calculator/customers")["customers"]
+
+
+def calculator_workbook(run_id: str, customer: str, user: str | None = None) -> bytes:
+    """One customer's ECL calculator (.xlsx)."""
+    import requests as _r
+    params = {"customer": customer}
+    if user:
+        params["user"] = user
+    try:
+        resp = _r.get(_url(f"/analytics/{run_id}/calculator"), params=params,
+                      timeout=(5, 600))
+    except requests.exceptions.ConnectionError:
+        raise BackendError(f"Cannot reach the backend at {BACKEND}.")
+    if not resp.ok:
+        _raise(resp)
+    return resp.content
+
+
 @st.cache_data(ttl=600, show_spinner="Repricing at each threshold…")
 def threshold_sweep(run_id: str, thresholds: str) -> dict:
     return get(f"/stress/{run_id}/threshold-sweep", thresholds=thresholds)

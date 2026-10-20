@@ -460,3 +460,45 @@ def scenarios_rebuild(run_id: str) -> dict:
                 "outputs. No weighted total: the run weights its marginal PDs "
                 "before the curves are built, not its finished provisions.",
     }
+
+
+# --------------------------------------------- customer ECL calculator ----
+@router.get("/analytics/{run_id}/calculator/customers")
+def calculator_customers(run_id: str) -> dict:
+    """The customers of a run the calculator can be exported for: id, name,
+    book(s), positions and on-balance exposure, largest first."""
+    from ifrs9qdb.calc_workbook import run_customers
+    run = RUNS_DIR / run_id
+    if not run.is_dir() or ".." in run_id or "/" in run_id:
+        raise HTTPException(404, f"No run named {run_id!r}")
+    return {"customers": _records(run_customers(run))}
+
+
+@router.get("/analytics/{run_id}/calculator")
+def calculator_workbook(run_id: str, customer: str = Query(...),
+                        user: str | None = None):
+    """One customer's ECL as an Excel calculator: the run's inputs and every
+    step to the provision as a formula, checked against the report
+    (ifrs9qdb.calc_workbook). Each export is written to the audit log, since
+    the workbook carries the customer's positions."""
+    from fastapi.responses import Response
+    from ifrs9qdb.audit_log import audit_event
+    from ifrs9qdb.calc_workbook import customer_ecl_workbook
+    run = RUNS_DIR / run_id
+    if not run.is_dir() or ".." in run_id or "/" in run_id:
+        raise HTTPException(404, f"No run named {run_id!r}")
+    try:
+        data = customer_ecl_workbook(run, customer)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc.args[0]) if exc.args else str(exc))
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc))
+    audit_event({"event": "customer_calculator_exported", "run_id": run_id,
+                 "customer_id": customer, "user": user})
+    safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in customer)
+    return Response(
+        data,
+        media_type="application/vnd.openxmlformats-officedocument."
+                   "spreadsheetml.sheet",
+        headers={"Content-Disposition":
+                 f'attachment; filename="ECL_calculator_{run_id}_{safe}.xlsx"'})
