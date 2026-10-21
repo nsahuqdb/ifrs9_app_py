@@ -5,10 +5,9 @@ segments, stages or ratings: each run's figures for the selection side by
 side, then the waterfall between them. Every contract is repriced from the
 previous run to the current one a cause at a time and shown as: derecognised,
 new business, exposure change, stage migration, rating migration, macro
-variable change, model change, LGD & collateral and overlay (ECL settings
-change when model.yml's ecl block differs between the runs' configs, engine
-change when the previous run was priced by another version of the
-calculation, and "Unexplained" only if repricing leaves anything). The steps sum exactly to the closing provision
+variable change, model change, LGD & collateral and overlay (methodology change
+when the ECL settings or the engine version differ, and "Unexplained" only if
+repricing leaves anything). The steps sum exactly to the closing provision
 (ifrs9qdb.analytics.bridge). A contract counts in one group: the one it is in
 now, or, if derecognised, the one it was in.
 """
@@ -49,8 +48,7 @@ GROUPS = [
     ("rating", "Rating migration", ("rating",), True),
     ("macro", "Macro variable change", ("macro",), True),
     ("model", "Model change", ("model",), True),
-    ("settings", "ECL settings change", ("settings",), False),
-    ("method", "Engine change", ("method",), False),
+    ("methodology", "Methodology change", ("settings", "method"), False),
     ("pd_curves", "Macro and model change", ("pd_curves",), False),
     ("lgd", "LGD & collateral", ("lgd",), True),
     ("overlay", "Overlay", ("overlay",), True),
@@ -71,13 +69,13 @@ WHAT = {
     "model": "The macro PD model itself: its variables, coefficients, TTC "
              "anchor and PDs, and how the variables combine. Zero when the "
              "model did not change.",
-    "settings": "A setting in model.yml's ecl block differs between the two "
-                "runs' saved configs -- the repayment shape for contracts with "
-                "no repayment schedule, the Stage 3 method or the exposure cap. "
-                "Which one is listed under the chart. Shown only when not zero.",
-    "method": "The previous run was priced by another version of the "
-              "calculation; it is repriced on this one first. Zero when both "
-              "runs used the same engine. Shown only when not zero.",
+    "methodology": "How the ECL is calculated rather than with what: the ECL "
+                   "settings in model.yml (the repayment shape for contracts "
+                   "with no repayment schedule, the Stage 3 method, the "
+                   "exposure cap) and, when the previous run was priced by an "
+                   "earlier version of the engine, the change in the "
+                   "calculation itself. What changed is named under the chart. "
+                   "Shown only when it is not zero.",
     "pd_curves": "Macro inputs and model together: one of the runs has no "
                  "saved config, so the two cannot be told apart.",
     "lgd": "Collateral, and so LGD, and the EIR.",
@@ -232,19 +230,17 @@ caption("Each contract is repriced from the previous run to this one a cause "
         f"ECL (residual {b['residual']:.2f})."
         + ("" if changes.get("model_changed")
            else " The PD model did not change, so Model change is zero."))
-# what the ECL settings step is made of, named, beside the chart
+# what the methodology step is made of, named beside the chart
 _set_amt = float(amount.get("settings", 0.0))
 if changes.get("settings") and abs(_set_amt) >= 0.5:
     callout("info",
-            f"The two runs' saved configs differ in the ECL settings, and that "
+            f"The two runs' saved configs differ in the ECL settings, which "
             f"moves the provision by **{signed(_set_amt)}**:",
-            title="ECL settings change",
+            title="Methodology change",
             items=[f"{c['item']}: {c['before']} → {c['after']}"
                    for c in changes["settings"]],
             after="Set in model.yml (ecl block) of each run's config snapshot.")
 for n in b.get("notes") or []:
-    if n.startswith("Repricing the previous run on this engine"):
-        continue                       # said by the Engine change step
     callout("info", n)
 
 tbl = shown[shown["kind"] == "delta"].copy()
