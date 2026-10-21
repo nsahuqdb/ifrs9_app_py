@@ -298,6 +298,14 @@ CSS = """
   /* ---- the run bar on analysis pages */
   .runbar-label {font-size: .7rem; font-weight: 700; text-transform: uppercase;
       letter-spacing: .06em; color: var(--muted); padding-top: .55rem;}
+.text-table {width:100%; border-collapse:collapse; font-size:.86rem;
+  margin:.25rem 0 1rem 0;}
+.text-table th {font-weight:600; color:var(--muted); font-size:.78rem;
+  border-bottom:1px solid #e6e2ec; padding:.45rem .6rem; white-space:nowrap;}
+.text-table td {border-bottom:1px solid #f0edf4; padding:.45rem .6rem;
+  vertical-align:top; white-space:normal; word-break:normal;
+  overflow-wrap:anywhere; line-height:1.35;}
+.text-table tr:hover td {background:#faf8fc;}
 </style>
 """
 
@@ -566,6 +574,34 @@ def callout(tone: str, text: str, title: str | None = None,
     tail = md(after) if after else ""
     st.markdown(f'<div class="callout {tone}"><span class="ic {tone}">{icon}</span>'
                 f'<div>{head}{md(text)}{lis}{tail}</div></div>', unsafe_allow_html=True)
+
+
+def text_table(df: pd.DataFrame, right=(), widths: dict | None = None,
+               bold_last: bool = False) -> None:
+    """A table whose text wraps, for rows that carry a sentence.
+
+    st.dataframe cuts a long cell at the column width and shows the rest only
+    on a double-click, which hid every "What it is" explanation. This draws a
+    plain HTML table instead: each cell wraps, figures in ``right`` are right
+    aligned, and ``widths`` (column -> CSS width, e.g. "45%") sets the shares.
+    Cells are escaped, with the app's small markdown (**bold**, `code`)."""
+    if df is None or len(df) == 0:
+        return
+    widths = widths or {}
+    head = "".join(
+        f'<th style="text-align:{"right" if c in right else "left"};'
+        f'{"width:" + widths[c] + ";" if c in widths else ""}">{esc(c)}</th>'
+        for c in df.columns)
+    rows = []
+    n = len(df)
+    for i, (_, r) in enumerate(df.iterrows()):
+        weight = "font-weight:600;" if bold_last and i == n - 1 else ""
+        rows.append("<tr>" + "".join(
+            f'<td style="text-align:{"right" if c in right else "left"};{weight}">'
+            f'{md("" if pd.isna(r[c]) else r[c])}</td>' for c in df.columns) + "</tr>")
+    st.markdown(
+        '<table class="text-table"><thead><tr>' + head + "</tr></thead><tbody>"
+        + "".join(rows) + "</tbody></table>", unsafe_allow_html=True)
 
 
 def chips(items) -> None:

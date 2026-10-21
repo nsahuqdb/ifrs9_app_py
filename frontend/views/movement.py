@@ -5,9 +5,10 @@ segments, stages or ratings: each run's figures for the selection side by
 side, then the waterfall between them. Every contract is repriced from the
 previous run to the current one a cause at a time and shown as: derecognised,
 new business, exposure change, stage migration, rating migration, macro
-variable change, model change, LGD & collateral and overlay (methodology change
-when the ECL settings or the engine version differ, and "Unexplained" only if
-repricing leaves anything). The steps sum exactly to the closing provision
+variable change, model change, LGD & collateral and overlay (ECL settings
+change when model.yml's ecl block differs between the runs' configs, engine
+change when the previous run was priced by another version of the
+calculation, and "Unexplained" only if repricing leaves anything). The steps sum exactly to the closing provision
 (ifrs9qdb.analytics.bridge). A contract counts in one group: the one it is in
 now, or, if derecognised, the one it was in.
 """
@@ -16,7 +17,7 @@ import streamlit as st
 
 import api
 from ui import (callout, caption, card_header, fmt_table, guard, kpis, money,
-                page_setup, pct, signed, waterfall)
+                page_setup, pct, signed, text_table, waterfall)
 
 S = st.session_state
 run_id = S.get("run_id")
@@ -48,7 +49,8 @@ GROUPS = [
     ("rating", "Rating migration", ("rating",), True),
     ("macro", "Macro variable change", ("macro",), True),
     ("model", "Model change", ("model",), True),
-    ("methodology", "Methodology change", ("settings", "method"), False),
+    ("settings", "ECL settings change", ("settings",), False),
+    ("method", "Engine change", ("method",), False),
     ("pd_curves", "Macro and model change", ("pd_curves",), False),
     ("lgd", "LGD & collateral", ("lgd",), True),
     ("overlay", "Overlay", ("overlay",), True),
@@ -69,11 +71,13 @@ WHAT = {
     "model": "The macro PD model itself: its variables, coefficients, TTC "
              "anchor and PDs, and how the variables combine. Zero when the "
              "model did not change.",
-    "methodology": "How the ECL is calculated rather than with what: the ECL "
-                   "settings in model.yml (EAD fallback rules, Stage 3 method, "
-                   "exposure cap) and, when the previous run was priced by an "
-                   "earlier version of the engine, the change in the "
-                   "calculation itself. Shown only when it is not zero.",
+    "settings": "A setting in model.yml's ecl block differs between the two "
+                "runs' saved configs -- the repayment shape for contracts with "
+                "no repayment schedule, the Stage 3 method or the exposure cap. "
+                "Which one is listed under the chart. Shown only when not zero.",
+    "method": "The previous run was priced by another version of the "
+              "calculation; it is repriced on this one first. Zero when both "
+              "runs used the same engine. Shown only when not zero.",
     "pd_curves": "Macro inputs and model together: one of the runs has no "
                  "saved config, so the two cannot be told apart.",
     "lgd": "Collateral, and so LGD, and the EIR.",
@@ -228,18 +232,30 @@ caption("Each contract is repriced from the previous run to this one a cause "
         f"ECL (residual {b['residual']:.2f})."
         + ("" if changes.get("model_changed")
            else " The PD model did not change, so Model change is zero."))
+# what the ECL settings step is made of, named, beside the chart
+_set_amt = float(amount.get("settings", 0.0))
+if changes.get("settings") and abs(_set_amt) >= 0.5:
+    callout("info",
+            f"The two runs' saved configs differ in the ECL settings, and that "
+            f"moves the provision by **{signed(_set_amt)}**:",
+            title="ECL settings change",
+            items=[f"{c['item']}: {c['before']} → {c['after']}"
+                   for c in changes["settings"]],
+            after="Set in model.yml (ecl block) of each run's config snapshot.")
 for n in b.get("notes") or []:
+    if n.startswith("Repricing the previous run on this engine"):
+        continue                       # said by the Engine change step
     callout("info", n)
 
 tbl = shown[shown["kind"] == "delta"].copy()
 tbl["% of previous"] = [100 * a / b["opening"] if b["opening"] else None
                         for a in tbl["amount"]]
 tbl["What it is"] = tbl["key"].map(WHAT)
-st.dataframe(fmt_table(tbl[["label", "amount", "% of previous", "What it is"]]
-                       .rename(columns={"label": "Step", "amount": "Amount"}),
-                       money_cols=("Amount",), pct_cols=("% of previous",)),
-             hide_index=True, width="stretch",
-             column_config={"What it is": st.column_config.TextColumn(width="large")})
+text_table(fmt_table(tbl[["label", "amount", "% of previous", "What it is"]]
+                     .rename(columns={"label": "Step", "amount": "Amount"}),
+                     money_cols=("Amount",), pct_cols=("% of previous",)),
+           right=("Amount", "% of previous"),
+           widths={"Step": "18%", "Amount": "13%", "% of previous": "10%"})
 
 with st.expander("What changed in the model, the macro inputs and the ECL settings"):
     if not changes.get("known"):
@@ -252,9 +268,10 @@ with st.expander("What changed in the model, the macro inputs and the ECL settin
                         + ("changed" if changes.get(flag) else "unchanged"))
             items = changes.get(part) or []
             if items:
-                st.dataframe(pd.DataFrame(items).astype(str).rename(
-                    columns={"item": "What", "before": "Previous", "after": "Current"}),
-                    hide_index=True, width="stretch")
+                text_table(pd.DataFrame(items).astype(str).rename(
+                    columns={"item": "What", "before": "Previous",
+                             "after": "Current"}),
+                    widths={"What": "50%"})
 
 # ----------------------------------------------------------- the detail ----
 t = st.tabs(["Contracts behind it",

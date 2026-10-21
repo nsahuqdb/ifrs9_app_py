@@ -270,8 +270,40 @@ def migration(prev: str, curr: str, top: int = 12) -> dict:
     return {
         "rating": _records(rating_migration(a, b, top=top, by_customer=True)),
         "rating_summary": _records(migration_summary(a, b)),
+        "rating_by_scale": _rating_by_scale(a, b, curr),
         "stage": _records(customer_stage_migration(a, b)),
     }
+
+
+def _rating_by_scale(a: pd.DataFrame, b: pd.DataFrame, curr: str) -> dict:
+    """Rating migration one scale at a time, on the scale's own order.
+
+    The internal (QDB 1+ ... QDB 9) and external (Aaa ... C) scales cannot be
+    put on one axis, and without the scale's order "upgrade" would only be a
+    string comparison. The order is the current run's Ratings.csv; a run
+    whose inputs cannot be read falls back to frequency order."""
+    try:
+        inputs = _inputs(curr)
+    except HTTPException:
+        inputs = None
+    scales = getattr(inputs, "scales", None) or {}
+    out = {}
+    for code, name in ((1, "Internal"), (2, "External")):
+        if "rating_type" in a.columns and "rating_type" in b.columns:
+            pa = a[a["rating_type"].astype(str).str.startswith(name)]
+            pb = b[b["rating_type"].astype(str).str.startswith(name)]
+        else:
+            pa, pb = (a, b) if code == 1 else (a.iloc[:0], b.iloc[:0])
+        if len(pa) == 0 or len(pb) == 0:
+            continue
+        lv = scales[code].ratings if code in scales else None
+        grid = rating_migration(pa, pb, top=100, levels=lv, by_customer=True)
+        out[name] = {
+            "grid": _records(grid),
+            "summary": _records(migration_summary(pa, pb, levels=lv)),
+            "levels": list(grid.attrs.get("levels", [])) if len(grid) else [],
+        }
+    return out
 
 
 # ----------------------------------------------------------- bridge --------

@@ -23,9 +23,9 @@ if not run_id:
             "backend at a folder of existing runs.", icon="👈")
     st.stop()
 page_setup("Staging",
-           "Decided per customer. Tasdeer is assessed collectively, and a "
-           "customer with any Stage 2 facility has its Stage 1 facilities "
-           "bumped by contagion.")
+           "Decided per customer, on its worst facility, so all of a "
+           "customer's facilities share its stage. Tasdeer is assessed "
+           "collectively.")
 
 with guard():
     d = api.staging(run_id)
@@ -54,9 +54,9 @@ else:
             "shares add to more than 100%; the trigger combinations below "
             "count each contract once. Restructured is Local Flag 1, and "
             "includes restructuring overrides. Stage override is a reviewed "
-            "override to Stage 2. Another facility of the customer is "
-            "contagion: nothing on the contract itself, but the customer has "
-            "a facility in Stage 2 or 3.")
+            "override to Stage 2. Staging is per customer, so every reason "
+            "but Tasdeer is the customer's: DPD is the customer's worst "
+            "facility, and each of its facilities carries it.")
     cols = ["trigger", "contracts", "customers", "pct_contracts", "exposure",
             "ecl"]
     c1, c2 = st.columns([2, 3])
