@@ -20,7 +20,8 @@ from ifrs9qdb.analytics import (
     data_quality_detail, dpd_by_stage, ead_runoff, hhi,
     hhi_band, hhi_equivalent_n, lgd_floor_stats, lgd_vs_collateral,
     maturity_profile, mev_forecast_table, mev_weights_table, migration_summary,
-    normalise, pd_profile, pd_term_structure, rating_migration, run_profile,
+    normalise, pd_by_scale, pd_curves_by_rating, pd_profile,
+    pd_term_structure, rating_migration, run_profile,
     scenario_comparison, scenario_ecl_from_outputs, scenario_severity,
     scenario_stage_split,
     scenario_weights, segment_matrix, stage2_trigger_overlap, stage2_triggers,
@@ -114,6 +115,19 @@ def _threshold(run_id: str, given: float | None) -> float:
     return staging_threshold(_output_dir(RUNS_DIR / run_id))
 
 
+def _stage_overrides(run_id: str) -> pd.DataFrame | None:
+    """The run's reviewed stage overrides (overrides/stage_overrides.csv), so
+    the staging page can name "Stage override" as a reason. None when the run
+    has none; the analytics then find overrides from the flags alone."""
+    p = RUNS_DIR / run_id / "overrides" / "stage_overrides.csv"
+    if not p.is_file():
+        return None
+    try:
+        return pd.read_csv(p, dtype=str, keep_default_na=False)
+    except Exception:  # noqa: BLE001 -- an unreadable file is "no overrides"
+        return None
+
+
 @router.get("/analytics/{run_id}/staging")
 def staging(run_id: str, dpd_threshold: float | None = None) -> dict:
     d = _report(run_id)
@@ -121,7 +135,8 @@ def staging(run_id: str, dpd_threshold: float | None = None) -> dict:
     return {
         "dpd_threshold": thr,
         "distribution": _records(staging_distribution(d)),
-        "triggers": _records(stage2_triggers(d, thr)),
+        "triggers": _records(stage2_triggers(d, thr,
+                                             _stage_overrides(run_id))),
     }
 
 
@@ -175,13 +190,20 @@ def _run_output(run_id: str) -> Path:
 @router.get("/analytics/{run_id}/risk")
 def risk(run_id: str, by: str = Query("stage"),
          portfolio: str | None = None) -> dict:
-    """The risk parameters behind the provision, rather than the provision."""
+    """The risk parameters behind the provision, rather than the provision.
+
+    ``pd_by_scale`` is the by-rating view split into the internal and external
+    scales, and ``pd_curves`` the PD curves by scale and rating -- one set per
+    scale, which every portfolio on it shares. ``term_structure`` is the same
+    curves per portfolio and bucket, kept for older clients."""
     if by not in ("stage", "portfolio", "rating", "account_type"):
         raise HTTPException(400, "by must be stage, portfolio, rating or account_type")
     d = _report(run_id)
     inputs = _inputs(run_id)
     return {
         "pd": _records(pd_profile(d, by)),
+        "pd_by_scale": _records(pd_by_scale(d, inputs)),
+        "pd_curves": _records(pd_curves_by_rating(inputs)) if inputs else [],
         "lgd_floor": _records(lgd_floor_stats(d)),
         "lgd_scatter": _records(lgd_vs_collateral(d)),
         "term_structure": _records(pd_term_structure(inputs, portfolio))
@@ -225,12 +247,13 @@ def staging_detail(run_id: str, dpd_threshold: float | None = None) -> dict:
     threshold is given."""
     d = _report(run_id)
     thr = _threshold(run_id, dpd_threshold)
+    ov = _stage_overrides(run_id)
     consistency = staging_consistency(d, thr)
     return {
         "dpd_threshold": thr,
         "dpd_by_stage": _records(dpd_by_stage(d)),
-        "trigger_overlap": _records(stage2_trigger_overlap(d, thr)),
-        "stage3_drivers": _records(stage3_drivers(d)),
+        "trigger_overlap": _records(stage2_trigger_overlap(d, thr, ov)),
+        "stage3_drivers": _records(stage3_drivers(d, ov)),
         "consistency": {k: v for k, v in consistency.items() if k != "findings"},
         "findings": _records(consistency.get("findings")),
     }

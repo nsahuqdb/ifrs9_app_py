@@ -8,8 +8,8 @@ import pandas as pd
 import streamlit as st
 
 import api
-from ui import (SEQ, bar, caption, fmt_table, guard, line, metric_row, money,
-                page_setup, pct)
+from ui import (PLUM, SEQ, bar, caption, fmt_table, guard, line, metric_row,
+                money, page_setup, pct)
 
 run_id = st.session_state.get("run_id")
 if not run_id:
@@ -22,9 +22,12 @@ pd_tab, lgd_tab, ead_tab = st.tabs(
     ["Probability of default", "LGD & collateral", "Exposure"])
 
 with pd_tab:
-    by = st.segmented_control("Break down by",
-                              ["stage", "portfolio", "rating", "account_type"],
-                              default="stage", key="risk_by")
+    by = st.segmented_control(
+        "Break down by", ["stage", "portfolio", "rating", "account_type"],
+        default="stage", key="risk_by",
+        format_func=lambda v: {"stage": "Stage", "portfolio": "Portfolio",
+                               "rating": "Rating",
+                               "account_type": "Account type"}[v])
 
 with guard():
     r = api.risk(run_id, by or "stage")
@@ -32,34 +35,123 @@ with guard():
     dist = api.distributions(run_id)
     mp = pd.DataFrame(api.maturity(run_id))
 
+def _pd_table(df: pd.DataFrame, first: str, first_label: str) -> None:
+    """The PD figures in percent, with plain headers."""
+    t = df.assign(pd_w=100 * df["pd_w"], pd_mean=100 * df["pd_mean"])
+    cols = [first, "contracts", "exposure", "pd_w", "pd_mean", "ecl"]
+    if "coverage" in t.columns:
+        cols.append("coverage")
+    t = fmt_table(t[cols], money_cols=("contracts", "exposure", "ecl"),
+                  pct_cols=("pd_w", "pd_mean", "coverage"))
+    t = t.rename(columns={first: first_label, "contracts": "Contracts",
+                          "exposure": "Exposure",
+                          "pd_w": "Lifetime PD, exposure-weighted",
+                          "pd_mean": "Lifetime PD, simple mean",
+                          "ecl": "ECL", "coverage": "ECL coverage"})
+    st.dataframe(t, use_container_width=True, hide_index=True)
+
+
+def _curves_chart(df: pd.DataFrame, y: str, title: str, yfmt: str,
+                  order: list[str]) -> None:
+    """One line per rating, coloured from best to worst along the scale."""
+    import plotly.express as px
+    from plotly.colors import sample_colorscale
+
+    cols = (sample_colorscale("Viridis", [i / max(len(order) - 1, 1)
+                                          for i in range(len(order))])
+            if len(order) > 1 else [PLUM])
+    fig = px.line(df, x="month", y=y, color="rating", title=title,
+                  category_orders={"rating": order},
+                  color_discrete_sequence=cols,
+                  labels={"month": "Month", y: "%", "rating": "Rating"})
+    fig.update_traces(line=dict(width=2.2))
+    fig.update_layout(height=380, margin=dict(l=8, r=8, t=40, b=8),
+                      plot_bgcolor="white", paper_bgcolor="white",
+                      xaxis=dict(showgrid=False),
+                      yaxis=dict(gridcolor="#f0eef4", tickformat=yfmt),
+                      legend=dict(font=dict(size=11)),
+                      font=dict(size=12),
+                      title=dict(font=dict(size=13, color="#2a2f3a")))
+    st.plotly_chart(fig, use_container_width=True)
+
+
 with pd_tab:
     prof = pd.DataFrame(r["pd"])
+    by_scale = pd.DataFrame(r.get("pd_by_scale", []))
     if len(prof) == 0:
         st.info("This run's report carries no lifetime PD.")
+    elif (by or "stage") == "rating" and len(by_scale):
+        # The internal and external scales reuse hierarchy 1-21, so one list
+        # of ratings mixes two different things: one chart per scale.
+        scales = [sc for sc in ("Internal", "External")
+                  if sc in set(by_scale["scale"])]
+        cols = st.columns(len(scales))
+        for col, sc in zip(cols, scales):
+            part = by_scale[by_scale["scale"] == sc].sort_values("order")
+            with col:
+                bar(part.assign(**{"Lifetime PD (%)": 100 * part["pd_w"]})
+                    .rename(columns={"rating": "Rating"}),
+                    "Rating", "Lifetime PD (%)",
+                    title=f"{sc} rating — exposure-weighted lifetime PD (%)",
+                    fmt="%{x:.2f}%", dp=2)
+        caption("Best grade at the top. Stage 3 contracts count at 100%: "
+                "defaulted, so provisioned at the full outstanding.")
+        cols = st.columns(len(scales))
+        for col, sc in zip(cols, scales):
+            part = by_scale[by_scale["scale"] == sc].sort_values("order")
+            with col:
+                st.markdown(f"**{sc} rating**")
+                _pd_table(part, "rating", "Rating")
     else:
-        bar(prof, "group", "pd_w", title="Exposure-weighted lifetime PD",
-            fmt="%{x:.4f}", dp=4)
-        caption("A weighted PD well above the simple mean means the large "
-                "exposures sit in the worse grades.")
-        st.dataframe(
-            fmt_table(prof, money_cols=("exposure", "ecl", "contracts")),
-            use_container_width=True, hide_index=True)
+        lab = {"stage": "Stage", "portfolio": "Portfolio", "rating": "Rating",
+               "account_type": "Account type"}[by or "stage"]
+        show = prof.copy()
+        if (by or "stage") == "stage":
+            show["group"] = "Stage " + show["group"].astype(str)
+        bar(show.assign(**{"Lifetime PD (%)": 100 * show["pd_w"]})
+            .rename(columns={"group": lab}),
+            lab, "Lifetime PD (%)",
+            title="Exposure-weighted lifetime PD (%)", fmt="%{x:.2f}%", dp=2)
+        caption("Stage 3 counts at 100%: defaulted, so provisioned at the "
+                "full outstanding. A weighted PD well above the simple mean "
+                "means the large exposures sit in the worse grades.")
+        _pd_table(show, "group", lab)
 
-    ts = pd.DataFrame(r["term_structure"])
-    if len(ts):
-        st.subheader("Term structure")
-        curves = sorted(ts["curve"].unique())
-        pick = st.selectbox("Curve", curves, key="risk_curve")
-        one = ts[ts["curve"] == pick]
-        c1, c2 = st.columns(2)
+    curves = pd.DataFrame(r.get("pd_curves", []))
+    if len(curves):
+        st.subheader("PD term structure")
+        caption("One set of curves for the internally rated book and one for "
+                "the externally rated, each shared by every portfolio on that "
+                "scale.")
+        scales = [sc for sc in ("Internal", "External")
+                  if sc in set(curves["scale"])]
+        c1, c2 = st.columns([1, 3])
         with c1:
-            line(one, "month", "cum_pd", title=f"Cumulative PD — {pick} (%)",
-                 yfmt=".2f")
+            sc = st.selectbox("Rating scale", scales, key="risk_curve_scale")
+        part = curves[curves["scale"] == sc]
+        order = (part.drop_duplicates("rating").sort_values("bucket")["rating"]
+                 .tolist())
+        # a spread along the scale to start with: best, worst and three between
+        k = len(order)
+        start = sorted({order[round(i * (k - 1) / 4)] for i in range(5)},
+                       key=order.index) if k else []
         with c2:
-            line(one, "month", "marginal_pd", title="Marginal PD by month (%)",
-                 yfmt=".4f")
-        caption("A mis-built curve shows in the marginal PD: a step, a flat "
-                "stretch, or a month that goes backwards.")
+            picked = st.multiselect("Ratings", order, default=start,
+                                    key=f"risk_curve_ratings_{sc}")
+        if not picked:
+            st.info("Pick one or more ratings to plot.")
+        else:
+            sel = part[part["rating"].isin(picked)]
+            keep = [o for o in order if o in picked]
+            c1, c2 = st.columns(2)
+            with c1:
+                _curves_chart(sel, "cum_pd", "Cumulative PD (%)", ".2f", keep)
+            with c2:
+                _curves_chart(sel, "marginal_pd", "Marginal PD by month (%)",
+                              ".3f", keep)
+            caption("A mis-built curve shows in the marginal PD: a step, a "
+                    "flat stretch, or a month that goes backwards. A worse "
+                    "grade should sit above a better one throughout.")
 
 with lgd_tab:
     floor = pd.DataFrame(r["lgd_floor"])

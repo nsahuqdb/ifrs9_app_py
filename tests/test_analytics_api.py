@@ -31,8 +31,8 @@ class TestRisk:
     @needs_run
     def test_it_returns_every_parameter_family(self):
         body = client.get(f"/api/analytics/{RUN}/risk").json()
-        assert set(body) == {"pd", "lgd_floor", "lgd_scatter",
-                             "term_structure", "ead_runoff"}
+        assert set(body) == {"pd", "pd_by_scale", "pd_curves", "lgd_floor",
+                             "lgd_scatter", "term_structure", "ead_runoff"}
         assert body["pd"], "a report with no PD profile is not usable"
 
     @needs_run
@@ -97,7 +97,7 @@ class TestStagingDetail:
             assert asked["dpd_threshold"] == 30
         trig = client.get(f"/api/analytics/{RUN}/staging",
                           params={"dpd_threshold": 30}).json()["triggers"]
-        assert any(r["trigger"] == "DPD 30-90" for r in trig)
+        assert any(r["trigger"] == "DPD 31-90" for r in trig)
 
     @needs_run
     def test_trigger_combinations_are_additive(self):

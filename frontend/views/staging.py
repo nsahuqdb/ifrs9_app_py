@@ -10,6 +10,13 @@ import streamlit as st
 import api
 from ui import bar, caption, fmt_table, guard, metric_row, money, page_setup
 
+HEAD = {"trigger": "Reason", "combination": "Reasons", "driver": "Reason",
+        "contracts": "Contracts", "customers": "Customers",
+        "pct_contracts": "% of Stage 2 contracts",
+        "pct_customers": "% of Stage 3 customers",
+        "exposure": "Exposure", "ecl": "ECL"}
+
+
 run_id = st.session_state.get("run_id")
 if not run_id:
     st.info("No run selected. Build one on **Run the pipeline**, or point the "
@@ -43,28 +50,26 @@ if len(t) == 0:
     st.info("No Stage 2 contracts in this run.")
 else:
     st.subheader("Why each Stage 2 contract is in Stage 2")
+    caption("A contract with more than one reason counts under each, so the "
+            "shares add to more than 100%; the trigger combinations below "
+            "count each contract once. Restructured is Local Flag 1, and "
+            "includes restructuring overrides. Stage override is a reviewed "
+            "override to Stage 2. Another facility of the customer is "
+            "contagion: nothing on the contract itself, but the customer has "
+            "a facility in Stage 2 or 3.")
     cols = ["trigger", "contracts", "customers", "pct_contracts", "exposure",
             "ecl"]
-    tab1, tab2 = st.tabs(["Has trigger", "Sole reason"])
-    for tab, basis, note in (
-        (tab1, "any", "Triggers overlap, so these shares add to more than 100%."),
-        (tab2, "sole", "Only where that trigger is the single cause, so these "
-                       'add up. "Stage override" is a stage forced in the '
-                       "source data."),
-    ):
-        with tab:
-            caption(note)
-            part = t[t["basis"] == basis]
-            c1, c2 = st.columns([2, 3])
-            with c1:
-                bar(part[part["contracts"] > 0], "trigger", "contracts")
-            with c2:
-                st.dataframe(
-                    fmt_table(part[cols],
-                              money_cols=("contracts", "customers", "exposure",
-                                          "ecl"),
-                              pct_cols=("pct_contracts",)),
-                    use_container_width=True, hide_index=True)
+    c1, c2 = st.columns([2, 3])
+    with c1:
+        bar(t[t["contracts"] > 0].rename(columns={"trigger": "Reason",
+                                                  "contracts": "Contracts"}),
+            "Reason", "Contracts")
+    with c2:
+        st.dataframe(
+            fmt_table(t[cols],
+                      money_cols=("contracts", "customers", "exposure", "ecl"),
+                      pct_cols=("pct_contracts",)).rename(columns=HEAD),
+            use_container_width=True, hide_index=True)
 
 st.divider()
 overlap_tab, dpd_tab, s3_tab, check_tab = st.tabs(
@@ -72,17 +77,18 @@ overlap_tab, dpd_tab, s3_tab, check_tab = st.tabs(
      "Against the rule"])
 
 with overlap_tab:
-    caption("Each Stage 2 contract once, under its combination of triggers, so "
-            "the rows add up. One with no trigger is there by contagion or an "
-            "override.")
+    caption("Each Stage 2 contract once, under its combination of reasons, so "
+            "the rows add up to the Stage 2 count.")
     ov = pd.DataFrame(detail["trigger_overlap"])
     if len(ov) == 0:
         st.info("No Stage 2 contracts in this run.")
     else:
-        bar(ov.head(12), "combination", "contracts")
+        bar(ov.head(12).rename(columns={"combination": "Reasons",
+                                        "contracts": "Contracts"}),
+            "Reasons", "Contracts")
         st.dataframe(
             fmt_table(ov, money_cols=("contracts", "customers", "exposure",
-                                      "ecl")),
+                                      "ecl")).rename(columns=HEAD),
             use_container_width=True, hide_index=True)
 
 with dpd_tab:
@@ -94,14 +100,16 @@ with dpd_tab:
         st.dataframe(piv, use_container_width=True)
 
 with s3_tab:
-    caption("A defaulted customer is usually over 90 days and flagged, so the "
-            "drivers overlap and do not add to 100%.")
+    caption("Each Stage 3 customer once, so the rows add up. The default flag "
+            "is not a separate driver: the ETL sets it when the customer's "
+            "worst facility is more than 90 days past due, or when a Stage 3 "
+            "override is applied, so it restates these two rows.")
     s3 = pd.DataFrame(detail["stage3_drivers"])
     if len(s3) == 0:
         st.info("No Stage 3 customers in this run.")
     else:
-        st.dataframe(fmt_table(s3, money_cols=("customers", "exposure"),
-                               pct_cols=("pct_customers",)),
+        st.dataframe(fmt_table(s3, money_cols=("customers", "exposure", "ecl"),
+                               pct_cols=("pct_customers",)).rename(columns=HEAD),
                      use_container_width=True, hide_index=True)
 
 with check_tab:
@@ -121,8 +129,8 @@ with check_tab:
                 "contracts.")
         else:
             caption("The report does not carry AccountMaster.Stage, so a "
-                    "manual override shows here as a difference. Staged "
-                    "better than the rule is the one worth chasing.")
+                    "manual stage in the source shows here as a difference. "
+                    "Staged better than the rule is the one worth chasing.")
             for _, f in findings.iterrows():
                 icon = "⚠️" if f["severity"] == "warn" else "ℹ️"
                 with st.expander(f"{icon}  {f['check']} — "
