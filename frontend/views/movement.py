@@ -74,8 +74,7 @@ WHAT = {
                    "with no repayment schedule, the Stage 3 method, the "
                    "exposure cap) and, when the previous run was priced by an "
                    "earlier version of the engine, the change in the "
-                   "calculation itself. What changed is named under the chart. "
-                   "Shown only when it is not zero.",
+                   "calculation itself. Shown only when it is not zero.",
     "pd_curves": "Macro inputs and model together: one of the runs has no "
                  "saved config, so the two cannot be told apart.",
     "lgd": "Collateral, and so LGD, and the EIR.",
@@ -225,24 +224,6 @@ for key, label, comps, always in GROUPS:
 rows.append(steps[steps["key"] == "closing"].iloc[0].to_dict())
 shown = pd.DataFrame(rows)
 waterfall(shown, zoom=True)
-caption("Each contract is repriced from the previous run to this one a cause "
-        "at a time, in the order shown, so the bars sum exactly to the current "
-        f"ECL (residual {b['residual']:.2f})."
-        + ("" if changes.get("model_changed")
-           else " The PD model did not change, so Model change is zero."))
-# what the methodology step is made of, named beside the chart
-_set_amt = float(amount.get("settings", 0.0))
-if changes.get("settings") and abs(_set_amt) >= 0.5:
-    callout("info",
-            f"The two runs' saved configs differ in the ECL settings, which "
-            f"moves the provision by **{signed(_set_amt)}**:",
-            title="Methodology change",
-            items=[f"{c['item']}: {c['before']} → {c['after']}"
-                   for c in changes["settings"]],
-            after="Set in model.yml (ecl block) of each run's config snapshot.")
-for n in b.get("notes") or []:
-    callout("info", n)
-
 tbl = shown[shown["kind"] == "delta"].copy()
 tbl["% of previous"] = [100 * a / b["opening"] if b["opening"] else None
                         for a in tbl["amount"]]
