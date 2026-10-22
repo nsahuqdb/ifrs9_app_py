@@ -21,8 +21,20 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent / "frontend"))
 
+import importlib  # noqa: E402
+
 import api  # noqa: E402
 import ui  # noqa: E402
+
+# A running app keeps the api and ui modules it first imported: the pages are
+# re-read on every rerun, these are not. After a code update a page could then
+# call a function the old module does not have. Reload either when its file
+# has changed since it was loaded.
+for _mod in (api, ui):
+    _mtime = Path(_mod.__file__).stat().st_mtime
+    if getattr(_mod, "_loaded_mtime", _mtime) != _mtime:
+        importlib.reload(_mod)
+    _mod._loaded_mtime = _mtime
 
 st.set_page_config(
     page_title="IFRS 9 ECL",
