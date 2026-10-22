@@ -1,4 +1,4 @@
-"""Customer ECL calculator: one customer's provision as an Excel workbook.
+"""ECL calculator: one customer's provision as an Excel workbook.
 
 The workbook holds the run's inputs for the customer and every step from them
 to the provision as a live formula -- staging with overrides, LGD from the
@@ -17,7 +17,7 @@ if not run_id:
     st.info("No run selected. Build one on **Run the pipeline**, or point the "
             "backend at a folder of existing runs.", icon="👈")
     st.stop()
-page_setup("Customer ECL calculator",
+page_setup("ECL calculator",
            "Pick a customer and download an Excel workbook that rebuilds its "
            "provision from the run's inputs with formulas, so the figures can "
            "be checked against the report.")

@@ -21,20 +21,14 @@ if not run_id:
             "backend at a folder of existing runs.", icon="👈")
     st.stop()
 page_setup("Stress test",
-           "A package, a what-if on named customers or a staging-policy "
-           "change: one stress, repriced through the engine the run used. "
-           "Nothing is re-run and nothing is written.")
+           "Choose who is stressed and what moves, then reprice the run. "
+           "Nothing in the run is changed.")
 
 with guard():
     sc = api.scope(run_id)
 internal, external = sc["internal"], sc["external"]
 run_thr, run_lgd, run_floor = sc["run_threshold"], sc["lgd_base"], sc["lgd_floor"]
 scenarios = sc.get("scenarios") or []
-if external:
-    caption(f"{', '.join(external)} are externally rated: their PD curves are "
-            "the agency scale's, so a rating or PD lever does not reach them. "
-            "Every package is scoped to the internally rated portfolios unless "
-            "you choose otherwise.")
 
 
 def _blank(name: str) -> dict:
@@ -66,7 +60,9 @@ if b2.button("Add the standard packages", use_container_width=True,
              help="Mild and severe downturn, collateral revaluation, staging "
                   "tightened to 30 days, the largest five customers defaulting."):
     _add(sc["standard"])
-if b3.button("Load saved", use_container_width=True):
+if b3.button("Load saved", use_container_width=True,
+             help="Replace the packages on screen with the ones last saved "
+                  "(config/stress_packages.yml)."):
     with guard():
         saved = api.packages_saved()
     if saved:
@@ -76,13 +72,22 @@ if b3.button("Load saved", use_container_width=True):
         st.info("No saved packages yet.", icon="ℹ️")
 
 
+def _min_lgd(p: dict) -> float:
+    """The package's minimum LGD: its maximum LGD times its floor share."""
+    base = run_lgd if p["lgd_base"] is None else p["lgd_base"]
+    share = run_floor if p["lgd_floor"] is None else p["lgd_floor"]
+    return round(float(base) * float(share), 4)
+
+
 def _read(p: dict) -> dict:
     """One package's fields back off the screen, a run-own value as None."""
     u = p["uid"]
     g = lambda k, d: S.get(f"sp{u}_{k}", d)  # noqa: E731
     thr = g("thr", run_thr if p["dpd_threshold"] is None else p["dpd_threshold"])
     lgdb = g("lgdb", run_lgd if p["lgd_base"] is None else p["lgd_base"])
-    lgdf = g("lgdf", run_floor if p["lgd_floor"] is None else p["lgd_floor"])
+    # shown as the minimum LGD (max LGD x floor share); stored as the share
+    lgd_min = g("lgdmin", _min_lgd(p))
+    lgdf = float(lgd_min) / float(lgdb) if float(lgdb) > 0 else run_floor
     to = g("to", "unchanged" if not p["stage_to"] else p["stage_to"])
     ids = g("cust", ", ".join(p["customers"]))
     return {
@@ -91,10 +96,11 @@ def _read(p: dict) -> dict:
         "stages": [int(x) for x in g("st", p["stages"])],
         "customers": [t.strip() for t in ids.replace(";", ",").split(",") if t.strip()],
         "dpd_threshold": None if float(thr) == float(run_thr) else float(thr),
-        "contagion": bool(g("cont", p["contagion"])),
-        "tasdeer_collective": bool(g("tas", p["tasdeer_collective"])),
-        "watchlist_triggers": bool(g("watch", p["watchlist_triggers"])),
-        "local_triggers": bool(g("local", p["local_triggers"])),
+        # the staging policy stays the run's own: not a lever on this page
+        "contagion": bool(p["contagion"]),
+        "tasdeer_collective": bool(p["tasdeer_collective"]),
+        "watchlist_triggers": bool(p["watchlist_triggers"]),
+        "local_triggers": bool(p["local_triggers"]),
         "stage_to": None if to == "unchanged" else int(to),
         "default_top_n": int(g("topn", p["default_top_n"])),
         "pd_multiplier": float(g("pd", p["pd_multiplier"])),
@@ -102,7 +108,8 @@ def _read(p: dict) -> dict:
                        else g("scen", p["pd_scenario"]),
         "rating_notches": int(g("notch", p["rating_notches"])),
         "lgd_base": None if float(lgdb) == float(run_lgd) else float(lgdb),
-        "lgd_floor": None if float(lgdf) == float(run_floor) else float(lgdf),
+        "lgd_floor": None if abs(float(lgdf) - float(run_floor)) < 1e-9
+                     else float(lgdf),
         "collateral_pct": float(g("coll", p["collateral_pct"])),
         "exposure_pct": float(g("exp", p["exposure_pct"])),
         "maturity_years": float(g("mat", p["maturity_years"])),
@@ -114,26 +121,22 @@ for i, p in enumerate(S["stress_pkgs"]):
     u = p["uid"]
     cur = _read(p)
     with st.expander(cur["name"], expanded=len(S["stress_pkgs"]) == 1):
-        a, b = st.columns([4, 1])
-        a.text_input("Name", p["name"], key=f"sp{u}_name")
-        if b.button("Remove", key=f"sp{u}_rm", use_container_width=True,
-                    disabled=len(S["stress_pkgs"]) == 1):
-            drop = i
-
-        st.markdown("**Who** — every contract in these portfolios, stages "
-                    "and customers; leave one empty not to narrow it")
-        c = st.columns([3, 1, 3])
+        c = st.columns([2, 3, 1, 3, 1], vertical_alignment="bottom")
+        c[0].text_input("Name", p["name"], key=f"sp{u}_name")
         # a saved package may name a portfolio this run does not hold
-        c[0].multiselect("Portfolios", sc["all"],
+        c[1].multiselect("Portfolios", sc["all"],
                          [x for x in p["portfolios"] if x in sc["all"]],
-                         key=f"sp{u}_pf")
-        c[1].multiselect("Stages", [1, 2, 3], p["stages"], key=f"sp{u}_st")
-        c[2].text_input("Customer ids", ", ".join(p["customers"]), key=f"sp{u}_cust",
-                        help="Comma or semicolon separated. A name with "
-                             "spaces is one id.")
+                         key=f"sp{u}_pf", help="Empty: every portfolio.")
+        c[2].multiselect("Stages", [1, 2, 3], p["stages"], key=f"sp{u}_st",
+                         help="Empty: every stage.")
+        c[3].text_input("Customer ids", ", ".join(p["customers"]), key=f"sp{u}_cust",
+                        help="Comma separated. Empty: every customer.")
+        if c[4].button("Remove", key=f"sp{u}_rm", use_container_width=True,
+                       disabled=len(S["stress_pkgs"]) == 1):
+            drop = i
         if cur["customers"]:
-            # the named customers as they stand, read the way the stress will
-            # read the ids, so a mistyped one shows before anything is priced
+            # the named customers as they stand, so a mistyped id shows before
+            # anything is priced
             try:
                 lk = api.customers(run_id, "; ".join(cur["customers"]), spaces=False)
             except api.BackendError as e:       # the rest of the page still works
@@ -148,52 +151,37 @@ for i, p in enumerate(S["stress_pkgs"]):
             if lk.get("missing"):
                 st.warning("Not in this run: " + ", ".join(lk["missing"]), icon="⚠️")
 
-        st.markdown("**Staging**")
-        c = st.columns(4)
+        c = st.columns(6)
         c[0].number_input("Stage 2 DPD threshold", 0, 365,
                           int(run_thr if p["dpd_threshold"] is None
                               else p["dpd_threshold"]), 5, key=f"sp{u}_thr",
-                          help=f"This run's own is {run_thr:g}; the rule is "
-                               "DPD > threshold.")
+                          help=f"This run's is {run_thr:g} days.")
         c[1].selectbox("Move to stage", ["unchanged", 1, 2, 3],
                        ["unchanged", 1, 2, 3].index(p["stage_to"] or "unchanged"),
                        key=f"sp{u}_to")
         c[2].number_input("Largest N default", 0, 100, int(p["default_top_n"]), 1,
                           key=f"sp{u}_topn",
-                          help="The scope's largest customers by exposure "
-                               "forced to Stage 3, booking their full "
-                               "outstanding.")
-        c = st.columns(4)
-        c[0].checkbox("Contagion", p["contagion"], key=f"sp{u}_cont")
-        c[1].checkbox("Tasdeer collective", p["tasdeer_collective"], key=f"sp{u}_tas")
-        c[2].checkbox("Watchlist triggers", p["watchlist_triggers"], key=f"sp{u}_watch")
-        c[3].checkbox("Local flags trigger", p["local_triggers"], key=f"sp{u}_local")
-
-        st.markdown("**PD and rating**")
-        c = st.columns(3)
-        c[0].number_input("PD multiplier", 0.0, 10.0, float(p["pd_multiplier"]),
+                          help="The N largest customers by exposure that are "
+                               "not in Stage 3 already go to Stage 3.")
+        c[3].number_input("PD multiplier", 0.0, 10.0, float(p["pd_multiplier"]),
                           0.05, key=f"sp{u}_pd")
         opts = ["none"] + scenarios
-        c[1].selectbox("PD scenario", opts,
+        c[4].selectbox("PD scenario", opts,
                        opts.index(p["pd_scenario"]) if p["pd_scenario"] in opts else 0,
                        key=f"sp{u}_scen",
-                       help="Price the scope on one scenario's PD curves "
-                            "instead of the weighted ones.")
-        c[2].number_input("Rating notches", -10, 20, int(p["rating_notches"]), 1,
-                          key=f"sp{u}_notch",
-                          help="Positive is a downgrade, along each "
-                               "contract's own scale.")
-
-        st.markdown("**LGD, collateral, exposure and term**")
-        c = st.columns(5)
-        c[0].number_input("LGD base", 0.0, 1.0,
+                       help="Price on one scenario's PD curves instead of the "
+                            "weighted ones.")
+        c[5].number_input("Rating notches", -10, 20, int(p["rating_notches"]), 1,
+                          key=f"sp{u}_notch", help="Positive is a downgrade.")
+        c = st.columns(6)
+        c[0].number_input("Maximum LGD (unsecured)", 0.0, 1.0,
                           float(run_lgd if p["lgd_base"] is None else p["lgd_base"]),
-                          0.01, key=f"sp{u}_lgdb")
-        c[1].number_input("LGD floor", 0.0, 1.0,
-                          float(run_floor if p["lgd_floor"] is None else p["lgd_floor"]),
-                          0.05, key=f"sp{u}_lgdf",
-                          help="Raising it bites on secured lending: only "
-                               "contracts at the floor move.")
+                          0.01, key=f"sp{u}_lgdb",
+                          help=f"This run's is {run_lgd:g}.")
+        c[1].number_input("Minimum LGD (fully secured)", 0.0, 1.0, _min_lgd(p),
+                          0.005, format="%.3f", key=f"sp{u}_lgdmin",
+                          help=f"This run's is {run_lgd * run_floor:.3f} "
+                               f"({run_floor:g} of the maximum).")
         c[2].number_input("Collateral %", 0.0, 300.0, float(p["collateral_pct"]),
                           5.0, key=f"sp{u}_coll")
         c[3].number_input("Exposure %", 0.0, 300.0, float(p["exposure_pct"]), 5.0,
@@ -237,8 +225,6 @@ def _detail(r: dict) -> None:
         ("% change", pct(100 * r["delta"] / max(r["before"], 1))),
         ("Contracts in scope", money(r["scoped"])),
     ])
-    if r.get("notes"):
-        caption("; ".join(r["notes"]) + ".")
     if abs(r["delta"]) < 1e-6:
         st.info("Nothing in this package changes the provision.", icon="ℹ️")
     if r.get("defaulted"):
@@ -290,8 +276,8 @@ else:
     ])
     bar(rows, "package", "change", diverging=True,
         title="Change in provision by package")
-    callout("info", "Each package is priced on its own from the same run, so "
-                    "the changes are comparable; they do not add up.")
+    caption("Each package is priced on its own from the same run: the changes "
+            "do not add up.")
     st.dataframe(fmt_table(rows, money_cols=("before", "after", "change",
                                              "contracts in scope", "re-staged"),
                            pct_cols=("pct",)),

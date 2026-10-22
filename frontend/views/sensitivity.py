@@ -40,10 +40,8 @@ each, target, threshold = st.tabs(["Each lever", "To a target",
 
 if each.open:
     with each:
-        caption(f"Each lever moved on its own from the same base ({base_book}) "
-                "and ranked by effect. The bars are comparable but do NOT add "
-                "up: levers interact when combined, which is what a stress "
-                "test with several levers is for.")
+        caption(f"Each lever moved on its own ({base_book}), largest effect "
+                "first. The effects do not add up.")
         if st.button("Price each lever", type="primary", key="sens_each_go"):
             S["sens_each"] = run_id
         if S.get("sens_each") != run_id:
@@ -74,10 +72,8 @@ if each.open:
 
 if target.open:
     with target:
-        caption("Instead of asking what a shock does, this asks how bad things "
-                "would have to get. Each lever is solved on its own by "
-                f"repricing {base_book} repeatedly and narrowing in, so the "
-                "answer is found rather than read off a grid.")
+        caption("How far each lever has to move, on its own, to raise the "
+                f"provision ({base_book}) by the target.")
         c1, c2 = st.columns([1, 3], vertical_alignment="bottom")
         tgt = c1.number_input("Target provision increase (%)", 1.0, 500.0, 25.0,
                               5.0, key="sens_target_pct")
@@ -107,16 +103,13 @@ if target.open:
                               money_cols=("provision",),
                               pct_cols=("achieved_pct",)),
                     use_container_width=True, hide_index=True)
-                caption("A lever that cannot reach the target reports the most "
-                        "it achieves, rather than returning its boundary as if "
-                        "it were an answer.")
+                caption("A lever that cannot reach the target shows the most "
+                        "it achieves.")
 
 if threshold.open:
     with threshold:
-        caption("A policy debate about 30 versus 60 days is usually conducted "
-                "without anybody having priced it. This prices it: "
-                f"{base_book} restaged and repriced at each candidate Stage 2 "
-                "days-past-due threshold, everything else held.")
+        caption(f"{base_book} re-staged at each Stage 2 days-past-due "
+                "threshold, everything else unchanged.")
         choices = st.multiselect(
             "Thresholds to price (days)", [0, 15, 30, 45, 60, 75, 90],
             default=[0, 30, 60, 90], key="sens_thr_days",
@@ -141,11 +134,6 @@ if threshold.open:
                  pct(100 * (rows["ecl"].max() - base) / max(base, 1))),
             ])
             line(rows, "threshold", "ecl", title="Provision by threshold (days)")
-            caption("Rarely a straight line, and usually much flatter than "
-                    "people expect: most of the book is staged by watchlist, "
-                    "restructuring and contagion rather than by days past due, "
-                    "so moving the threshold moves comparatively little. That "
-                    "is the finding.")
             col = f"vs_{used:g}"
             show = rows.copy()
             if col in show.columns:

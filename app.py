@@ -73,7 +73,7 @@ pages = {
         st.Page(P + "segments.py", title="Segments", icon=":material/grid_view:"),
         st.Page(P + "scenarios.py", title="Scenarios", icon=":material/alt_route:"),
         st.Page(P + "quality.py", title="Data quality", icon=":material/rule:"),
-        st.Page(P + "calculator_customer.py", title="Customer ECL calculator",
+        st.Page(P + "calculator_customer.py", title="ECL calculator",
                 icon=":material/calculate:"),
     ],
     # Two runs side by side. Why the provision moved is Movement alone: the
@@ -123,7 +123,7 @@ pages = {
 NEEDS_RUN = {"Overview", "Staging", "Concentration", "Segments",
              "Risk parameters", "Scenarios", "Data quality", "Validation",
              "Stress test", "Sensitivity", "Macro & scenarios", "Roll forward",
-             "Model assumptions", "Customer ECL calculator"}
+             "Model assumptions", "ECL calculator"}
 COMPARES = {"Movement", "Migration", "Reconcile & export"}
 OPTIONAL_RUN = {"ECL overlays", "Assistant", "Audit log"}
 

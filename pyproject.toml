@@ -15,7 +15,7 @@ authors = [{ name = "Qatar Development Bank", email = "frm@qdb.qa" }]
 # repository - `pip install -e ../ifrs9qdb_py` for development, or a built
 # wheel in the container.
 dependencies = [
-    "ifrs9qdb[excel]>=0.33.1",   # one stress function behind every stress page
+    "ifrs9qdb[excel]>=0.34.0",   # one stress function behind every stress page
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
     "pydantic>=2.5",

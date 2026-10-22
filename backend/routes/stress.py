@@ -195,6 +195,9 @@ class MevIn(BaseModel):
                                     description="MEV index (1-based) -> delta")
     weight_mode: str = "auto"
     weights: dict[str, float] | None = None
+    external_weights: dict[str, float] | None = None
+    gcc_shock: float = Field(0.0, description="points onto GCC growth, every "
+                                               "country and forecast year")
 
 
 @router.post("/stress/{run_id}/mev")
@@ -211,7 +214,9 @@ def mev(run_id: str, body: MevIn) -> dict:
     try:
         r = mev_stress(inputs, report, out, mev_new=cells,
                        shock={int(k): v for k, v in body.shock.items()},
-                       weight_mode=body.weight_mode, weights=body.weights)
+                       weight_mode=body.weight_mode, weights=body.weights,
+                       external_weights=body.external_weights,
+                       gcc_shock=body.gcc_shock)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     if not r.get("ok"):

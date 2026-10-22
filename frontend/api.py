@@ -504,10 +504,12 @@ def threshold_sweep(run_id: str, thresholds: str) -> dict:
 
 
 def mev_stress(run_id: str, cells: list, shock: dict, weight_mode: str,
-               weights: dict | None = None) -> dict:
+               weights: dict | None = None, external_weights: dict | None = None,
+               gcc_shock: float = 0.0) -> dict:
     return post(f"/stress/{run_id}/mev",
                 {"cells": cells, "shock": shock, "weight_mode": weight_mode,
-                 "weights": weights})
+                 "weights": weights, "external_weights": external_weights,
+                 "gcc_shock": gcc_shock})
 
 
 @st.cache_data(ttl=600, show_spinner=False)
