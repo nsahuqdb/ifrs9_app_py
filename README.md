@@ -101,6 +101,7 @@ The layout is the R app's, so the two apps can share one folder:
   config_snapshots/         config versions: frozen config/ + static/ + config.yml
   runs/                     one folder per run
   logs/etl_audit.jsonl      the project audit log
+  macro_store/              the macro data, one folder per vintage
   input/                    the configured input folder
   drops/                    data-team drop folders (paths.data_drop_root)
 ```
@@ -110,7 +111,7 @@ A fresh project is seeded from the app's own `config.yml`, `config/` and
 overridden on its own: `IFRS9_RUNS_DIR`, `IFRS9_CONFIG_DIR`,
 `IFRS9_STATIC_DIR`, `IFRS9_CONFIG`, `IFRS9_SNAPSHOTS_DIR`, `IFRS9_INPUT_DIR`,
 `IFRS9_DATA_DROP_ROOT`, `IFRS9_UPLOAD_DIR`, `IFRS9_AUDIT_LOG`,
-`IFRS9_OVERLAYS`. `IFRS9_USER` names who is acting (the app has no login of
+`IFRS9_OVERLAYS`, `IFRS9_MACRO_STORE`. `IFRS9_USER` names who is acting (the app has no login of
 its own; the R app reads the OS user).
 
 A run folder is the R engine's too:
@@ -185,8 +186,8 @@ The pages, grouped as in the navigation: **Runs** (run the pipeline, browse
 runs, validation, approval queue); **Portfolio** (overview, staging, risk
 parameters, concentration, segments, scenarios, data quality);
 **Comparison** (movement, migration, reconcile & export);
-**Stress testing** (stress test, sensitivity, macro & scenarios, roll
-forward); **Governance** (config versions, calculator versions, ECL overlays,
+**Stress testing** (stress test, scenario stress, sensitivity, macro &
+scenarios, roll forward, macro data); **Governance** (config versions, calculator versions, ECL overlays,
 validation suppressions, live configuration, model assumptions, audit log);
 and **Help** (assistant, how this works). The menu holding the page on screen
 is highlighted, as the page is in its list.
@@ -237,3 +238,24 @@ threshold. **Macro & scenarios** rebuilds the PD chain from the run's frozen
 config with a shocked forecast or different scenario weights (follow the new
 path, hold the run's, or set your own), and moves ten points onto each
 scenario in turn. **Roll forward** advances the book n months.
+
+**Scenario stress** shocks any variable of the macro store -- oil and LNG
+prices, GCC growth, US and Qatar rates, government spending, property, credit,
+China and world growth -- alone or several at once, each with a size (in its
+own unit or in standard deviations) and a shape over the five forecast years.
+The macro model moves every other variable with the shocks unless that is
+switched off, and says how unusual the combination is (1 in N). The paths reach
+the book through the PD model's drivers, a credit factor by sector, ratings and
+stages, collateral, rates, drawn exposure and the external book
+(`config/stress.yml`, packaged default otherwise), and a saved package can be
+added on top. The result is a waterfall by channel, by sector and portfolio,
+and a split of the change by shock; several scenarios compare side by side;
+**Sensitivity** moves each variable alone; **ECL at risk** prices thousands of
+simulated paths for the provision's 95th and 99th percentiles and the credit
+loss from customer default draws; **Reverse stress** finds the most likely
+path to a given increase. Scenarios are saved to `config/stress_scenarios.yml`,
+shared with the R app. **Macro data** keeps the store (`macro_store/`, or
+`IFRS9_MACRO_STORE`): a refresh fetches every dataset as a new vintage, files
+from QCB, the Planning and Statistics Authority and the Ministry of Finance are
+imported, and **New quarter** proposes the forecasts and history a config needs
+and writes them into a draft config version for testing and approval.

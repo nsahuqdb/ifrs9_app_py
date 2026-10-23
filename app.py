@@ -103,11 +103,14 @@ pages = {
     # stress tests; the sensitivity pages move its levers one at a time.
     "Stress testing": [
         st.Page(P + "stress.py", title="Stress test", icon=":material/bolt:"),
+        st.Page(P + "scenario_stress.py", title="Scenario stress",
+                icon=":material/thunderstorm:"),
         st.Page(P + "sensitivity.py", title="Sensitivity",
                 icon=":material/equalizer:"),
         st.Page(P + "macro.py", title="Macro & scenarios", icon=":material/public:"),
         st.Page(P + "rollforward.py", title="Roll forward",
                 icon=":material/fast_forward:"),
+        st.Page(P + "macro_data.py", title="Macro data", icon=":material/database:"),
     ],
     "Governance": [
         st.Page(P + "snapshots.py", title="Config versions",
@@ -134,7 +137,7 @@ pages = {
 # without one.
 NEEDS_RUN = {"Overview", "Staging", "Concentration", "Segments",
              "Risk parameters", "Scenarios", "Data quality", "Validation",
-             "Stress test", "Sensitivity", "Macro & scenarios", "Roll forward",
+             "Stress test", "Scenario stress", "Sensitivity", "Macro & scenarios", "Roll forward",
              "Model assumptions", "ECL calculator"}
 COMPARES = {"Movement", "Migration", "Reconcile & export"}
 OPTIONAL_RUN = {"ECL overlays", "Assistant", "Audit log"}

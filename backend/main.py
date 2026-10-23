@@ -24,7 +24,7 @@ from ifrs9qdb import __version__
 from ifrs9qdb.audit_log import set_audit_log_path
 from . import settings
 from .routes import (admin, analytics, assistant, ecl, etl, governance, health,
-                     runs, runs_detail, stress, validation, workflow)
+                     macro, runs, runs_detail, scenarios, stress, validation, workflow)
 
 RUNS_DIR = settings.RUNS_DIR
 _SEEDED = settings.ensure_project()
@@ -74,7 +74,7 @@ app.add_middleware(
 )
 
 for r in (health.router, runs.router, runs_detail.router, ecl.router,
-          analytics.router, stress.router, etl.router, workflow.router,
+          analytics.router, stress.router, macro.router, scenarios.router, etl.router, workflow.router,
           validation.router, governance.router, admin.router,
           assistant.router):
     app.include_router(r, prefix="/api")

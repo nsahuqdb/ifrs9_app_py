@@ -31,3 +31,6 @@ data/
 logs/
 calculator_versions/
 config_snapshots/
+
+# The macro store: fetched data, a deployment keeps its own vintages
+macro_store/

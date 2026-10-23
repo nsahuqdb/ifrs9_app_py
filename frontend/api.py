@@ -37,9 +37,12 @@ def _raise(resp: requests.Response) -> None:
     raise BackendError(detail or f"{resp.status_code} {resp.reason}")
 
 
-def get(path: str, **params):
+LONG = (5, 900)    # the Monte Carlo, a Shapley split, a store refresh
+
+
+def get(path: str, _timeout=None, **params):
     try:
-        r = requests.get(_url(path), params=params or None, timeout=TIMEOUT)
+        r = requests.get(_url(path), params=params or None, timeout=_timeout or TIMEOUT)
     except requests.exceptions.ConnectionError:
         raise BackendError(
             f"Cannot reach the backend at {BACKEND}. Start it with:\n\n"
@@ -52,9 +55,9 @@ def get(path: str, **params):
     return r.json()
 
 
-def post(path: str, payload: dict):
+def post(path: str, payload: dict, _timeout=None):
     try:
-        r = requests.post(_url(path), json=payload, timeout=TIMEOUT)
+        r = requests.post(_url(path), json=payload, timeout=_timeout or TIMEOUT)
     except requests.exceptions.ConnectionError:
         raise BackendError(
             f"Cannot reach the backend at {BACKEND}. Start it with:\n\n"
@@ -67,10 +70,10 @@ def post(path: str, payload: dict):
     return r.json()
 
 
-def request(method: str, path: str, payload: dict | None = None):
+def request(method: str, path: str, payload: dict | None = None, _timeout=None):
     """Any other verb. DELETE mostly, which the two helpers above do not cover."""
     try:
-        r = requests.request(method, _url(path), json=payload, timeout=TIMEOUT)
+        r = requests.request(method, _url(path), json=payload, timeout=_timeout or TIMEOUT)
     except requests.exceptions.ConnectionError:
         raise BackendError(
             f"Cannot reach the backend at {BACKEND}. Start it with:\n\n"
@@ -791,3 +794,112 @@ def audit_log(event: str | None = None, run_id: str | None = None,
     if user:
         params["user"] = user
     return get("/audit-log", **params)
+
+
+# ------------------------------------------------------------ macro data --
+def macro_status() -> dict:
+    return get("/macro/status")
+
+
+def macro_catalogue() -> dict:
+    return get("/macro/catalogue")
+
+
+def macro_refresh(payload: dict) -> dict:
+    return post("/macro/refresh", payload, _timeout=LONG)
+
+
+def macro_import(file, source: str, dataset: str, country: str = "", freq: str = "",
+                 unit: str = "", label: str = "") -> dict:
+    try:
+        r = requests.post(_url("/macro/import"),
+                          files={"file": (file.name, file.getvalue())},
+                          data={"source": source, "dataset": dataset, "country": country,
+                                "freq": freq, "unit": unit, "label": label},
+                          timeout=LONG)
+    except requests.exceptions.ConnectionError:
+        raise BackendError(f"Cannot reach the backend at {BACKEND}.")
+    if not r.ok:
+        _raise(r)
+    return r.json()
+
+
+def macro_search(q: str, country: str | None = None, source: str | None = None,
+                 vintage: str | None = None) -> list:
+    return get("/macro/search", q=q, country=country or "", source=source or "",
+               vintage=vintage or "")
+
+
+def macro_series(sid: str, vintage: str | None = None) -> dict:
+    return get("/macro/series", sid=sid, **({"vintage": vintage} if vintage else {}))
+
+
+def macro_concept(cid: str, vintage: str | None = None) -> dict:
+    return get(f"/macro/concept/{cid}", **({"vintage": vintage} if vintage else {}))
+
+
+def macro_propose(payload: dict) -> dict:
+    return post("/macro/propose", payload, _timeout=LONG)
+
+
+def macro_apply(payload: dict) -> dict:
+    return post("/macro/apply", payload, _timeout=LONG)
+
+
+# ------------------------------------------------------- macro scenarios --
+def _v(vintage):
+    return {"vintage": vintage} if vintage else {}
+
+
+def scn_setup(vintage: str | None = None) -> dict:
+    return get("/scenarios/setup", _timeout=LONG, **_v(vintage))
+
+
+def scn_saved_put(scenarios: list) -> dict:
+    return request("PUT", "/scenarios/saved", {"scenarios": scenarios})
+
+
+def scn_preview(scenario: dict, vintage: str | None, first_year: int | None) -> dict:
+    return post("/scenarios/preview", {"scenario": scenario, "vintage": vintage,
+                                       "first_year": first_year})
+
+
+def scn_context(run_id: str, vintage: str | None = None) -> dict:
+    return get(f"/scenarios/{run_id}/context", _timeout=LONG, **_v(vintage))
+
+
+def scn_run(run_id: str, scenario: dict, vintage: str | None = None) -> dict:
+    return post(f"/scenarios/{run_id}/run", {"scenario": scenario, "vintage": vintage},
+                _timeout=LONG)
+
+
+def scn_shapley(run_id: str, scenario: dict, vintage: str | None = None) -> dict:
+    return post(f"/scenarios/{run_id}/shapley", {"scenario": scenario, "vintage": vintage},
+                _timeout=LONG)
+
+
+def scn_compare(run_id: str, scenarios: list, vintage: str | None = None) -> dict:
+    return post(f"/scenarios/{run_id}/compare", {"scenarios": scenarios, "vintage": vintage},
+                _timeout=LONG)
+
+
+def scn_sensitivity(run_id: str, size_sd: float, knock_on: bool,
+                    vintage: str | None = None) -> dict:
+    return get(f"/scenarios/{run_id}/sensitivity", _timeout=LONG, size_sd=size_sd,
+               knock_on=str(knock_on).lower(), **_v(vintage))
+
+
+def scn_risk(run_id: str, paths: int, seed: int, threshold: float | None,
+             vintage: str | None = None) -> dict:
+    return post(f"/scenarios/{run_id}/risk", {"paths": paths, "seed": seed,
+                                              "threshold": threshold, "vintage": vintage},
+                _timeout=LONG)
+
+
+def scn_proxy_check(run_id: str, vintage: str | None = None) -> dict:
+    return get(f"/scenarios/{run_id}/proxy_check", _timeout=LONG, **_v(vintage))
+
+
+def scn_reverse(run_id: str, target: float, vintage: str | None = None) -> dict:
+    return post(f"/scenarios/{run_id}/reverse", {"target": target, "vintage": vintage},
+                _timeout=LONG)

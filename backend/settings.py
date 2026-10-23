@@ -17,7 +17,7 @@ The layout is the R app's, so the two apps can share a project folder:
 Every path can be overridden from the environment -- IFRS9_PROJECT_ROOT for
 the lot, or IFRS9_RUNS_DIR, IFRS9_CONFIG_DIR, IFRS9_STATIC_DIR, IFRS9_CONFIG,
 IFRS9_SNAPSHOTS_DIR, IFRS9_INPUT_DIR, IFRS9_DATA_DROP_ROOT, IFRS9_UPLOAD_DIR,
-IFRS9_AUDIT_LOG and IFRS9_OVERLAYS one at a time. Where the project has no
+IFRS9_AUDIT_LOG, IFRS9_OVERLAYS and IFRS9_MACRO_STORE one at a time. Where the project has no
 config/ or static/ of its own, the engine package's copies are used, so a
 fresh checkout runs.
 """
@@ -48,6 +48,10 @@ OVERLAYS_FILE = _env_path("IFRS9_OVERLAYS", CONFIG_DIR / "overlays.yml")
 SUPPRESSIONS_FILE = CONFIG_DIR / "validation_suppressions.yml"
 # saved stress packages, the file the R app reads and writes too
 STRESS_PACKAGES_FILE = CONFIG_DIR / "stress_packages.yml"
+# saved stress scenarios (macro shocks), shared with the R app the same way
+STRESS_SCENARIOS_FILE = CONFIG_DIR / "stress_scenarios.yml"
+# the macro store: every IMF (and QCB, Council, FRED) series, by vintage
+MACRO_STORE_DIR = _env_path("IFRS9_MACRO_STORE", PROJECT_ROOT / "macro_store")
 
 
 def ensure_project() -> list[str]:
