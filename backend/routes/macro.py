@@ -21,6 +21,8 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from ifrs9qdb.macro import MacroStore, concepts, countries, datasets, import_file, refresh
+from ifrs9qdb.macro.fetch import DEFAULT_SOURCES
+from ifrs9qdb.macro.store import last_actual_guess
 from ifrs9qdb.macro.quarter import apply as apply_quarter
 from ifrs9qdb.macro.quarter import propose
 
@@ -81,20 +83,45 @@ def catalogue() -> dict:
 class RefreshIn(BaseModel):
     groups: list[str] | None = None
     datasets: list[str] | None = None
-    sources: list[str] = Field(default_factory=lambda: ["IMF", "DM", "FRED", "STATIC"])
+    sources: list[str] = Field(default_factory=lambda: list(DEFAULT_SOURCES))
     fred_key: str | None = None
     label: str = ""
     all_datasets: bool = False
 
 
+_JOBS: dict = {}
+
+
 @router.post("/macro/refresh")
 def do_refresh(body: RefreshIn) -> dict:
-    """Fetch and save one vintage. Takes a few minutes for every dataset."""
-    r = refresh(store(), PROJECT_ROOT, groups=body.groups or None,
-                datasets=body.datasets or None, sources=tuple(body.sources),
-                fred_key=body.fred_key or None, label=body.label,
-                only_default=not body.all_datasets)
-    return js(r)
+    """Start fetching one vintage in the background -- every dataset takes a
+    few minutes -- and return the job to follow with GET /macro/refresh/{job}."""
+    import threading
+    import uuid
+    job = uuid.uuid4().hex[:12]
+    _JOBS[job] = {"status": "running", "steps": [], "result": None, "error": None}
+
+    def work():
+        try:
+            r = refresh(store(), PROJECT_ROOT, groups=body.groups or None,
+                        datasets=body.datasets or None, sources=tuple(body.sources),
+                        fred_key=body.fred_key or None, label=body.label,
+                        only_default=not body.all_datasets,
+                        progress=lambda m: _JOBS[job]["steps"].append(m))
+            _JOBS[job].update(status="done", result=js(r))
+        except Exception as exc:                  # reported, not raised
+            _JOBS[job].update(status="failed", error=str(exc))
+    threading.Thread(target=work, daemon=True).start()
+    return {"job": job}
+
+
+@router.get("/macro/refresh/{job}")
+def refresh_status(job: str) -> dict:
+    j = _JOBS.get(job)
+    if j is None:
+        raise HTTPException(404, f"No refresh job {job!r}")
+    return {"status": j["status"], "steps": j["steps"], "step": (j["steps"] or [""])[-1],
+            "result": j["result"], "error": j["error"]}
 
 
 @router.post("/macro/import")
@@ -132,9 +159,12 @@ def series(sid: str, vintage: str | None = None) -> dict:
     if row.empty:
         raise HTTPException(404, f"No series {sid!r} in the store")
     o = st.observations(vintage, [sid])
+    a = st.annual(sid, vintage)
+    la = str(row.iloc[0].get("last_actual") or "").strip()
+    last = int(la[:4]) if la[:4].isdigit() else last_actual_guess(list(a.index))
     return js({"series": row.iloc[0].to_dict(), "observations": o,
-               "annual": [{"year": int(k), "value": float(v)} for k, v in
-                          st.annual(sid, vintage).items()]})
+               "annual": [{"year": int(k), "value": float(v), "actual": int(k) <= last}
+                          for k, v in a.items()]})
 
 
 @router.get("/macro/concept/{cid}")

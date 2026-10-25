@@ -15,9 +15,35 @@ import pandas as pd
 import streamlit as st
 
 import api
-from ui import caption, fmt_table, guard, line, metric_row, money, page_setup
+from ui import caption, fmt_table, guard, metric_row, money, page_setup
 
 S = st.session_state
+
+
+def history_and_forecast(df: pd.DataFrame, title: str) -> None:
+    """History as a solid line, the projection dashed from the last actual
+    year on."""
+    import plotly.graph_objects as go
+    d = df.sort_values("year")
+    act = d["actual"].astype(bool) if "actual" in d else pd.Series(True, index=d.index)
+    hist, fc = d[act], d[~act]
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=hist["year"], y=hist["value"], mode="lines+markers",
+                             name="History", line=dict(color="#5b1f6e", width=2.5),
+                             marker=dict(size=5)))
+    if len(fc):
+        joined = pd.concat([hist.tail(1), fc]) if len(hist) else fc
+        fig.add_trace(go.Scatter(x=joined["year"], y=joined["value"], mode="lines+markers",
+                                 name="Projection", line=dict(color="#c0392b", width=2.5,
+                                                              dash="dash"),
+                                 marker=dict(size=5)))
+    fig.update_layout(title=title, height=340, margin=dict(l=8, r=8, t=40, b=8),
+                      plot_bgcolor="white", paper_bgcolor="white",
+                      legend=dict(orientation="h", y=-0.15),
+                      xaxis=dict(showgrid=False), yaxis=dict(gridcolor="#f0eef4"))
+    st.plotly_chart(fig, use_container_width=True)
+
+
 page_setup("Macro data", "The macro store, and the new quarter's forecasts from it")
 
 with guard():
@@ -38,7 +64,7 @@ with tab_s:
         st.info("The store is empty. Refresh it below, or import a file.")
     c1, c2 = st.columns(2)
     with c1:
-        st.markdown("**Refresh from the IMF and FRED**")
+        st.markdown("**Refresh from the IMF, BIS, World Bank and FRED**")
         ds = pd.DataFrame(cat["datasets"])
         groups = sorted(ds["group"].unique())
         g = st.multiselect("Dataset groups", groups, [],
@@ -47,13 +73,33 @@ with tab_s:
         fred = st.text_input("FRED API key (optional)", type="password")
         lab = st.text_input("Label", placeholder="e.g. WEO October 2026")
         if st.button("Refresh", type="primary"):
-            with st.spinner("Fetching every dataset (a few minutes)…"):
+            import time
+            with guard():
+                job = api.macro_refresh({"groups": g or None, "fred_key": fred or None,
+                                         "label": lab, "all_datasets": allds})["job"]
+            bar = st.progress(0.0, text="Starting…")
+            n_ds = max(1, len(ds) + 3)
+            while True:
                 with guard():
-                    r = api.macro_refresh({"groups": g or None, "fred_key": fred or None,
-                                           "label": lab, "all_datasets": allds})
-            st.success(f"Saved vintage {r.get('vintage')}: {r.get('series', 0):,} series.",
-                       icon="✅")
-            stt["log"] = r.get("log") or []
+                    j = api.macro_refresh_status(job)
+                bar.progress(min(len(j["steps"]) / n_ds, 0.99), text=j["step"] or "Starting…")
+                if j["status"] != "running":
+                    break
+                time.sleep(2)
+            bar.empty()
+            if j["status"] == "failed":
+                st.error(j["error"])
+            else:
+                r = j["result"]
+                st.success(f"Saved vintage {r.get('vintage')}: {r.get('series', 0):,} series, "
+                           f"{r.get('observations', 0):,} values.", icon="✅")
+                stt["log"] = r.get("log") or []
+                bad = [x for x in stt["log"] if x.get("status") == "failed"]
+                if bad:
+                    st.warning("Not fetched, the previous copy kept: "
+                               + "; ".join(f"{x.get('dataset')} ({str(x.get('error'))[:120]})"
+                                           for x in bad), icon="⚠️")
+                api.clear()
     with c2:
         st.markdown("**Import a file**")
         f = st.file_uploader("CSV or Excel: long (date, value) or wide (series by column)",
@@ -99,7 +145,7 @@ with tab_v:
             cv = api.macro_concept(cid)
         vals = pd.DataFrame(cv["values"])
         if len(vals):
-            line(vals, "year", "value", title=f"{pick} · {cv['series_id']}")
+            history_and_forecast(vals, f"{pick} · {cv['series_id']}")
             caption(f"Standard deviation of the actual years: {cv['sd']:.2f}. "
                     "A shock in standard deviations uses this.")
 
@@ -109,8 +155,8 @@ with tab_f:
     q = c[0].text_input("Search", placeholder="e.g. oil, credit, NPL, policy rate")
     ctry_opts = [""] + [r["code"] for r in cat["countries"]]
     qc = c[1].selectbox("Country", ctry_opts, format_func=lambda x: x or "any")
-    qs = c[2].selectbox("Source", ["", "IMF", "DM", "DBN", "FRED", "STATIC", "QCB", "NPC",
-                                   "MOF"], format_func=lambda x: x or "any")
+    qs = c[2].selectbox("Source", ["", "IMF", "BIS", "WB", "FRED", "DM", "DBNOMICS", "STATIC",
+                                   "QCB", "NPC", "MOF"], format_func=lambda x: x or "any")
     if q or qc or qs:
         with guard():
             hits = pd.DataFrame(api.macro_search(q, qc or None, qs or None))
@@ -125,7 +171,7 @@ with tab_f:
                 ser = api.macro_series(sid)
             an = pd.DataFrame(ser["annual"])
             if len(an):
-                line(an, "year", "value", title=ser["series"].get("name", sid))
+                history_and_forecast(an, ser["series"].get("name", sid))
 
 # ----------------------------------------------------------- new quarter --
 with tab_q:

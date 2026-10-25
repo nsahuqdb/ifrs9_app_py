@@ -255,7 +255,8 @@ simulated paths for the provision's 95th and 99th percentiles and the credit
 loss from customer default draws; **Reverse stress** finds the most likely
 path to a given increase. Scenarios are saved to `config/stress_scenarios.yml`,
 shared with the R app. **Macro data** keeps the store (`macro_store/`, or
-`IFRS9_MACRO_STORE`): a refresh fetches every dataset as a new vintage, files
+`IFRS9_MACRO_STORE`): a refresh fetches every dataset -- the IMF's, the BIS's,
+the World Bank's and FRED's, none needing a key -- as a new vintage, files
 from QCB, the Planning and Statistics Authority and the Ministry of Finance are
 imported, and **New quarter** proposes the forecasts and history a config needs
 and writes them into a draft config version for testing and approval.

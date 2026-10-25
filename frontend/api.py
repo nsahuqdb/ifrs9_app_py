@@ -806,7 +806,11 @@ def macro_catalogue() -> dict:
 
 
 def macro_refresh(payload: dict) -> dict:
-    return post("/macro/refresh", payload, _timeout=LONG)
+    return post("/macro/refresh", payload)
+
+
+def macro_refresh_status(job: str) -> dict:
+    return get(f"/macro/refresh/{job}")
 
 
 def macro_import(file, source: str, dataset: str, country: str = "", freq: str = "",
