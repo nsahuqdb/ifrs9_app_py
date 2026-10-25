@@ -813,6 +813,10 @@ def macro_refresh_status(job: str) -> dict:
     return get(f"/macro/refresh/{job}")
 
 
+def macro_refresh_jobs() -> list:
+    return get("/macro/refresh")
+
+
 def macro_import(file, source: str, dataset: str, country: str = "", freq: str = "",
                  unit: str = "", label: str = "") -> dict:
     try:

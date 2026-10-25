@@ -99,7 +99,11 @@ def do_refresh(body: RefreshIn) -> dict:
     import threading
     import uuid
     job = uuid.uuid4().hex[:12]
-    _JOBS[job] = {"status": "running", "steps": [], "result": None, "error": None}
+    if any(v["status"] == "running" for v in _JOBS.values()):
+        raise HTTPException(409, "A refresh is already running.")
+    import datetime as _dt
+    _JOBS[job] = {"status": "running", "steps": [], "result": None, "error": None,
+                  "started": _dt.datetime.now().strftime("%H:%M:%S")}
 
     def work():
         try:
@@ -113,6 +117,13 @@ def do_refresh(body: RefreshIn) -> dict:
             _JOBS[job].update(status="failed", error=str(exc))
     threading.Thread(target=work, daemon=True).start()
     return {"job": job}
+
+
+@router.get("/macro/refresh")
+def refresh_jobs() -> list[dict]:
+    """Every refresh started since the backend started, the latest first."""
+    return [{"job": k, "status": v["status"], "started": v.get("started"),
+             "step": (v["steps"] or [""])[-1]} for k, v in reversed(list(_JOBS.items()))]
 
 
 @router.get("/macro/refresh/{job}")

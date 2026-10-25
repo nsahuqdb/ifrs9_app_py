@@ -72,21 +72,33 @@ with tab_s:
         allds = st.toggle("Also the datasets not fetched by default", value=False)
         fred = st.text_input("FRED API key (optional)", type="password")
         lab = st.text_input("Label", placeholder="e.g. WEO October 2026")
-        if st.button("Refresh", type="primary"):
-            import time
+        with guard():
+            running = [x for x in api.macro_refresh_jobs() if x["status"] == "running"]
+        job = running[0]["job"] if running else None
+        if job is None and st.button("Refresh", type="primary"):
             with guard():
                 job = api.macro_refresh({"groups": g or None, "fred_key": fred or None,
                                          "label": lab, "all_datasets": allds})["job"]
+        if job is not None:
+            import time
+            if running:
+                caption(f"A refresh started at {running[0].get('started')} is running.")
             bar = st.progress(0.0, text="Starting…")
-            n_ds = max(1, len(ds) + 3)
+            done_box = st.empty()
+            n_ds = max(1, 2 * (len(ds[ds["fetch"].str.lower() == "yes"]) + 2) if not allds
+                       else 2 * (len(ds) + 2))
             while True:
                 with guard():
                     j = api.macro_refresh_status(job)
                 bar.progress(min(len(j["steps"]) / n_ds, 0.99), text=j["step"] or "Starting…")
+                ended = [x for x in j["steps"] if not x.endswith(": fetching")]
+                if ended:
+                    done_box.caption(" · ".join(ended[-8:]))
                 if j["status"] != "running":
                     break
                 time.sleep(2)
             bar.empty()
+            done_box.empty()
             if j["status"] == "failed":
                 st.error(j["error"])
             else:
