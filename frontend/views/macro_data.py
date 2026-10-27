@@ -50,7 +50,8 @@ with guard():
     stt = api.macro_status()
     cat = api.macro_catalogue()
 
-tab_s, tab_v, tab_f, tab_q = st.tabs(["Store", "Variables", "Find a series", "New quarter"])
+tab_s, tab_v, tab_l, tab_f, tab_q = st.tabs(["Store", "Variables", "Linked effects",
+                                             "Find a series", "New quarter"])
 
 # ---------------------------------------------------------------- store --
 with tab_s:
@@ -149,7 +150,7 @@ with tab_v:
         show["last_year"] = show["last_year"].map(lambda v: "" if pd.isna(v) else int(v))
         show["series_id"] = show["series_id"].fillna("— not in the store")
         st.dataframe(show.rename(columns={"label": "variable", "series_id": "from",
-                                          "last_actual": "last actual", "core": "in the VAR"}),
+                                          "last_actual": "last actual"}),
                      use_container_width=True, hide_index=True)
         pick = st.selectbox("Show", cn.loc[cn["series_id"].notna(), "label"])
         cid = cn.loc[cn["label"] == pick, "concept"].iloc[0]
@@ -158,8 +159,37 @@ with tab_v:
         vals = pd.DataFrame(cv["values"])
         if len(vals):
             history_and_forecast(vals, f"{pick} · {cv['series_id']}")
-            caption(f"Standard deviation of the actual years: {cv['sd']:.2f}. "
-                    "A shock in standard deviations uses this.")
+            caption(f"Standard deviation of the actual years: {cv['sd']:.2f}.")
+
+# ------------------------------------------------------- linked effects --
+with tab_l:
+    with st.spinner("Fitting the linked effects…"):
+        with guard():
+            sy = api.scn_system()
+    caption(f"How a scenario's main variables move the others, estimated on vintage "
+            f"{sy['vintage']} (outturns only). Each effect is averaged over every "
+            "combination of the candidate drivers, weighted by how well each fits; "
+            "*evidence* is the weight of the combinations that include it. A variable "
+            "can move the ones below it in the same year, and any other a year later.")
+    t = pd.DataFrame(sy["table"])
+    if len(t):
+        t = t[(t["effect"].isna()) | (t["inclusion"].fillna(0) >= 0.05)].copy()
+        t["effect"] = t["effect"].map(lambda v: "" if pd.isna(v) else f"{v:+.3f}")
+        t["inclusion"] = t["inclusion"].map(lambda v: "" if pd.isna(v) else f"{100 * v:.0f}%")
+        st.dataframe(t.rename(columns={"driver": "moved by", "timing": "when",
+                                       "inclusion": "evidence", "per": "unit",
+                                       "sample": "data"}),
+                     use_container_width=True, hide_index=True, height=35 * len(t) + 38)
+        caption("Drivers with under 5% evidence are left out of the table; they are "
+                "still in the averages, at their small weight.")
+    lc = pd.DataFrame(sy.get("library_check") or [])
+    if len(lc):
+        with st.expander("The library's historical shocks, recomputed on this vintage"):
+            lc["library"] = lc["library"].map(lambda v: ", ".join(f"{x:+.2f}" for x in v))
+            lc["store"] = lc["store"].map(lambda v: "not in the store" if v is None
+                                          else ", ".join(f"{x:+.2f}" for x in v))
+            st.dataframe(lc.rename(columns={"largest_gap": "largest gap"}),
+                         use_container_width=True, hide_index=True)
 
 # ---------------------------------------------------------- find series --
 with tab_f:

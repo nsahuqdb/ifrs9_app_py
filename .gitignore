@@ -34,3 +34,5 @@ config_snapshots/
 
 # The macro store: fetched data, a deployment keeps its own vintages
 macro_store/
+# Saved stress scenarios: the deployment's own database
+scenarios/

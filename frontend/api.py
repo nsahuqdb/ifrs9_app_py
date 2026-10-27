@@ -859,30 +859,54 @@ def _v(vintage):
     return {"vintage": vintage} if vintage else {}
 
 
+@st.cache_data(ttl=60, show_spinner=False)
 def scn_setup(vintage: str | None = None) -> dict:
     return get("/scenarios/setup", _timeout=LONG, **_v(vintage))
 
 
-def scn_saved_put(scenarios: list) -> dict:
-    return request("PUT", "/scenarios/saved", {"scenarios": scenarios})
+@st.cache_data(ttl=3600, show_spinner=False)
+def scn_history(sid: str, vintage: str | None = None) -> dict:
+    return get(f"/scenarios/library/{sid}/history", _timeout=LONG, **_v(vintage))
 
 
-def scn_preview(scenario: dict, vintage: str | None, first_year: int | None) -> dict:
+def scn_preview(scenario: dict, vintage: str | None = None,
+                first_year: int | None = None) -> dict:
     return post("/scenarios/preview", {"scenario": scenario, "vintage": vintage,
-                                       "first_year": first_year})
+                                       "first_year": first_year}, _timeout=LONG)
+
+
+def scn_save_new(scenario: dict, user: str | None = None) -> dict:
+    return post("/scenarios/saved", {"scenario": scenario, "user": user})
+
+
+def scn_save_version(sid: str, scenario: dict, user: str | None = None) -> dict:
+    return request("PUT", f"/scenarios/saved/{sid}", {"scenario": scenario, "user": user})
+
+
+def scn_delete(sid: str) -> dict:
+    return request("DELETE", f"/scenarios/saved/{sid}")
+
+
+def scn_saved_history(sid: str) -> list:
+    return get(f"/scenarios/saved/{sid}/history")
+
+
+def scn_system(vintage: str | None = None) -> dict:
+    return get("/scenarios/system", _timeout=LONG, **_v(vintage))
 
 
 def scn_context(run_id: str, vintage: str | None = None) -> dict:
     return get(f"/scenarios/{run_id}/context", _timeout=LONG, **_v(vintage))
 
 
-def scn_run(run_id: str, scenario: dict, vintage: str | None = None) -> dict:
-    return post(f"/scenarios/{run_id}/run", {"scenario": scenario, "vintage": vintage},
+@st.cache_data(ttl=600, show_spinner=False)
+def scn_price(run_id: str, scenario: dict, vintage: str | None = None) -> dict:
+    return post(f"/scenarios/{run_id}/price", {"scenario": scenario, "vintage": vintage},
                 _timeout=LONG)
 
 
-def scn_shapley(run_id: str, scenario: dict, vintage: str | None = None) -> dict:
-    return post(f"/scenarios/{run_id}/shapley", {"scenario": scenario, "vintage": vintage},
+def scn_drivers(run_id: str, scenario: dict, vintage: str | None = None) -> dict:
+    return post(f"/scenarios/{run_id}/drivers", {"scenario": scenario, "vintage": vintage},
                 _timeout=LONG)
 
 
@@ -891,10 +915,23 @@ def scn_compare(run_id: str, scenarios: list, vintage: str | None = None) -> dic
                 _timeout=LONG)
 
 
-def scn_sensitivity(run_id: str, size_sd: float, knock_on: bool,
-                    vintage: str | None = None) -> dict:
-    return get(f"/scenarios/{run_id}/sensitivity", _timeout=LONG, size_sd=size_sd,
-               knock_on=str(knock_on).lower(), **_v(vintage))
+def scn_sensitivity(run_id: str, size_sd: float = 1.0, shape: str = "one_year",
+                    linked: bool = True, vintage: str | None = None) -> dict:
+    return post(f"/scenarios/{run_id}/sensitivity",
+                {"size_sd": size_sd, "shape": shape, "linked": linked, "vintage": vintage},
+                _timeout=LONG)
+
+
+def scn_curve(run_id: str, variable: str, shape: str = "one_year", linked: bool = True,
+              vintage: str | None = None) -> dict:
+    return post(f"/scenarios/{run_id}/sensitivity/curve",
+                {"variable": variable, "shape": shape, "linked": linked, "vintage": vintage},
+                _timeout=LONG)
+
+
+def scn_pd_link(run_id: str, scenario: dict, vintage: str | None = None) -> dict:
+    return post(f"/scenarios/{run_id}/pd_link", {"scenario": scenario, "vintage": vintage},
+                _timeout=LONG)
 
 
 def scn_risk(run_id: str, paths: int, seed: int, threshold: float | None,

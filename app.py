@@ -30,7 +30,9 @@ import ui  # noqa: E402
 # re-read on every rerun, these are not. After a code update a page could then
 # call a function the old module does not have. Reload either when its file
 # has changed since it was loaded.
-for _mod in (api, ui):
+import scenario_ui  # noqa: E402
+
+for _mod in (api, ui, scenario_ui):
     _mtime = Path(_mod.__file__).stat().st_mtime
     if getattr(_mod, "_loaded_mtime", _mtime) != _mtime:
         importlib.reload(_mod)
@@ -97,19 +99,17 @@ pages = {
         st.Page(P + "reconcile.py", title="Reconcile & export",
                 icon=":material/compare_arrows:"),
     ],
-    # One stress function behind every page (ifrs9qdb.stress.apply_stress):
-    # a stress test names who it reaches and what changes, so a what-if on
-    # named customers, a staging-policy change and a standard package are all
-    # stress tests; the sensitivity pages move its levers one at a time.
+    # Two kinds of stress, apart: a parameter stress moves the model's own
+    # parameters (one stress function, ifrs9qdb.stress.apply_stress, behind
+    # its four views); a scenario stress carries a macro scenario through its
+    # linked effects to the provision (ifrs9qdb.stresstest). The library is
+    # where scenarios are read and built, Macro data where their data live.
     "Stress testing": [
-        st.Page(P + "stress.py", title="Stress test", icon=":material/bolt:"),
+        st.Page(P + "parameter_stress.py", title="Parameter stress", icon=":material/tune:"),
+        st.Page(P + "scenario_library.py", title="Scenario library",
+                icon=":material/menu_book:"),
         st.Page(P + "scenario_stress.py", title="Scenario stress",
                 icon=":material/thunderstorm:"),
-        st.Page(P + "sensitivity.py", title="Sensitivity",
-                icon=":material/equalizer:"),
-        st.Page(P + "macro.py", title="Macro & scenarios", icon=":material/public:"),
-        st.Page(P + "rollforward.py", title="Roll forward",
-                icon=":material/fast_forward:"),
         st.Page(P + "macro_data.py", title="Macro data", icon=":material/database:"),
     ],
     "Governance": [
@@ -137,7 +137,7 @@ pages = {
 # without one.
 NEEDS_RUN = {"Overview", "Staging", "Concentration", "Segments",
              "Risk parameters", "Scenarios", "Data quality", "Validation",
-             "Stress test", "Scenario stress", "Sensitivity", "Macro & scenarios", "Roll forward",
+             "Parameter stress", "Scenario stress",
              "Model assumptions", "ECL calculator"}
 COMPARES = {"Movement", "Migration", "Reconcile & export"}
 OPTIONAL_RUN = {"ECL overlays", "Assistant", "Audit log"}
@@ -161,4 +161,7 @@ if (nav.title in NEEDS_RUN | COMPARES) and not ids:
     ui.no_runs(nav.title, runs, pages["Runs"][0])
     st.stop()
 
+# a page that draws other views inside itself (Parameter stress) marks them
+# embedded while they run; every run starts unmarked
+S["_embedded"] = False
 nav.run()

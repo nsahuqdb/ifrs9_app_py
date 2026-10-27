@@ -186,8 +186,8 @@ The pages, grouped as in the navigation: **Runs** (run the pipeline, browse
 runs, validation, approval queue); **Portfolio** (overview, staging, risk
 parameters, concentration, segments, scenarios, data quality);
 **Comparison** (movement, migration, reconcile & export);
-**Stress testing** (stress test, scenario stress, sensitivity, macro &
-scenarios, roll forward, macro data); **Governance** (config versions, calculator versions, ECL overlays,
+**Stress testing** (parameter stress, scenario library, scenario stress,
+macro data); **Governance** (config versions, calculator versions, ECL overlays,
 validation suppressions, live configuration, model assumptions, audit log);
 and **Help** (assistant, how this works). The menu holding the page on screen
 is highlighted, as the page is in its list.
@@ -196,8 +196,8 @@ is highlighted, as the page is in its list.
 read on the run's own policy (its frozen Stage 2 DPD threshold), and the
 scenarios page shows the five scenario provisions behind the weighted figure.
 What a different threshold or a different weighting would cost is a stress
-question, on **Stress testing → Sensitivity** (Staging threshold) and **Macro &
-scenarios**.
+question, on **Stress testing → Parameter stress** (Lever sensitivity, Forecast
+and weights).
 **Risk parameters** has one tab each for PD (by stage, portfolio, rating or
 account type, and the term structure), LGD & collateral, and exposure
 (remaining maturity, ticket size, origination year, days past due, and the
@@ -220,41 +220,52 @@ without one shows a single "Macro and model change" step. When the previous
 run was priced by an earlier version of the engine it is first repriced on the
 current one, and that difference is part of Model change.
 
-**Stress testing** is one stress function (`ifrs9qdb.stress.apply_stress`)
-behind four pages. A **Stress test** names who it reaches -- portfolios,
-stages and customer ids, together; an empty one does not narrow it -- and
-what changes for them: the Stage 2 days-past-due threshold and the staging
-triggers, a forced stage, the largest N customers defaulting, a PD multiplier
-or one scenario's PD curves, rating notches, the LGD base and floor,
+**Stress testing** keeps two kinds of stress apart. **Parameter stress** moves
+the model's own parameters through one stress function
+(`ifrs9qdb.stress.apply_stress`), in four views. A **Stress test** names who it
+reaches -- portfolios, stages and customer ids, together; an empty one does not
+narrow it -- and what changes for them: the Stage 2 days-past-due threshold and
+the staging triggers, a forced stage, the largest N customers defaulting, a PD
+multiplier or one scenario's PD curves, rating notches, the LGD base and floor,
 collateral, exposure and maturity. A what-if on named customers, a
 staging-policy change and the standard packages (mild and severe downturn,
 collateral revaluation, staging tightened to 30 days, the largest five
 defaulting) are all stress tests; several are run side by side, and saved to
 the project's `config/stress_packages.yml`, which the R app reads too. Every
-lever reaches the scope and nothing else. **Sensitivity** moves those levers
-one at a time: each lever ranked by effect, how far each must go to reach a
-target increase (reverse stress), and the book at each candidate staging
-threshold. **Macro & scenarios** rebuilds the PD chain from the run's frozen
-config with a shocked forecast or different scenario weights (follow the new
-path, hold the run's, or set your own), and moves ten points onto each
-scenario in turn. **Roll forward** advances the book n months.
+lever reaches the scope and nothing else. **Lever sensitivity** moves those
+levers one at a time: each lever ranked by effect, how far each must go to
+reach a target increase, and the book at each candidate staging threshold.
+**Forecast and weights** rebuilds the PD chain from the run's frozen config
+with a shocked forecast or different scenario weights (follow the new path,
+hold the run's, or set your own), and moves ten points onto each scenario in
+turn. **Roll forward** advances the book n months.
 
-**Scenario stress** shocks any variable of the macro store -- oil and LNG
-prices, GCC growth, US and Qatar rates, government spending, property, credit,
-China and world growth -- alone or several at once, each with a size (in its
-own unit or in standard deviations) and a shape over the five forecast years.
-The macro model moves every other variable with the shocks unless that is
-switched off, and says how unusual the combination is (1 in N). The paths reach
-the book through the PD model's drivers, a credit factor by sector, ratings and
-stages, collateral, rates, drawn exposure and the external book
-(`config/stress.yml`, packaged default otherwise), and a saved package can be
-added on top. The result is a waterfall by channel, by sector and portfolio,
-and a split of the change by shock; several scenarios compare side by side;
-**Sensitivity** moves each variable alone; **ECL at risk** prices thousands of
-simulated paths for the provision's 95th and 99th percentiles and the credit
-loss from customer default draws; **Reverse stress** finds the most likely
-path to a given increase. Scenarios are saved to `config/stress_scenarios.yml`,
-shared with the R app. **Macro data** keeps the store (`macro_store/`, or
+A **scenario stress** is a macro scenario. It sets a few main variables -- world
+growth, the oil price, the US rate, Qatar's real government spending, non-oil
+growth, real private credit, property prices, GCC growth -- year by year as a
+change from the baseline forecast, and the linked effects move the rest: a
+recursive system estimated on the macro store's outturns (Bayesian model
+averaging with sign restrictions, a GCC panel with country effects;
+`ifrs9qdb.macro.system`), so a credit crunch reaches non-oil growth a year
+later and from there the PD model and the stages. **Scenario library** holds
+the pre-built scenarios -- historical episodes replayed from the data (1986,
+1990-91, 1998, 2001, 2009, 2015-16, the 2017 blockade, COVID, the Fed's 1994
+and 2022-23 tightening, the 2016-20 property correction), the Fed's and the
+EBA's adverse scenarios, what-ifs -- each with its story and source, a chart of
+how every variable moved through the episode, and its path against the
+baseline. Edit any of them, or start blank, to build your own: main variables
+in a table (one year, recovers, held, or year by year), the linked variables
+chosen but never typed in. A library scenario is never changed; an edited one
+is saved under a new name to the project's scenario database
+(`scenarios/scenarios.sqlite`, or `IFRS9_SCENARIOS_DB`), every save kept as a
+version. **Scenario stress** prices them on the run through three channels --
+the PD model (non-oil GDP for the internal book, GCC growth for the external),
+stage moves (QDB's own Stage 1 to 2 history, plus a deferral programme's share)
+and property collateral (`config/stress.yml`, packaged default otherwise) --
+with tabs to price one, compare several, see each variable's sensitivity, the
+**ECL at risk** over thousands of simulated paths (with the credit loss from
+customer default draws), and **reverse stress**: how far each scenario must be
+scaled, or each variable move, to reach a given increase. **Macro data** keeps the store (`macro_store/`, or
 `IFRS9_MACRO_STORE`): a refresh fetches every dataset -- the IMF's, the BIS's,
 the World Bank's and FRED's, none needing a key -- as a new vintage, files
 from QCB, the Planning and Statistics Authority and the Ministry of Finance are

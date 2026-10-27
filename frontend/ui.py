@@ -416,6 +416,12 @@ def page_setup(title: str, subtitle: str | None = None) -> None:
     at its right (and the comparison run beside it where the page compares
     two), so which run is on screen is never out of sight."""
     S = st.session_state
+    if S.get("_embedded"):
+        # a view drawn inside another page (Parameter stress): the page has
+        # its own title row and run picker; this one says what the view does
+        if subtitle:
+            caption(subtitle)
+        return
     sub = f'<div class="pg-sub">{md(subtitle)}</div>' if subtitle else ""
     head = (f'<div class="pg-head"><div class="pg-title">{esc(title)}</div>'
             f'{sub}</div>')

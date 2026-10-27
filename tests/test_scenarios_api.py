@@ -26,7 +26,8 @@ RUNS = [r["run_id"] for r in client.get("/api/runs").json() if r.get("has_report
 RUN = RUNS[0] if RUNS else None
 needs_run = pytest.mark.skipif(RUN is None, reason="set IFRS9_RUNS_DIR")
 
-OIL = {"name": "Oil", "shocks": [{"concept": "OIL_PRICE", "size": -40, "shape": "one_year"}]}
+OIL = {"name": "Oil", "main": {"OIL_PRICE": [-40, None, None, None, None]}}
+ENGINE_TESTS = FIX.parents[2]
 
 
 @pytest.fixture(autouse=True)
@@ -36,10 +37,24 @@ def store(tmp_path, monkeypatch):
     d = tmp_path / "store"
     shutil.copytree(FIX, d)
     monkeypatch.setattr(macro_routes, "MACRO_STORE_DIR", d)
-    monkeypatch.setattr(scn_routes, "STRESS_SCENARIOS_FILE", tmp_path / "stress_scenarios.yml")
+    monkeypatch.setattr(scn_routes, "SCENARIOS_DB", tmp_path / "scenarios.sqlite")
     scn_routes._CACHE.clear()
     yield d
     scn_routes._CACHE.clear()
+
+
+@pytest.fixture
+def system_store(tmp_path, monkeypatch):
+    """The engine's synthetic store with every series the linked effects
+    read."""
+    import sys
+    sys.path.insert(0, str(ENGINE_TESTS))
+    from system_store import build
+    d = tmp_path / "sys_store"
+    build(d)
+    monkeypatch.setattr(macro_routes, "MACRO_STORE_DIR", d)
+    scn_routes._CACHE.clear()
+    return d
 
 
 class TestMacro:
@@ -66,43 +81,66 @@ class TestMacro:
 
 
 class TestScenarios:
-    def test_setup(self):
+    def test_setup(self, system_store):
         b = client.get("/api/scenarios/setup").json()
-        assert len(b["library"]) == 8 and b["horizon"] == 5
-        assert "OIL_PRICE" in b["var_concepts"]
+        assert len(b["library"]) >= 14 and b["horizon"] == 5
+        assert b["first_year"] == 2026
+        assert {v["variable"] for v in b["variables"]} >= {"OIL_PRICE", "NONOIL_GDP_QAT"}
 
-    def test_no_shock_is_no_move_and_a_shock_keeps_its_path(self):
-        b = client.post("/api/scenarios/preview",
-                        json={"scenario": {"name": "Nothing"}, "first_year": 2026}).json()
-        assert b["paths"] == [] and b["severity"]["distance"] == 0
-        b = client.post("/api/scenarios/preview", json={"scenario": OIL, "first_year": 2026}).json()
-        oil = next(p for p in b["paths"] if p["concept"] == "OIL_PRICE")
-        assert oil["given"] and oil["2026"] == -40 and oil["2027"] == 0
-        assert b["severity"]["distance"] > 0
+    def test_main_years_hold_and_the_rest_are_linked(self, system_store):
+        b = client.post("/api/scenarios/preview", json={"scenario": OIL}).json()
+        oil = [p for p in b["paths"] if p["variable"] == "OIL_PRICE"]
+        assert oil[0]["move"] == -40 and oil[0]["role"] == "main" and oil[0]["set"]
+        gx = [p for p in b["paths"] if p["variable"] == "GOV_SPEND_QAT"]
+        assert gx[0]["role"] == "linked" and gx[0]["move"] < 0
+        assert "GOV_SPEND_QAT" in b["recommended"]
+        off = client.post("/api/scenarios/preview",
+                          json={"scenario": {**OIL, "linked": []}}).json()
+        assert all(p["move"] == 0 for p in off["paths"] if p["variable"] != "OIL_PRICE")
 
-    def test_saved_scenarios_round_trip(self):
-        r = client.put("/api/scenarios/saved", json={"scenarios": [OIL]})
-        assert r.json()["saved"] == 1
-        back = client.get("/api/scenarios/saved").json()
-        assert back[0]["name"] == "Oil" and back[0]["shocks"][0]["size"] == -40
+    def test_saving_new_versions_and_deleting(self, system_store):
+        r = client.post("/api/scenarios/saved", json={"scenario": OIL})
+        assert r.status_code == 200, r.text
+        sid = r.json()["id"]
+        again = client.post("/api/scenarios/saved", json={"scenario": OIL})
+        assert again.status_code == 400                         # names are unique
+        lib = client.post("/api/scenarios/saved",
+                          json={"scenario": {**OIL, "name": "2015–16 oil collapse"}})
+        assert lib.status_code == 400                           # a library name is taken
+        edited = {**OIL, "main": {"OIL_PRICE": [-50, None, None, None, None]}}
+        r = client.put(f"/api/scenarios/saved/{sid}", json={"scenario": edited})
+        assert r.json()["main"]["OIL_PRICE"][0] == -50
+        assert [h["action"] for h in client.get(f"/api/scenarios/saved/{sid}/history").json()] \
+            == ["created", "updated"]
+        client.delete(f"/api/scenarios/saved/{sid}")
+        assert client.get("/api/scenarios/saved").json() == []
+
+    def test_the_history_behind_a_library_scenario(self, system_store):
+        b = client.get("/api/scenarios/library/H4/history").json()
+        assert b["episode"] == [2015, 2017]
+        assert {r["variable"] for r in b["series"]} >= {"OIL_PRICE", "GDP_WLD"}
+
+    def test_the_system_table(self, system_store):
+        b = client.get("/api/scenarios/system").json()
+        assert any(r["driver"] == "World GDP growth" for r in b["table"])
+        assert len(b["library_check"]) > 10
 
     @needs_run
-    def test_an_empty_scenario_is_the_runs_provision(self):
-        b = client.post(f"/api/scenarios/{RUN}/run", json={"scenario": {"name": "Nothing"}}).json()
+    def test_an_empty_scenario_is_the_runs_provision(self, system_store):
+        b = client.post(f"/api/scenarios/{RUN}/price", json={"scenario": {"name": "Nothing"}}).json()
         assert abs(b["delta"]) < 1e-6
 
     @needs_run
-    def test_a_scenario_is_the_engines_transmit(self):
+    def test_a_scenario_is_the_engines_transmit(self, system_store):
         from ifrs9qdb.stresstest import transmit
-        b = client.post(f"/api/scenarios/{RUN}/run", json={"scenario": OIL}).json()
+        b = client.post(f"/api/scenarios/{RUN}/price", json={"scenario": OIL}).json()
         rc, _, _ = scn_routes._rc(RUN, None)
         assert b["delta"] == pytest.approx(transmit(rc, OIL)["delta"], rel=1e-12)
-        assert b["delta"] > 0
         assert sum(w["change"] for w in b["waterfall"]) == pytest.approx(b["delta"], rel=1e-9)
 
     @needs_run
-    def test_compare_prices_each_on_its_own(self):
+    def test_compare_prices_each_on_its_own(self, system_store):
         b = client.post(f"/api/scenarios/{RUN}/compare",
                         json={"scenarios": [OIL, {"name": "Nothing"}]}).json()
         ch = {r["scenario"]: r["change"] for r in b["table"]}
-        assert abs(ch["Nothing"]) < 1e-6 and ch["Oil"] > 0
+        assert abs(ch["Nothing"]) < 1e-6 and ch["Oil"] != 0

@@ -32,14 +32,15 @@ st.markdown("""
 | --- | --- |
 | How much, and where does it sit? | Overview, Staging, Concentration |
 | What is it made of? | Risk parameters |
-| What would a worse world cost? | Scenarios, Macro & scenarios |
+| What would a worse world cost? | Scenarios, Scenario stress |
 | How much did it move, and *why*? | Movement |
 | Who moved? | Migration |
 | What assumptions produced it? | Model assumptions |
-| What if these customers, or this portfolio, deteriorated? | Stress test |
-| What would a different staging policy cost? | Stress test, Sensitivity (Staging threshold) |
-| Which lever matters most, and how far would it have to go? | Sensitivity |
-| What would different scenario weights cost? | Macro & scenarios |
+| What if these customers, or this portfolio, deteriorated? | Parameter stress (Stress test) |
+| What would a different staging policy cost? | Parameter stress (Stress test, Lever sensitivity) |
+| Which lever matters most, and how far would it have to go? | Parameter stress (Lever sensitivity) |
+| What would different scenario weights cost? | Parameter stress (Forecast and weights) |
+| What would a past crisis, or a supervisor's scenario, cost today? | Scenario library, Scenario stress |
 | How is the book spread? | Risk parameters (Exposure), Segments |
 | Is the run safe to sign? | Validation |
 | Anything, in plain language | Assistant |
@@ -59,7 +60,15 @@ change and a standard package are all stress tests, priced by one engine
 function, and every lever reaches the scope and nothing else. Several run side
 by side; saved ones are shared with the R app.
 
-**Macro & scenarios rebuilds the whole PD chain** from the config the run
+**A scenario stress is a macro scenario.** It sets a few main variables --
+the oil price, world growth, the US rate, Qatar's spending, credit or
+property -- and the linked effects, estimated on the macro data, move the
+rest: a credit crunch reaches non-oil growth a year later, and from there the
+PD model and the stages. The library holds historical episodes replayed from
+the data, supervisors' scenarios and what-ifs; edit any of them to build your
+own.
+
+**Forecast and weights rebuilds the whole PD chain** from the config the run
 froze, with the forecast or the scenario weights edited. The scenario-weight switch on that page is not a
 detail: the internal weights are derived from the first forecast years of the
 same matrix, so editing non-oil GDP moves the weights *and* the curves, and
