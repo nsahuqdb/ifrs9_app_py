@@ -26,7 +26,10 @@ RUNS = [r["run_id"] for r in client.get("/api/runs").json() if r.get("has_report
 RUN = RUNS[0] if RUNS else None
 needs_run = pytest.mark.skipif(RUN is None, reason="set IFRS9_RUNS_DIR")
 
-OIL = {"name": "Oil", "main": {"OIL_PRICE": [-40, None, None, None, None]}}
+OIL = {"name": "Oil", "main": {"OIL_PRICE": [-40, None, None, None, None]},
+       "description": "Oil falls 40%.", "history": "Sized on 2009.",
+       "narrative": "Oil falls in Y1 and the rest follows.",
+       "why": {"OIL_PRICE": "The 2009 fall."}}
 ENGINE_TESTS = FIX.parents[2]
 
 
@@ -98,6 +101,14 @@ class TestScenarios:
                           json={"scenario": {**OIL, "linked": []}}).json()
         assert all(p["move"] == 0 for p in off["paths"] if p["variable"] != "OIL_PRICE")
 
+    def test_saving_needs_the_reasons(self, system_store):
+        bare = {"name": "Bare", "main": {"OIL_PRICE": [-40, None, None, None, None]}}
+        r = client.post("/api/scenarios/saved", json={"scenario": bare})
+        assert r.status_code == 400 and "what it captures" in r.json()["detail"]
+        r = client.post("/api/scenarios/saved",
+                        json={"scenario": {**OIL, "why": {}}})
+        assert r.status_code == 400 and "why OIL_PRICE" in r.json()["detail"]
+
     def test_saving_new_versions_and_deleting(self, system_store):
         r = client.post("/api/scenarios/saved", json={"scenario": OIL})
         assert r.status_code == 200, r.text
@@ -119,6 +130,18 @@ class TestScenarios:
         b = client.get("/api/scenarios/library/H4/history").json()
         assert b["episode"] == [2015, 2017]
         assert {r["variable"] for r in b["series"]} >= {"OIL_PRICE", "GDP_WLD"}
+
+    def test_a_shock_is_derived_and_explained(self, system_store):
+        d = client.get("/api/scenarios/library/H1/derivation").json()["rows"]
+        w = [r for r in d if r["variable"] == "GDP_WLD"]
+        assert w[0]["year"] == 1986 and w[0]["reference_year"] == 1985
+        assert w[0]["shock"] == -0.29                            # the library's number
+        assert isinstance(w[0]["recorded"], float) and isinstance(w[0]["reference"], float)
+        b = client.post("/api/scenarios/preview", json={"scenario": OIL}).json()
+        ex = b["explain"]
+        gx = sum(r["part"] for r in ex if r["variable"] == "GOV_SPEND_QAT" and r["year"] == 1)
+        p = next(r for r in b["paths"] if r["variable"] == "GOV_SPEND_QAT")
+        assert gx == pytest.approx(p["move"])
 
     def test_the_system_table(self, system_store):
         b = client.get("/api/scenarios/system").json()

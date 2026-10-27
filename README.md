@@ -242,27 +242,36 @@ turn. **Roll forward** advances the book n months.
 
 A **scenario stress** is a macro scenario. It sets a few main variables -- world
 growth, the oil price, the US rate, Qatar's real government spending, non-oil
-growth, real private credit, property prices, GCC growth -- year by year as a
-change from the baseline forecast, and the linked effects move the rest: a
+growth, real private credit, property prices, GCC growth -- year by year (Y1
+to Y5, Y1 being the first forecast year of whichever run it is priced on) as a
+shock to the run's own forecast, and the linked effects move the rest: a
 recursive system estimated on the macro store's outturns (Bayesian model
 averaging with sign restrictions, a GCC panel with country effects;
 `ifrs9qdb.macro.system`), so a credit crunch reaches non-oil growth a year
 later and from there the PD model and the stages. **Scenario library** holds
-the pre-built scenarios -- historical episodes replayed from the data (1986,
-1990-91, 1998, 2001, 2009, 2015-16, the 2017 blockade, COVID, the Fed's 1994
-and 2022-23 tightening, the 2016-20 property correction), the Fed's and the
-EBA's adverse scenarios, what-ifs -- each with its story and source, a chart of
-how every variable moved through the episode, and its path against the
-baseline. Edit any of them, or start blank, to build your own: main variables
-in a table (one year, recovers, held, or year by year), the linked variables
-chosen but never typed in. A library scenario is never changed; an edited one
-is saved under a new name to the project's scenario database
-(`scenarios/scenarios.sqlite`, or `IFRS9_SCENARIOS_DB`), every save kept as a
+21 pre-built scenarios -- global episodes replayed from the data (1986, 1994,
+1998, 2001, 2009, 2015-16, COVID, the Fed's 2022-23 tightening), GCC and Qatar
+ones (the 1982-86 oil glut, the 1990-91 Gulf war, the 2015-17 GCC fiscal
+austerity, the 2016-20 property correction, the 2017 blockade, the 2023-24
+post-World Cup normalisation, the IMF's 2026 projection for the Iran war and
+the Hormuz closure), the Fed's and the ESRB's adverse scenarios, and what-ifs.
+Nothing is priced there. Each scenario carries what it captures, how it
+unfolds from Y1, why each main variable is set and how its numbers were
+derived from the data, how it reaches the provision and its sources; with a
+chart of the episode in the data, its shocks year by year and, for every
+linked variable, the drivers' parts that add up to each value. Edit any of
+them, or start blank, to build your own: the same reasons (required before
+saving), main variables in a table with a reason per variable (one year,
+recovers, held, or year by year), the linked variables chosen but never typed
+in. A library scenario is never changed; an edited one is saved under a new
+name to the project's scenario database (`scenarios/scenarios.sqlite`, or
+`IFRS9_SCENARIOS_DB`), every save kept as a
 version. **Scenario stress** prices them on the run through three channels --
 the PD model (non-oil GDP for the internal book, GCC growth for the external),
 stage moves (QDB's own Stage 1 to 2 history, plus a deferral programme's share)
 and property collateral (`config/stress.yml`, packaged default otherwise) --
-with tabs to price one, compare several, see each variable's sensitivity, the
+with tabs to price one (with each variable's forecast and its value under the
+scenario in the run's calendar years), compare several, see each variable's sensitivity, the
 **ECL at risk** over thousands of simulated paths (with the credit loss from
 customer default draws), and **reverse stress**: how far each scenario must be
 scaled, or each variable move, to reach a given increase. **Macro data** keeps the store (`macro_store/`, or

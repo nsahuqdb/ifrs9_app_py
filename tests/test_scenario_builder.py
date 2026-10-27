@@ -30,8 +30,8 @@ def test_a_new_row_is_one_adverse_standard_deviation(t):
     old = t.from_scenario({})
     new = pd.DataFrame([{"Variable": "US policy rate"}], columns=t.cols)
     d, _ = t.settle(new, old)
-    assert d.iloc[0]["Shape"] == "One year" and d.iloc[0]["2026"] == pytest.approx(1.4)
-    assert pd.isna(d.iloc[0]["2027"])
+    assert d.iloc[0]["Shape"] == "One year" and d.iloc[0]["Y1"] == pytest.approx(1.4)
+    assert pd.isna(d.iloc[0]["Y2"])
 
 
 def test_a_shape_redraws_the_years(t):
@@ -48,7 +48,7 @@ def test_a_year_typed_in_makes_the_row_year_by_year(t):
     old = t.from_scenario({"main": {"OIL_PRICE": [-40, None, None, None, None]},
                            "shapes": {"OIL_PRICE": {"shape": "one_year", "size": -40}}})
     new = old.copy()
-    new.loc[0, "2027"] = -10.0
+    new.loc[0, "Y2"] = -10.0
     d, _ = t.settle(new, old)
     assert d.iloc[0]["Shape"] == "Year by year" and pd.isna(d.iloc[0]["Size"])
     assert t.to_main(d)[0]["OIL_PRICE"][:2] == [-40, -10]
@@ -61,6 +61,15 @@ def test_a_size_on_a_year_by_year_row_makes_it_a_shape(t):
     d, _ = t.settle(new, old)
     assert d.iloc[0]["Shape"] == "One year"
     assert t.to_main(d)[0]["OIL_PRICE"] == [-30, None, None, None, None]
+
+
+def test_the_reason_for_each_variable_is_kept(t):
+    old = t.from_scenario({"main": {"OIL_PRICE": [-40, None, None, None, None]},
+                           "why": {"OIL_PRICE": "As in 2015"}})
+    new = old.copy()
+    new.loc[0, "Shape"] = "Held"
+    d, _ = t.settle(new, old)
+    assert t.to_main(d)[2] == {"OIL_PRICE": "As in 2015"}
 
 
 def test_settling_twice_changes_nothing_and_a_duplicate_is_dropped(t):

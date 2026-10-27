@@ -26,11 +26,11 @@ from pydantic import BaseModel, Field
 
 from ifrs9qdb.macro import refresh
 from ifrs9qdb.macro.system import fit_system
-from ifrs9qdb.stresstest import (CATEGORIES, SHAPES, Scenario, ScenarioStore, library,
-                                 prepare, read_stress_config, transmit)
+from ifrs9qdb.stresstest import (CATEGORIES, REGIONS, SHAPES, Scenario, ScenarioStore,
+                                 library, prepare, read_stress_config, transmit)
 from ifrs9qdb.stresstest import risk as st_risk
 from ifrs9qdb.stresstest.config import config_hash
-from ifrs9qdb.stresstest.library import check_library, episode
+from ifrs9qdb.stresstest.library import check_library, derivation, episode
 
 from ..settings import PROJECT_ROOT, RUNS_DIR, SCENARIOS_DB, current_user
 from .macro import js, store
@@ -153,9 +153,10 @@ def _variables(system) -> list[dict]:
     for v in system.order:
         m = system.meta.get(v) or {}
         rows.append({"variable": v, "label": system.label(v), "unit": system.unit(v),
-                     "level": m.get("level", ""), "sd": system.sd(v),
+                     "level": m.get("level", ""), "transform": m.get("transform", ""),
+                     "sd": system.sd(v),
                      "has_equation": system.has_equation(v), "adverse": system.adverse(v),
-                     "last_actual": system.last_actual(v)})
+                     "last_actual": system.last_actual(v), "about": system.about(v)})
     return rows
 
 
@@ -169,10 +170,15 @@ def setup(vintage: str | None = None) -> dict:
     v = _vintage(vintage)
     system = _system(v)
     st = store()
-    return js({"vintage": v, "vintages": list(st.vintages()["vintage"])[::-1],
+    try:
+        label = str((st.meta(v) or {}).get("label") or "")
+    except Exception:
+        label = ""
+    return js({"vintage": v, "vintage_label": label,
+               "vintages": list(st.vintages()["vintage"])[::-1],
                "horizon": _horizon(), "first_year": _first_year(system),
                "variables": _variables(system), "shapes": list(SHAPES),
-               "categories": CATEGORIES,
+               "categories": CATEGORIES, "regions": REGIONS,
                "library": [s.to_dict() for s in library(_horizon())],
                "saved": _db().list(), "user": current_user()})
 
@@ -185,6 +191,16 @@ def history(sid: str, vintage: str | None = None) -> dict:
     if not r.get("ok"):
         raise HTTPException(404, r.get("reason", "No history for that scenario."))
     return js(r)
+
+
+@router.get("/scenarios/library/{sid}/derivation")
+def library_derivation(sid: str, vintage: str | None = None) -> dict:
+    """How each of a library scenario's shocks was derived, year by year."""
+    v = _vintage(vintage)
+    t = derivation(sid, _system(v))
+    if not len(t):
+        raise HTTPException(404, f"No library scenario {sid!r}")
+    return js({"id": sid, "rows": t})
 
 
 class PreviewIn(BaseModel):
@@ -222,14 +238,37 @@ def preview(body: PreviewIn) -> dict:
         sd = system.sd(var)
         if vals and sd and np.isfinite(sd):
             sev[var] = max(vals, key=abs) / sd
+    ex = system.explain(scn.given(H), scn.linked, H)
+    if len(ex):
+        ex["driver_label"] = [("Its own momentum" if d == var else system.label(d))
+                              for d, var in zip(ex["driver"], ex["variable"])]
     return js({"years": years, "paths": rows, "recommended": sim["recommended"],
-               "severity": sev})
+               "severity": sev, "explain": ex})
 
 
 # ------------------------------------------------------------------ saved --
 class SaveIn(BaseModel):
     scenario: dict
     user: str | None = None
+
+
+def _complete(scn: Scenario) -> None:
+    """A saved scenario carries its reasons like a library one: what it
+    captures, how it unfolds, and why each main variable is set."""
+    missing = []
+    if not scn.description.strip():
+        missing.append("a one-line description")
+    if not scn.history.strip():
+        missing.append("what it captures")
+    if not scn.narrative.strip():
+        missing.append("how it unfolds")
+    if not scn.given(_horizon()) and not scn.restructured:
+        missing.append("at least one main variable")
+    for v in scn.given(_horizon()):
+        if not str((scn.why or {}).get(v, "")).strip():
+            missing.append(f"why {v} is set")
+    if missing:
+        raise HTTPException(400, "Before saving, give " + "; ".join(missing) + ".")
 
 
 @router.get("/scenarios/saved")
@@ -242,6 +281,7 @@ def save_new(body: SaveIn) -> dict:
     """Save a scenario as a new one (a library scenario edited is always
     saved this way, under a name of its own)."""
     scn = _scenario(body.scenario)
+    _complete(scn)
     if any(s.name.strip().lower() == scn.name.strip().lower() for s in library(_horizon())):
         raise HTTPException(400, f"{scn.name!r} is a library scenario's name; "
                                  "give yours a name of its own.")
@@ -257,6 +297,7 @@ def save_new(body: SaveIn) -> dict:
 def save_version(sid: str, body: SaveIn) -> dict:
     """Save a new version of a saved scenario."""
     scn = _scenario(body.scenario)
+    _complete(scn)
     try:
         _db().save(scn, user=body.user or current_user(), sid=sid)
     except KeyError as e:

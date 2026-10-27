@@ -869,6 +869,12 @@ def scn_history(sid: str, vintage: str | None = None) -> dict:
     return get(f"/scenarios/library/{sid}/history", _timeout=LONG, **_v(vintage))
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def scn_derivation(sid: str, vintage: str | None = None) -> dict:
+    return get(f"/scenarios/library/{sid}/derivation", _timeout=LONG, **_v(vintage))
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def scn_preview(scenario: dict, vintage: str | None = None,
                 first_year: int | None = None) -> dict:
     return post("/scenarios/preview", {"scenario": scenario, "vintage": vintage,

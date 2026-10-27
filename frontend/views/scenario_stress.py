@@ -42,7 +42,8 @@ H, Y0 = int(cx["horizon"]), int(cx["first_year"])
 years = list(range(Y0, Y0 + H))
 ALL = {s["id"]: s for s in su["library"] + su["saved"]}
 IDS = list(ALL)
-caption(f"Year 1 is {Y0} · macro data {su['vintage']} · provision {money(cx['ecl'])}")
+st.caption(f"Y1 is {Y0} on this run · macro data {su['vintage']} · provision "
+           f"{money(cx['ecl'])}", help=su_.HELP["shock"])
 for n in cx.get("notes") or []:
     caption(n)
 
@@ -119,9 +120,13 @@ with tab_p:
     with c2:
         bp = pd.DataFrame(r["by_portfolio"])
         bar(bp, "portfolio", "change", diverging=True, title="By portfolio")
-    with st.expander("The paths priced"):
-        su_.path_grid(r["paths"])
-        su_.show_path_table(r["paths"], years)
+    with st.expander(f"The scenario on this run, {years[0]}–{years[-1]}"):
+        st.markdown("**Forecast and scenario**",
+                    help="Each moved variable's forecast in the macro data for the run's "
+                         "years, and its value once the scenario's shocks are added.")
+        su_.level_grid(r["paths"], su_.level_units(su["variables"]))
+        st.markdown("**Shocks**", help=su_.HELP["shock"] + " " + su_.HELP["set"])
+        su_.show_path_table(r["paths"], scn.get("refs") or {}, actual=True)
     bc = pd.DataFrame(r.get("by_customer") or [])
     if len(bc):
         cols = [x for x in ("customer", "facilities", "stage", "exposure", "ecl_before",
@@ -188,7 +193,7 @@ with tab_c:
             fig = px.line(nn, x="year", y="move", color="scenario", markers=True, height=300)
             fig.update_layout(margin=dict(l=8, r=8, t=30, b=8), plot_bgcolor="white",
                               paper_bgcolor="white", legend_title_text="",
-                              title=dict(text="Non-oil GDP growth, change from baseline (pp)",
+                              title=dict(text="Non-oil GDP growth, shock against the run's forecast (pp)",
                                          font=dict(size=13)),
                               xaxis=dict(tickformat="d", dtick=1, title=""),
                               yaxis=dict(gridcolor="#f2eff6", title=""))
