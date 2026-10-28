@@ -881,6 +881,13 @@ def scn_preview(scenario: dict, vintage: str | None = None,
                                        "first_year": first_year}, _timeout=LONG)
 
 
+def scn_fed(year: int, tables: dict | None = None, vintage: str | None = None) -> dict:
+    """The Fed's severely adverse scenario for ``year``, from its tables
+    (downloaded by the backend, or the four files given)."""
+    return post("/scenarios/supervisory/fed", {"year": int(year), "tables": tables,
+                                               "vintage": vintage}, _timeout=LONG)
+
+
 def scn_save_new(scenario: dict, user: str | None = None) -> dict:
     return post("/scenarios/saved", {"scenario": scenario, "user": user})
 

@@ -255,15 +255,25 @@ ones (the 1982-86 oil glut, the 1990-91 Gulf war, the 2015-17 GCC fiscal
 austerity, the 2016-20 property correction, the 2017 blockade, the 2023-24
 post-World Cup normalisation, the IMF's 2026 projection for the Iran war and
 the Hormuz closure), the Fed's and the ESRB's adverse scenarios, and what-ifs.
-Nothing is priced there. Each scenario carries what it captures, how it
-unfolds from Y1, why each main variable is set and how its numbers were
-derived from the data, how it reaches the provision and its sources; with a
-chart of the episode in the data, its shocks year by year and, for every
-linked variable, the drivers' parts that add up to each value. Edit any of
-them, or start blank, to build your own: the same reasons (required before
-saving), main variables in a table with a reason per variable (one year,
-recovers, held, or year by year), the linked variables chosen but never typed
-in. A library scenario is never changed; an edited one is saved under a new
+Nothing is priced there. The list sits on the left (Global events, GCC and
+Qatar, Supervisory, What-if, Saved) and the scenario opens on the right in
+three tabs: **Scenario** (the historical event, publication or basis with the
+recorded data around it, Qatar's real GDP included; the scenario narrative
+over Y1-Y5; the variables set and why; the provision calculation;
+limitations; sources), **Variables affected** (each moved variable's shock
+year by year, and how each value was derived from the data) and
+**Transmission** (a graph of how the shock travels from the main variables
+to the others, with each channel's share, and for each linked variable a
+sentence from the estimated equations and a chart of its drivers' parts).
+Edit any of them, or start blank, to build your own: name, type (own or
+supervisory), region, source, the historical event or basis and the scenario
+narrative (required before saving), main variables in a table with a
+rationale per variable (one year, recovers, held, or year by year), the linked
+variables chosen but never typed in. A supervisor's new scenario is imported:
+**Import a Fed scenario** downloads the Fed's published tables for a year (or
+takes the four CSVs uploaded) and translates them to world GDP and the US
+rate; others (the ESRB's, QCB's) are entered on the builder as supervisory.
+A library scenario is never changed; an edited one is saved under a new
 name to the project's scenario database (`scenarios/scenarios.sqlite`, or
 `IFRS9_SCENARIOS_DB`), every save kept as a
 version. **Scenario stress** prices them on the run through three channels --

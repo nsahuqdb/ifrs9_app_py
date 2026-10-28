@@ -104,10 +104,13 @@ class TestScenarios:
     def test_saving_needs_the_reasons(self, system_store):
         bare = {"name": "Bare", "main": {"OIL_PRICE": [-40, None, None, None, None]}}
         r = client.post("/api/scenarios/saved", json={"scenario": bare})
-        assert r.status_code == 400 and "what it captures" in r.json()["detail"]
+        assert r.status_code == 400 and "historical event or basis" in r.json()["detail"]
         r = client.post("/api/scenarios/saved",
                         json={"scenario": {**OIL, "why": {}}})
-        assert r.status_code == 400 and "why OIL_PRICE" in r.json()["detail"]
+        assert r.status_code == 400 and "rationale for Oil price" in r.json()["detail"]
+        r = client.post("/api/scenarios/saved",
+                        json={"scenario": {**OIL, "category": "supervisory"}})
+        assert r.status_code == 400 and "publisher" in r.json()["detail"]
 
     def test_saving_new_versions_and_deleting(self, system_store):
         r = client.post("/api/scenarios/saved", json={"scenario": OIL})
@@ -142,6 +145,31 @@ class TestScenarios:
         gx = sum(r["part"] for r in ex if r["variable"] == "GOV_SPEND_QAT" and r["year"] == 1)
         p = next(r for r in b["paths"] if r["variable"] == "GOV_SPEND_QAT")
         assert gx == pytest.approx(p["move"])
+
+    def test_qatar_gdp_is_a_variable_and_the_links_come_with_a_preview(self, system_store):
+        b = client.get("/api/scenarios/setup").json()
+        assert "GDP_QAT" in {v["variable"] for v in b["variables"]}
+        pv = client.post("/api/scenarios/preview", json={"scenario": OIL}).json()
+        lk = pv["links"]
+        assert any(r["variable"] == "GDP_QAT" and r["driver"] == "NONOIL_GDP_QAT" for r in lk)
+        assert {"coef", "lag", "driver_label", "driver_unit"} <= set(lk[0])
+
+    def test_a_fed_scenario_from_its_tables(self, system_store):
+        import sys
+        sys.path.insert(0, str(ENGINE_TESTS))
+        import test_supervisory as t
+        r = client.post("/api/scenarios/supervisory/fed",
+                        json={"year": 2027, "tables": {**t.BASE, **t.ADV}})
+        assert r.status_code == 200, r.text
+        scn = r.json()["scenario"]
+        assert scn["category"] == "supervisory" and set(scn["main"]) == {"GDP_WLD", "US_RATE"}
+        assert abs(sum(r.json()["weights"].values()) - 1) < 1e-9
+        saved = client.post("/api/scenarios/saved", json={"scenario": scn})
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["category"] == "supervisory"
+        half = client.post("/api/scenarios/supervisory/fed",
+                           json={"year": 2027, "tables": dict(t.BASE)})
+        assert half.status_code in (400, 502)                  # two tables missing
 
     def test_the_system_table(self, system_store):
         b = client.get("/api/scenarios/system").json()

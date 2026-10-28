@@ -242,8 +242,12 @@ def preview(body: PreviewIn) -> dict:
     if len(ex):
         ex["driver_label"] = [("Its own momentum" if d == var else system.label(d))
                               for d, var in zip(ex["driver"], ex["variable"])]
+    links = [{"variable": var, "driver": t["driver"], "lag": int(t["lag"]),
+              "coef": float(t["coef"]), "driver_label": system.label(t["driver"]),
+              "driver_unit": system.unit(t["driver"]), "unit": system.unit(var)}
+             for var, eq in system.equations.items() for t in eq.terms]
     return js({"years": years, "paths": rows, "recommended": sim["recommended"],
-               "severity": sev, "explain": ex})
+               "severity": sev, "explain": ex, "links": links})
 
 
 # ------------------------------------------------------------------ saved --
@@ -253,20 +257,24 @@ class SaveIn(BaseModel):
 
 
 def _complete(scn: Scenario) -> None:
-    """A saved scenario carries its reasons like a library one: what it
-    captures, how it unfolds, and why each main variable is set."""
+    """A saved scenario carries its reasons like a library one: the event or
+    basis it stands for, its narrative, and the rationale for each main
+    variable; a supervisory one also names its publisher."""
+    system = _system(_vintage(None))
     missing = []
     if not scn.description.strip():
         missing.append("a one-line description")
     if not scn.history.strip():
-        missing.append("what it captures")
+        missing.append("the historical event or basis")
     if not scn.narrative.strip():
-        missing.append("how it unfolds")
+        missing.append("the scenario narrative")
+    if scn.category == "supervisory" and not scn.source.strip():
+        missing.append("the publisher (source)")
     if not scn.given(_horizon()) and not scn.restructured:
         missing.append("at least one main variable")
     for v in scn.given(_horizon()):
         if not str((scn.why or {}).get(v, "")).strip():
-            missing.append(f"why {v} is set")
+            missing.append(f"the rationale for {system.label(v) if v in system.order else v}")
     if missing:
         raise HTTPException(400, "Before saving, give " + "; ".join(missing) + ".")
 
@@ -319,6 +327,43 @@ def delete(sid: str, user: str | None = None) -> dict:
 @router.get("/scenarios/saved/{sid}/history")
 def saved_history(sid: str) -> list[dict]:
     return js(_db().history(sid))
+
+
+# ----------------------------------------------------------- supervisory --
+class FedIn(BaseModel):
+    year: int
+    tables: dict | None = None          # {table key: CSV text}; fetched when absent
+    vintage: str | None = None
+
+
+@router.post("/scenarios/supervisory/fed")
+def supervisory_fed(body: FedIn) -> dict:
+    """The Fed's severely adverse scenario for ``year``, from its published
+    tables (downloaded, or the four files uploaded), translated to world GDP
+    and the US rate. Returned for review; saving is a normal save."""
+    from ifrs9qdb.stresstest.supervisory import (FED_TABLES, fed_scenario, fed_urls,
+                                                 fetch_fed, region_weights)
+    tables = {k: v for k, v in (body.tables or {}).items() if k in FED_TABLES and v}
+    fetched = False
+    if len(tables) < len(FED_TABLES):
+        try:
+            tables = {**fetch_fed(body.year), **tables}
+            fetched = True
+        except Exception as e:
+            msg = str(e)
+            why = (f"the {body.year} tables are not published (yet)" if "HTTP 404" in msg
+                   else "federalreserve.gov could not be reached from this server"
+                   if "HTTP 0" in msg else msg[:120])
+            raise HTTPException(502, f"Could not download the Fed's tables: {why}. "
+                                     "Upload the four files instead.") from e
+    v = _vintage(body.vintage)
+    w = region_weights(store(), v, body.year)
+    try:
+        scn = fed_scenario(body.year, tables, w)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return js({"scenario": scn, "fetched": fetched, "urls": fed_urls(body.year),
+               "weights": w})
 
 
 # ---------------------------------------------------------------- system --
