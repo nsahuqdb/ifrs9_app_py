@@ -78,23 +78,20 @@ class TestMacro:
         assert b["years"] == [2026, 2027, 2028, 2029, 2030]
         assert all(c["ok"] for c in b["checks"])
 
-    def test_the_weights_are_filled_only_when_asked(self):
+    def test_a_proposal_has_a_forecast_and_a_history(self):
         b = client.post("/api/macro/propose", json={"reporting_date": "2026-09-30"}).json()
-        assert {s["section"] for s in b["changes"]} == {"Forecast", "History"}
-        assert not b["weights"]["internal"]["write"]
-        parts = list(client.get("/api/macro/parts").json()["parts"])
-        b = client.post("/api/macro/propose", json={"reporting_date": "2026-09-30",
-                                                    "parts": parts}).json()
-        assert {s["section"] for s in b["changes"]} == {"Forecast", "History",
-                                                         "Scenario weights"}
-        assert b["history_nonoil"]["changed"] >= 1
-        w = b["weights"]["internal"]["proposed"]
-        assert abs(sum(w.values()) - 1) < 1e-12
+        assert {r["model"] for r in b["forecast"]} == {"Internal rated", "External rated"}
+        assert len(b["history"]) >= 1
+        assert not any(k.startswith("_") for k in b)
 
-    def test_one_part_alone(self):
-        b = client.post("/api/macro/propose", json={"reporting_date": "2026-09-30",
-                                                    "parts": ["nonoil_history"]}).json()
-        assert {s["section"] for s in b["changes"]} == {"History"}
+    def test_one_model_alone_and_its_weights_kept(self):
+        models = list(client.get("/api/macro/models").json()["models"])
+        assert models == ["internal", "external"]
+        b = client.post("/api/macro/propose", json={
+            "reporting_date": "2026-09-30", "models": ["external"],
+            "keep_weights": ["external"]}).json()
+        assert {r["model"] for r in b["forecast"]} == {"External rated"}
+        assert b["weights"] == []
 
     def test_apply_needs_a_draft_named(self):
         r = client.post("/api/macro/apply", json={"reporting_date": "2026-09-30"})

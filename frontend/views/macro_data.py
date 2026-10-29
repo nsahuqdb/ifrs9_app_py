@@ -216,26 +216,22 @@ with tab_f:
 
 # -------------------------------------------------------- config update --
 with tab_q:
-    caption("When you want it: the figures a config takes from the store -- the non-oil "
-            "GDP forecast and history, the GCC growth and nominal GDP paths and history, "
-            "and, if ticked, the scenario weights that follow from them -- proposed from "
-            "the latest vintage and written into a draft config version. What is not "
-            "ticked stays as it is in the file, and every file can still be edited by "
-            "hand under Config versions, where the same update is on each draft.")
+    caption("When you want it: a rating model's variables, forecast and history, taken "
+            "from the latest vintage and written into a draft config version. What is not "
+            "ticked stays as it is, and every file can still be edited by hand under "
+            "Config versions, where the same update is on each draft.")
     with guard():
         snaps = pd.DataFrame(api.snapshots().get("snapshots") or [])
     labels = list(snaps["label"]) if len(snaps) else []
     status = dict(zip(snaps["label"], snaps["status"])) if len(snaps) else {}
-    c = st.columns([2, 3, 1])
+    c = st.columns([1, 2])
     rd = c[0].date_input("Reporting date", macro_fill.quarter_end())
     base = c[1].selectbox("Config to start from", ["Live config"] + labels,
                           format_func=lambda x: x if x == "Live config"
                           else f"{x} [{status.get(x, '?')}]")
-    fy = c[2].number_input("First forecast year", 0, 2100, 0, 1,
-                           help="0: the first year the store does not confirm.")
     payload = {"reporting_date": rd.isoformat(),
                "snapshot": None if base == "Live config" else base,
-               "first_year": int(fy) or None, "parts": macro_fill.choose("mq_prop")}
+               **macro_fill.choose("mq_prop")}
     p = macro_fill.ask(payload, "mq_prop")
     if p:
         bad = macro_fill.show(p)

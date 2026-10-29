@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ifrs9-app"
-version = "0.38.1"
+version = "0.39.0"
 description = "IFRS 9 ECL application (QDB): FastAPI backend and Streamlit front end"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -24,7 +24,7 @@ from ifrs9qdb.macro import MacroStore, concepts, countries, datasets, import_fil
 from ifrs9qdb.macro.fetch import DEFAULT_SOURCES
 from ifrs9qdb.macro.store import last_actual_guess
 from ifrs9qdb.macro.quarter import apply as apply_quarter
-from ifrs9qdb.macro.quarter import DEFAULT_PARTS, PARTS, propose
+from ifrs9qdb.macro.quarter import MODELS, propose
 
 from ..settings import CONFIG_DIR, MACRO_STORE_DIR, PROJECT_ROOT, SNAPSHOTS_ROOT, STATIC_DIR
 
@@ -194,11 +194,13 @@ class QuarterIn(BaseModel):
     snapshot: str | None = Field(None, description="the snapshot to start from; "
                                                    "none for the live config")
     first_year: int | None = None
-    nonoil_series: str | None = None
     vintage: str | None = None
-    parts: list[str] | None = Field(None, description="what to fill (ifrs9qdb.macro."
-                                                      "quarter.PARTS); none for the "
-                                                      "default, which leaves the weights")
+    models: list[str] | None = Field(None, description="the rating models to fill "
+                                                       "(ifrs9qdb.macro.quarter.MODELS); "
+                                                       "none for all")
+    keep_weights: list[str] = Field(default_factory=list,
+                                    description="the models whose scenario weights stay as "
+                                                "they are; the others go to automatic")
 
 
 def _dirs(label: str | None) -> tuple[Path, Path]:
@@ -218,30 +220,24 @@ def _propose(body: QuarterIn) -> dict:
     cfg, stat = _dirs(body.snapshot)
     p = propose(store(), cfg, stat, body.reporting_date, vintage=body.vintage,
                 project_root=PROJECT_ROOT, first_year=body.first_year,
-                nonoil_series=body.nonoil_series or None, parts=body.parts)
+                models=body.models, keep_weights=body.keep_weights)
     if not p.get("ok"):
         raise HTTPException(400, p.get("reason", "Nothing to propose."))
     return p
 
 
-@router.get("/macro/parts")
-def quarter_parts() -> dict:
-    """What a config update can fill, and what it fills unless told."""
-    return {"parts": PARTS, "default": list(DEFAULT_PARTS)}
+@router.get("/macro/models")
+def quarter_models() -> dict:
+    """The rating models a config update can fill."""
+    return {"models": MODELS}
 
 
 @router.post("/macro/propose")
 def quarter_propose(body: QuarterIn) -> dict:
-    """What the new quarter's config would hold, and every value that moves."""
+    """What the config would hold, and every value that moves."""
     p = _propose(body)
-    keep = ("added", "revised", "changed", "largest", "series_id", "sources")
-    hn = p.get("history_nonoil") or {}
-    hg = p.get("history_gcc") or {}
-    out = {k: v for k, v in p.items()
-           if k not in ("model_inputs_text", "history_gcc", "history_nonoil")}
-    out["history_nonoil"] = {k: hn[k] for k in keep if k in hn}
-    out["history_gcc"] = {f: {k: h[k] for k in keep if k in h} for f, h in hg.items()}
-    return js(out)
+    return js({k: v for k, v in p.items()
+               if not k.startswith("_") and k != "model_inputs_text"})
 
 
 @router.post("/macro/apply")

@@ -847,8 +847,8 @@ def macro_concept(cid: str, vintage: str | None = None) -> dict:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def macro_parts() -> dict:
-    return get("/macro/parts")
+def macro_models() -> dict:
+    return get("/macro/models")
 
 
 def macro_propose(payload: dict) -> dict:

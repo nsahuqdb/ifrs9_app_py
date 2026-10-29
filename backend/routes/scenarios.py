@@ -448,6 +448,10 @@ def compare(run_id: str, body: CompareIn) -> dict:
     the internal PD driver's path in each."""
     rc, v, cfg = _rc(run_id, body.vintage)
     rows, chans, paths = [], [], []
+    # the variables the PD models and collateral read, as stress.yml names them
+    pl = rc.cfg.get("pd_link") or {}
+    drivers = {k: pl[k] for k in ("internal", "external") if pl.get(k)}
+    collateral = set((rc.cfg.get("collateral") or {}).keys())
     for d in body.scenarios:
         scn = _scenario(d)
         r = _cached(("price", run_id, v, config_hash(cfg), _key(scn)),
@@ -461,10 +465,10 @@ def compare(run_id: str, body: CompareIn) -> dict:
         for w in r["waterfall"]:
             chans.append({"scenario": scn.name, "channel": w["layer"], "change": w["change"]})
         for p in r["paths"]:
-            if p["variable"] in ("NONOIL_GDP_QAT", "GDP_GCC", "PROPERTY_QAT"):
+            if p["variable"] in drivers.values() or p["variable"] in collateral:
                 paths.append({**p, "level": p.get("scenario"), "scenario": scn.name})
     return js({"before": rc.base_total, "table": rows, "channels": chans, "paths": paths,
-               "years": rc.years})
+               "years": rc.years, "drivers": drivers})
 
 
 class SensIn(BaseModel):

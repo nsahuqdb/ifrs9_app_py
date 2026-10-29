@@ -1,15 +1,13 @@
 """A config's macro inputs, filled from the macro store when asked.
 
-After a refresh of the store, the figures a config takes from it -- the
-non-oil GDP forecast, the GCC growth and nominal GDP paths, the history files
-behind the scenario weights, and the explicit weights themselves -- can be
-proposed from the latest vintage and written into a draft config version,
-with nothing typed by hand. Each is ticked on its own: what is not ticked
-stays as it is in the file, so weights fixed by hand or a forecast entered
-for a test are kept; the weights are unticked unless chosen. Every value
-that moves is listed before anything is written. Drawn on the Macro data
-page and on a draft under Config versions; the files can still be edited by
-hand there.
+After a refresh of the store, a rating model's variables -- whichever
+model.yml gives it -- can be taken from the latest vintage, forecast and
+history together, and written into a draft config version with nothing typed
+by hand. The scenario weights of a model filled move to automatic (worked
+out at run time) unless kept. What is not ticked stays as it is in the file,
+and every file can still be edited by hand. Nothing here names a variable:
+a model change needs no change to this page. Drawn on the Macro data page
+and on a draft under Config versions.
 """
 from __future__ import annotations
 
@@ -19,13 +17,10 @@ import pandas as pd
 import streamlit as st
 
 import api
-from ui import caption, guard, metric_row, money
+from ui import caption, guard
 
 S = st.session_state
-SECTIONS = {"Forecast": "Forecasts", "History": "Non-oil GDP history",
-            "Scenario weights": "Scenario weights"}
-FILES = {"gcc_real_gdp_growth.csv": "GCC real GDP growth history",
-         "gcc_gdp_current_prices.csv": "GCC nominal GDP history"}
+TABS = {"forecast": "Forecast", "history": "History"}
 
 
 def quarter_end(today: dt.date | None = None) -> dt.date:
@@ -34,37 +29,36 @@ def quarter_end(today: dt.date | None = None) -> dt.date:
     return dt.date(td.year, 3 * ((td.month - 1) // 3) + 1, 1) - dt.timedelta(days=1)
 
 
-HELP = {"weights": "Unticked: the explicit weights in the file stay as they are, fixed "
-                   "by hand or not. Ticked: they are replaced by the V2 weights of the "
-                   "history and forecast, unrounded. With mode auto the run works the "
-                   "weights out itself either way.",
-        "nonoil_forecast": "Unticked: the non-oil forecast in the file stays as it is, "
-                           "in whatever unit it was entered.",
-        "nonoil_history": "Every year of non_oil_gdp_history.csv the source has revised, "
-                          "and the years it now has before the forecast.",
-        "gcc_history": "gcc_real_gdp_growth.csv and gcc_gdp_current_prices.csv, the "
-                       "same way."}
-
-
-def choose(key: str) -> list:
-    """What to fill: one tick per part, the weights unticked unless chosen."""
+def choose(key: str) -> dict:
+    """Which models to fill and whose weights to keep."""
     with guard():
-        pp = api.macro_parts()
-    st.markdown("**What to fill from the store**")
-    cols = st.columns(len(pp["parts"]))
-    return [k for c, (k, label) in zip(cols, pp["parts"].items())
-            if c.checkbox(label, k in pp["default"], key=f"{key}_{k}", help=HELP.get(k))]
+        models = api.macro_models()["models"]
+    chosen, keep = [], []
+    for k, label in models.items():
+        c = st.columns([1, 2])
+        if c[0].checkbox(f"{label} model", True, key=f"{key}_{k}",
+                         help="Every variable of this model (model.yml) that the store "
+                              "holds: its forecast and its history."):
+            chosen.append(k)
+            if c[1].checkbox("Keep the current scenario weights", False,
+                             key=f"{key}_{k}_keep",
+                             help="Unticked: the weights go to automatic, worked out at run "
+                                  "time from the history and forecast. Ticked: they stay as "
+                                  "they are in the file."):
+                keep.append(k)
+    return {"models": chosen, "keep_weights": keep}
 
 
 def ask(payload: dict, key: str) -> dict | None:
     """The proposal for ``payload``, asked for on a button and kept while
     the inputs stay the same; a change of what is ticked asks again."""
-    base = {k: v for k, v in payload.items() if k != "parts"}
+    def base(p):
+        return {k: v for k, v in p.items() if k not in ("models", "keep_weights")}
+
     got = S.get(key)
-    again = bool(got and got[0] != payload and
-                 {k: v for k, v in got[0].items() if k != "parts"} == base)
-    if not payload.get("parts"):
-        caption("Tick at least one part to fill.")
+    again = bool(got and got[0] != payload and base(got[0]) == base(payload))
+    if not payload.get("models"):
+        caption("Tick a model to fill.")
         return None
     if st.button("Propose", type="primary", key=f"{key}_go") or again:
         with st.spinner("Reading the store…"):
@@ -75,60 +69,33 @@ def ask(payload: dict, key: str) -> dict | None:
 
 
 def show(p: dict) -> list:
-    """The proposal: the rule, every value that moves, the checks. Returns
+    """What moves: the weights, then the forecast and the history. Returns
     the checks that failed."""
-    st.markdown(f"**{p['rule']}**")
-    metric_row([("Vintage", p["vintage"]), ("Values that change", money(p["changed"])),
-                ("Non-oil GDP from", p["nonoil"]["series_id"] or "the file, as it is")])
+    y = p["years"]
+    caption(f"Forecast {y[0]}–{y[-1]} from vintage {p['vintage']} "
+            f"({str(p.get('release', ''))[:10]}) · {p['changed']:,} values change."
+            + (f" Not in the store for these years, so kept as they are: "
+               f"{', '.join(p['kept'])}." if p.get("kept") else ""))
     for w in p.get("warnings") or []:
         st.warning(w, icon="⚠️")
     bad = [x["check"] for x in p.get("checks") or [] if not x["ok"]]
     if bad:
         st.error("Failed: " + "; ".join(bad))
-    ch = pd.DataFrame(p.get("changes") or [])
-    if len(ch):
-        present = [s for s in SECTIONS if (ch["section"] == s).any()]
-        for tab, sec in zip(st.tabs([SECTIONS[s] for s in present]), present):
-            with tab:
-                t = ch[ch["section"] == sec].drop(columns="section")
-                if sec == "Scenario weights":
-                    t = t.drop(columns="year").assign(item=t["item"].str.replace(
-                        "Internal: ", "", regex=False)).rename(columns={"item": "scenario"})
-                    w = p.get("weights", {}).get("internal", {})
-                    caption(_weights_note(w.get("mode", "")))
-                else:
-                    t["year"] = t["year"].astype(int)
-                if sec == "History":
-                    t = t.drop(columns="item")
-                st.dataframe(t, use_container_width=True, hide_index=True,
-                             height=min(38 + 35 * len(t), 420))
-                if sec == "History":
-                    caption("The years the source has revised, and the ones it now has "
-                            "before the forecast. The file keeps its first year.")
-    parts = p.get("parts") or []
-    hn = p.get("history_nonoil") or {}
-    lines = [f"Non-oil GDP history: {hn.get('added', 0)} year(s) added, "
-             f"{hn.get('revised', 0)} revised"] if "nonoil_history" in parts else []
-    for f, h in (p.get("history_gcc") or {}).items():
-        if "gcc_history" in parts:
-            big = f" (largest revision {h['largest']:.6g})" if h.get("revised") else ""
-            lines.append(f"{FILES.get(f, f)}: {h.get('added', 0)} row(s) added, "
-                         f"{h.get('revised', 0)} revised{big}")
-    if lines:
-        caption(" · ".join(lines) + ".")
+    for w in p.get("weights") or []:
+        st.markdown(f"**{w['model']}**: scenario weights {w['current']} → automatic, "
+                    "worked out at run time from the history and forecast.")
+    for tab, k in zip(st.tabs(list(TABS.values())), TABS):
+        with tab:
+            t = pd.DataFrame(p.get(k) or [])
+            if not len(t):
+                caption("Nothing moves." if k == "history" else "Nothing filled.")
+                continue
+            st.dataframe(t, use_container_width=True, hide_index=True,
+                         height=min(38 + 35 * len(t), 420))
     if not p.get("changed"):
-        st.info("Nothing ticked differs from the store: there is nothing to write.",
+        st.info("The ticked models already hold what the store has: nothing to write.",
                 icon="ℹ️")
     return bad
-
-
-def _weights_note(mode: str) -> str:
-    if mode == "explicit":
-        return ("The config's mode is explicit: the run uses these weights. They replace "
-                "the ones in the file, unrounded: the V2 weights of the history and "
-                "forecast the config will hold.")
-    return ("The config's mode is auto: the run works the weights out itself from the "
-            "history and forecast. Only the explicit copy kept in the file changes.")
 
 
 def write(p: dict, payload: dict, target: str, new_from: str | None = None,
@@ -150,15 +117,11 @@ def write(p: dict, payload: dict, target: str, new_from: str | None = None,
 
 
 def draft_panel(label: str) -> None:
-    """The update for one draft: the reporting date, the proposal, and the
-    write into that same draft."""
+    """The update for one draft: the reporting date, the models, the
+    proposal, and the write into that same draft."""
     key = f"mf_{label}"
-    c = st.columns([2, 1, 3])
-    rd = c[0].date_input("Reporting date", quarter_end(), key=f"{key}_rd")
-    fy = c[1].number_input("First forecast year", 0, 2100, 0, 1, key=f"{key}_fy",
-                           help="0: the first year the store does not confirm.")
-    payload = {"reporting_date": rd.isoformat(), "snapshot": label,
-               "first_year": int(fy) or None, "parts": choose(key)}
+    rd = st.columns([1, 3])[0].date_input("Reporting date", quarter_end(), key=f"{key}_rd")
+    payload = {"reporting_date": rd.isoformat(), "snapshot": label, **choose(key)}
     p = ask(payload, key)
     if p:
         bad = show(p)

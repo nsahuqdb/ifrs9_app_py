@@ -188,12 +188,15 @@ with tab_c:
                                       "staging": "stage moves", "stage_moves": "contracts to Stage 2"}),
                      use_container_width=True, hide_index=True)
         pt = pd.DataFrame(cm[1]["paths"])
-        if len(pt):
-            nn = pt[pt["variable"] == "NONOIL_GDP_QAT"]
+        drv = (cm[1].get("drivers") or {}).get("internal")
+        nn = pt[pt["variable"] == drv] if len(pt) and drv else pd.DataFrame()
+        if len(nn):
+            name = str(nn["label"].iloc[0]) if "label" in nn else drv
+            unit = f" ({nn['unit'].iloc[0]})" if "unit" in nn else ""
             fig = px.line(nn, x="year", y="move", color="scenario", markers=True, height=300)
             fig.update_layout(margin=dict(l=8, r=8, t=30, b=8), plot_bgcolor="white",
                               paper_bgcolor="white", legend_title_text="",
-                              title=dict(text="Non-oil GDP growth, shock against the run's forecast (pp)",
+                              title=dict(text=f"{name}, shock against the run's forecast{unit}",
                                          font=dict(size=13)),
                               xaxis=dict(tickformat="d", dtick=1, title=""),
                               yaxis=dict(gridcolor="#f2eff6", title=""))
