@@ -68,9 +68,9 @@ with c1:
                 for y, vals in sorted(fc.items(), key=lambda kv: int(kv[0]))]
         st.dataframe(pd.DataFrame(rows), use_container_width=True,
                      hide_index=True)
-        caption("Only years 1 and 2 of the first variable feed the scenario "
-                "weights; later years change the PD curves but not the "
-                "probabilities.")
+        caption("The first forecast years of the internal model's main variable (the "
+                "largest weight in model.yml) feed the scenario weights; later years "
+                "change the PD curves but not the probabilities.")
 with c2:
     st.subheader("Scenario weights")
     w = s.get("scenario_weights", {})

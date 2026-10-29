@@ -38,9 +38,8 @@ used = m.get("weights_used")
 if used:
     caption("What the run is priced with, as the engine works them out from "
             "this frozen config. The two rating scales carry their OWN "
-            "weights: the internal scale is driven by the non-oil GDP "
-            "forecast, the external one by the GCC growth path (one vector a "
-            "year; the average is shown).")
+            "weights: each from its own model's forecast (model.yml), the "
+            "external one a vector a year (the average is shown).")
     st.dataframe(pd.DataFrame({"scenario": list(used["internal"]),
                                "internal": list(used["internal"].values()),
                                "external": [used["external"].get(k)
@@ -49,13 +48,12 @@ if used:
 if len(weights) == 0:
     st.info("This config states no explicit weights.")
 else:
-    caption("As written in the config file's explicit_weights. On an "
-            "automatic mode (auto_non_oil_gdp_cdf, auto_gcc_cdf) the engine "
-            "computes the weights instead and this block is not used — it can "
+    caption("As written in the config file's explicit_weights. On mode auto the "
+            "engine computes the weights instead and this block is not used — it can "
             "be a snapshot of an earlier method's weights.")
     metric_row([
-        ("Internal weights sum", f"{weights['internal'].sum():.4f}"),
-        ("External weights sum", f"{weights['external'].sum():.4f}"),
+        ("Internal weights sum", f"{weights['internal'].sum():.15g}"),
+        ("External weights sum", f"{weights['external'].sum():.15g}"),
     ])
     st.dataframe(weights, use_container_width=True, hide_index=True)
     if abs(weights["internal"].sum() - 1) > 1e-6:

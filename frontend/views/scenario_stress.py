@@ -245,7 +245,7 @@ with tab_s:
                                          zerolinecolor="#ded9e6"),
                               yaxis=dict(tickformat=",", gridcolor="#f2eff6"))
             st.plotly_chart(fig, use_container_width=True)
-    st.markdown("**How sure: the PD model's link to non-oil growth**")
+    st.markdown("**How sure: the PD model's slope on its main variable**")
     c = st.columns([5, 2], vertical_alignment="bottom")
     c[0].caption(f"Prices *{ALL[S.get('scn_pick', IDS[0])]['name']}* (the scenario on the "
                  "Price tab) with the PD model's slope at each end of the range QDB's own "
@@ -258,9 +258,9 @@ with tab_s:
     pl = S.get("scn_pdl")
     if pl and pl[0] == run_id and pl[1] == S.get("scn_pick"):
         x = pl[2]
-        metric_row([(f"Slope {x['range'][0]:.3f}", signed(x["low"])),
-                    (f"Model slope {x['slope']:.4f}", signed(x["central"])),
-                    (f"Slope {x['range'][1]:.3f}", signed(x["high"]))])
+        metric_row([(f"Slope {x['range'][0]:.15g}", signed(x["low"])),
+                    (f"Model slope {x['slope']:.15g}", signed(x["central"])),
+                    (f"Slope {x['range'][1]:.15g}", signed(x["high"]))])
 
 # ------------------------------------------------------------ ECL at risk --
 with tab_r:

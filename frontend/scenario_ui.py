@@ -76,8 +76,8 @@ HELP = {
     "translation": "A supervisor's variables are not all ours; this is how they were mapped "
                    "onto the variables here.",
     "provision": "The scenario reaches the provision through three channels: the PD models "
-                 "(non-oil growth for the internal book, GCC growth for the external book), "
-                 "stage moves, and property collateral.",
+                 "(through the variables each model reads, as model.yml gives them), stage "
+                 "moves, and property collateral.",
     "limits": "What to keep in mind when reading the result.",
     "sources": "The documents behind the scenario: a title and, where there is one, a link.",
     "transmission": "How the main variables move the others. Each arrow points from a driver "
