@@ -288,5 +288,10 @@ scaled, or each variable move, to reach a given increase. **Macro data** keeps t
 `IFRS9_MACRO_STORE`): a refresh fetches every dataset -- the IMF's, the BIS's,
 the World Bank's and FRED's, none needing a key -- as a new vintage, files
 from QCB, the Planning and Statistics Authority and the Ministry of Finance are
-imported, and **New quarter** proposes the forecasts and history a config needs
-and writes them into a draft config version for testing and approval.
+imported, and **Config update** proposes what a config takes from the store --
+the non-oil GDP forecast and history, the GCC growth and nominal GDP paths and
+history, and the explicit scenario weights that follow -- lists every value
+that moves, and writes them into a draft config version for testing and
+approval, unrounded. The same update is on each draft under **Config
+versions**. Every table shows a number column without a format of its own to
+15 significant digits, so a TTC PD of 0.000544977 no longer reads 0.0005.

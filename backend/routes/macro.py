@@ -4,9 +4,9 @@ The store is a folder of vintages (ifrs9qdb.macro.MacroStore) under the
 project's macro_store/; a refresh fetches every IMF dataset of the catalogue
 for its countries -- falling back to the DataMapper, DBnomics or files when
 the IMF cannot be reached -- and saves one new vintage. The new-quarter fill
-reads a config (the live one or a snapshot's), proposes the forecasts and
-history the store gives, and writes them into a DRAFT snapshot for testing
-and approval. Nothing here reads or changes a run.
+reads a config (the live one or a snapshot's), proposes the forecasts,
+history and scenario weights the store gives, and writes them into a DRAFT
+snapshot for testing and approval. Nothing here reads or changes a run.
 """
 from __future__ import annotations
 
@@ -225,10 +225,14 @@ def _propose(body: QuarterIn) -> dict:
 def quarter_propose(body: QuarterIn) -> dict:
     """What the new quarter's config would hold, and every value that moves."""
     p = _propose(body)
+    keep = ("added", "revised", "changed", "largest", "series_id", "sources")
+    hn = p.get("history_nonoil") or {}
     hg = p.get("history_gcc") or {}
-    return js({k: v for k, v in p.items() if k not in ("model_inputs_text", "history_gcc")}
-              | {"history_gcc": {f: {"changed": h["changed"], "rows": len(h["rows"])}
-                                 for f, h in hg.items()}})
+    out = {k: v for k, v in p.items()
+           if k not in ("model_inputs_text", "history_gcc", "history_nonoil")}
+    out["history_nonoil"] = {k: hn[k] for k in keep if k in hn}
+    out["history_gcc"] = {f: {k: h[k] for k in keep if k in h} for f, h in hg.items()}
+    return js(out)
 
 
 @router.post("/macro/apply")

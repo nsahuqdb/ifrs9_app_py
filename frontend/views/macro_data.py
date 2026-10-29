@@ -1,21 +1,20 @@
-"""Macro data: the store every macro figure comes from, and the new quarter's
-forecasts filled from it.
+"""Macro data: the store every macro figure comes from, and a config's macro
+inputs filled from it.
 
 The store keeps every IMF dataset of the catalogue for Qatar, the GCC, the
 trading partners and the US, plus files from QCB, the Planning and Statistics
 Authority and the Ministry of Finance, as dated vintages: a refresh never
-overwrites one. The new-quarter fill proposes the forecasts and history a
-config needs from the latest vintage -- five years from the first year not yet
-confirmed -- and writes them into a draft config version for testing and
-approval (ifrs9qdb.macro).
+overwrites one. The config update proposes the forecasts, history and
+scenario weights a config needs from the latest vintage -- five years from the
+first year not yet confirmed -- and writes them into a draft config version
+for testing and approval (ifrs9qdb.macro, frontend/macro_fill.py).
 """
-import datetime as dt
-
 import pandas as pd
 import streamlit as st
 
 import api
-from ui import caption, fmt_table, guard, metric_row, money, page_setup
+import macro_fill
+from ui import caption, guard, metric_row, money, page_setup
 
 S = st.session_state
 
@@ -44,14 +43,14 @@ def history_and_forecast(df: pd.DataFrame, title: str) -> None:
     st.plotly_chart(fig, use_container_width=True)
 
 
-page_setup("Macro data", "The macro store, and the new quarter's forecasts from it")
+page_setup("Macro data", "The macro store, and the config's macro inputs from it")
 
 with guard():
     stt = api.macro_status()
     cat = api.macro_catalogue()
 
 tab_s, tab_v, tab_l, tab_f, tab_q = st.tabs(["Store", "Variables", "Linked effects",
-                                             "Find a series", "New quarter"])
+                                             "Find a series", "Config update"])
 
 # ---------------------------------------------------------------- store --
 with tab_s:
@@ -215,16 +214,19 @@ with tab_f:
             if len(an):
                 history_and_forecast(an, ser["series"].get("name", sid))
 
-# ----------------------------------------------------------- new quarter --
+# -------------------------------------------------------- config update --
 with tab_q:
+    caption("The figures a config takes from the store -- the non-oil GDP forecast and "
+            "history, the GCC growth and nominal GDP paths and history, and the scenario "
+            "weights that follow from them -- proposed from the latest vintage and written "
+            "into a draft config version. Nothing is typed by hand. The same update is on "
+            "each draft under Config versions.")
     with guard():
         snaps = pd.DataFrame(api.snapshots().get("snapshots") or [])
     labels = list(snaps["label"]) if len(snaps) else []
     status = dict(zip(snaps["label"], snaps["status"])) if len(snaps) else {}
     c = st.columns([2, 3, 1])
-    td = dt.date.today()
-    qend = dt.date(td.year, 3 * ((td.month - 1) // 3) + 1, 1) - dt.timedelta(days=1)
-    rd = c[0].date_input("Reporting date", qend)
+    rd = c[0].date_input("Reporting date", macro_fill.quarter_end())
     base = c[1].selectbox("Config to start from", ["Live config"] + labels,
                           format_func=lambda x: x if x == "Live config"
                           else f"{x} [{status.get(x, '?')}]")
@@ -233,31 +235,9 @@ with tab_q:
     payload = {"reporting_date": rd.isoformat(),
                "snapshot": None if base == "Live config" else base,
                "first_year": int(fy) or None}
-    if st.button("Propose", type="primary"):
-        with st.spinner("Reading the store…"):
-            with guard():
-                S["mq_prop"] = (payload, api.macro_propose(payload))
-    mp = S.get("mq_prop")
-    if mp and mp[0] == payload:
-        p = mp[1]
-        st.markdown(f"**{p['rule']}**")
-        metric_row([("Vintage", p["vintage"]), ("Values that change", money(p["changed"])),
-                    ("Non-oil GDP from", p["nonoil"]["series_id"])])
-        for w in p.get("warnings") or []:
-            st.warning(w, icon="⚠️")
-        bad = [x["check"] for x in p.get("checks") or [] if not x["ok"]]
-        if bad:
-            st.error("Failed: " + "; ".join(bad))
-        ch = pd.DataFrame(p.get("changes") or [])
-        if len(ch):
-            st.dataframe(ch.style.format({"current": "{:.2f}", "proposed": "{:.2f}",
-                                          "change": "{:+.2f}"}, na_rep="—"),
-                         use_container_width=True, hide_index=True, height=360)
-        hg = p.get("history_gcc") or {}
-        hist = [f"{len(p.get('history_nonoil_add') or [])} non-oil GDP year(s)"] + \
-               [f"{v['changed']} row(s) of {k}" for k, v in hg.items() if v["changed"]]
-        caption("History added or corrected from confirmed years: " + ", ".join(hist) + ".")
-
+    p = macro_fill.ask(payload, "mq_prop")
+    if p:
+        bad = macro_fill.show(p)
         st.markdown("**Write into a draft config version**")
         if payload["snapshot"] and status.get(payload["snapshot"]) == "draft":
             target, new = payload["snapshot"], False
@@ -267,13 +247,5 @@ with tab_q:
             yq = f"{rd.year}-Q{(rd.month - 1) // 3 + 1}"
             target = st.text_input("New draft", f"{yq}-macro-draft",
                                    help="Made from the config you started from.")
-        if st.button("Write", disabled=bool(bad) or not target):
-            with guard():
-                if new:
-                    api.create_snapshot(target, f"Macro forecasts for {rd.isoformat()} "
-                                                f"from vintage {p['vintage']}",
-                                        S.get("_user") or "", parent=payload["snapshot"])
-                r = api.macro_apply({**payload, "snapshot": target})
-            api.clear()
-            st.success(f"Written into {target}: {r.get('message', '')}. Test it with a run, "
-                       "then move it on under Config versions.", icon="✅")
+        macro_fill.write(p, payload, target, new_from=payload["snapshot"], new=new,
+                         key="mq_prop", disabled=bool(bad))

@@ -825,6 +825,47 @@ def fmt_table(df: pd.DataFrame, money_cols=(), pct_cols=(), dp: int = 0) -> pd.D
     return out
 
 
+# ----------------------------------------------------------- exact numbers --
+# Streamlit shows a float column to four decimals unless it is told
+# otherwise, so a TTC PD of 0.000545 read as 0.0005 and a forecast of
+# 2.9192866 as 2.9193 -- on screen only, the files were never cut. Every
+# float column a table is given without a format of its own (a column
+# formatted as text, by a Styler or by its column_config keeps it) is shown
+# to 15 significant digits: the value as stored, without the binary noise in
+# the 16th and 17th.
+EXACT = "%.15g"
+
+
+def exact_columns(data, column_config=None) -> dict | None:
+    """``column_config`` with every unformatted float column of ``data``
+    shown in full."""
+    if not isinstance(data, pd.DataFrame):
+        return column_config
+    cfg = dict(column_config or {})
+    for c in data.columns:
+        if not pd.api.types.is_float_dtype(data[c]):
+            continue
+        given = cfg.get(c, cfg.get(str(c), ...))
+        if given is ...:
+            cfg[c] = st.column_config.NumberColumn(format=EXACT)
+        elif isinstance(given, str):              # a label only
+            cfg[c] = st.column_config.NumberColumn(given, format=EXACT)
+    return cfg or column_config
+
+
+def _exact(fn):
+    def wrapped(data=None, *args, column_config=None, **kwargs):
+        return fn(data, *args, column_config=exact_columns(data, column_config), **kwargs)
+    wrapped._exact = True
+    wrapped.__doc__ = fn.__doc__
+    return wrapped
+
+
+if not getattr(st.dataframe, "_exact", False):
+    st.dataframe = _exact(st.dataframe)
+    st.data_editor = _exact(st.data_editor)
+
+
 # ------------------------------------------------------------------ charts --
 def bar(df: pd.DataFrame, x: str, y: str, *, horizontal=True, diverging=False,
         title=None, height=None, fmt="%{x:,.0f}", dp: int = 0):

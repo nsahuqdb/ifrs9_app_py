@@ -76,11 +76,11 @@ with c2:
     w = s.get("scenario_weights", {})
     if w:
         st.dataframe(
-            pd.DataFrame({"Scenario": list(w), "Weight": [f"{v:.2%}" for v in w.values()]}),
+            pd.DataFrame({"Scenario": list(w), "Weight": [float(v) for v in w.values()]}),
             use_container_width=True, hide_index=True)
         caption("Computed from where the GDP forecast falls on the historical "
-                "distribution; the values in the file are a rounded snapshot "
-                "of that calculation.")
+                "distribution. The config update on Macro data writes the explicit "
+                "copy in the file unrounded.")
 
 st.divider()
 st.subheader("Edit")

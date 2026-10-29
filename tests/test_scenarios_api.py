@@ -78,6 +78,14 @@ class TestMacro:
         assert b["years"] == [2026, 2027, 2028, 2029, 2030]
         assert all(c["ok"] for c in b["checks"])
 
+    def test_a_proposal_lists_the_history_and_the_weights(self):
+        b = client.post("/api/macro/propose", json={"reporting_date": "2026-09-30"}).json()
+        assert {s["section"] for s in b["changes"]} == {"Forecast", "History",
+                                                         "Scenario weights"}
+        assert b["history_nonoil"]["changed"] >= 1
+        w = b["weights"]["internal"]["proposed"]
+        assert abs(sum(w.values()) - 1) < 1e-12
+
     def test_apply_needs_a_draft_named(self):
         r = client.post("/api/macro/apply", json={"reporting_date": "2026-09-30"})
         assert r.status_code == 400

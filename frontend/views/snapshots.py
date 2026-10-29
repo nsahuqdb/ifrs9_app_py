@@ -12,6 +12,7 @@ import pandas as pd
 import streamlit as st
 
 import api
+import macro_fill
 from ui import caption, guard, metric_row, page_setup, pill, flash
 
 page_setup("Config versions",
@@ -255,6 +256,13 @@ with editor:
                      else "based on the live config (first version)")
             st.markdown(f"**Draft: {epick}** · {based}"
                         + (f" · *{meta.get('description')}*" if meta.get("description") else ""))
+            with st.expander("Update the macro inputs from the macro store"):
+                caption("After a refresh of the store (Macro data): the non-oil GDP "
+                        "forecast and history, the GCC growth and nominal GDP paths and "
+                        "history, and the scenario weights that follow, proposed from the "
+                        "latest vintage and written into this draft. Every value that moves "
+                        "is listed first.")
+                macro_fill.draft_panel(epick)
             files = pd.DataFrame(d["editable"])
             if files.empty:
                 caption("This version has no editable files.")
