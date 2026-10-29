@@ -257,11 +257,11 @@ with editor:
             st.markdown(f"**Draft: {epick}** · {based}"
                         + (f" · *{meta.get('description')}*" if meta.get("description") else ""))
             with st.expander("Update the macro inputs from the macro store"):
-                caption("After a refresh of the store (Macro data): the non-oil GDP "
-                        "forecast and history, the GCC growth and nominal GDP paths and "
-                        "history, and the scenario weights that follow, proposed from the "
-                        "latest vintage and written into this draft. Every value that moves "
-                        "is listed first.")
+                caption("Only when you want it, after a refresh of the store (Macro "
+                        "data): tick what to take from the store -- forecasts, history, and "
+                        "the scenario weights only if ticked -- and it is proposed from the "
+                        "latest vintage and written into this draft. What is not ticked "
+                        "stays as it is; the files below can still be edited by hand.")
                 macro_fill.draft_panel(epick)
             files = pd.DataFrame(d["editable"])
             if files.empty:

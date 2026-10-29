@@ -846,6 +846,11 @@ def macro_concept(cid: str, vintage: str | None = None) -> dict:
     return get(f"/macro/concept/{cid}", **({"vintage": vintage} if vintage else {}))
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def macro_parts() -> dict:
+    return get("/macro/parts")
+
+
 def macro_propose(payload: dict) -> dict:
     return post("/macro/propose", payload, _timeout=LONG)
 

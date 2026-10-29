@@ -24,7 +24,7 @@ from ifrs9qdb.macro import MacroStore, concepts, countries, datasets, import_fil
 from ifrs9qdb.macro.fetch import DEFAULT_SOURCES
 from ifrs9qdb.macro.store import last_actual_guess
 from ifrs9qdb.macro.quarter import apply as apply_quarter
-from ifrs9qdb.macro.quarter import propose
+from ifrs9qdb.macro.quarter import DEFAULT_PARTS, PARTS, propose
 
 from ..settings import CONFIG_DIR, MACRO_STORE_DIR, PROJECT_ROOT, SNAPSHOTS_ROOT, STATIC_DIR
 
@@ -196,6 +196,9 @@ class QuarterIn(BaseModel):
     first_year: int | None = None
     nonoil_series: str | None = None
     vintage: str | None = None
+    parts: list[str] | None = Field(None, description="what to fill (ifrs9qdb.macro."
+                                                      "quarter.PARTS); none for the "
+                                                      "default, which leaves the weights")
 
 
 def _dirs(label: str | None) -> tuple[Path, Path]:
@@ -215,10 +218,16 @@ def _propose(body: QuarterIn) -> dict:
     cfg, stat = _dirs(body.snapshot)
     p = propose(store(), cfg, stat, body.reporting_date, vintage=body.vintage,
                 project_root=PROJECT_ROOT, first_year=body.first_year,
-                nonoil_series=body.nonoil_series or None)
+                nonoil_series=body.nonoil_series or None, parts=body.parts)
     if not p.get("ok"):
         raise HTTPException(400, p.get("reason", "Nothing to propose."))
     return p
+
+
+@router.get("/macro/parts")
+def quarter_parts() -> dict:
+    """What a config update can fill, and what it fills unless told."""
+    return {"parts": PARTS, "default": list(DEFAULT_PARTS)}
 
 
 @router.post("/macro/propose")

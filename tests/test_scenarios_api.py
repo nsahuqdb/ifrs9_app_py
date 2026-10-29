@@ -78,13 +78,23 @@ class TestMacro:
         assert b["years"] == [2026, 2027, 2028, 2029, 2030]
         assert all(c["ok"] for c in b["checks"])
 
-    def test_a_proposal_lists_the_history_and_the_weights(self):
+    def test_the_weights_are_filled_only_when_asked(self):
         b = client.post("/api/macro/propose", json={"reporting_date": "2026-09-30"}).json()
+        assert {s["section"] for s in b["changes"]} == {"Forecast", "History"}
+        assert not b["weights"]["internal"]["write"]
+        parts = list(client.get("/api/macro/parts").json()["parts"])
+        b = client.post("/api/macro/propose", json={"reporting_date": "2026-09-30",
+                                                    "parts": parts}).json()
         assert {s["section"] for s in b["changes"]} == {"Forecast", "History",
                                                          "Scenario weights"}
         assert b["history_nonoil"]["changed"] >= 1
         w = b["weights"]["internal"]["proposed"]
         assert abs(sum(w.values()) - 1) < 1e-12
+
+    def test_one_part_alone(self):
+        b = client.post("/api/macro/propose", json={"reporting_date": "2026-09-30",
+                                                    "parts": ["nonoil_history"]}).json()
+        assert {s["section"] for s in b["changes"]} == {"History"}
 
     def test_apply_needs_a_draft_named(self):
         r = client.post("/api/macro/apply", json={"reporting_date": "2026-09-30"})

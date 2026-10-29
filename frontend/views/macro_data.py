@@ -216,11 +216,12 @@ with tab_f:
 
 # -------------------------------------------------------- config update --
 with tab_q:
-    caption("The figures a config takes from the store -- the non-oil GDP forecast and "
-            "history, the GCC growth and nominal GDP paths and history, and the scenario "
-            "weights that follow from them -- proposed from the latest vintage and written "
-            "into a draft config version. Nothing is typed by hand. The same update is on "
-            "each draft under Config versions.")
+    caption("When you want it: the figures a config takes from the store -- the non-oil "
+            "GDP forecast and history, the GCC growth and nominal GDP paths and history, "
+            "and, if ticked, the scenario weights that follow from them -- proposed from "
+            "the latest vintage and written into a draft config version. What is not "
+            "ticked stays as it is in the file, and every file can still be edited by "
+            "hand under Config versions, where the same update is on each draft.")
     with guard():
         snaps = pd.DataFrame(api.snapshots().get("snapshots") or [])
     labels = list(snaps["label"]) if len(snaps) else []
@@ -234,7 +235,7 @@ with tab_q:
                            help="0: the first year the store does not confirm.")
     payload = {"reporting_date": rd.isoformat(),
                "snapshot": None if base == "Live config" else base,
-               "first_year": int(fy) or None}
+               "first_year": int(fy) or None, "parts": macro_fill.choose("mq_prop")}
     p = macro_fill.ask(payload, "mq_prop")
     if p:
         bad = macro_fill.show(p)
@@ -248,4 +249,4 @@ with tab_q:
             target = st.text_input("New draft", f"{yq}-macro-draft",
                                    help="Made from the config you started from.")
         macro_fill.write(p, payload, target, new_from=payload["snapshot"], new=new,
-                         key="mq_prop", disabled=bool(bad))
+                         key="mq_prop", disabled=bool(bad) or not p.get("changed"))
