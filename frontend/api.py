@@ -313,17 +313,6 @@ def calculator_versions() -> dict:
     return get("/calculator/versions")
 
 
-def register_calculator(id: str, label: str = "", description: str = "",
-                        created_by: str = "", make_active: bool = True) -> dict:
-    return post("/calculator/versions",
-                {"id": id, "label": label, "description": description,
-                 "created_by": created_by, "make_active": make_active})
-
-
-def activate_calculator(version_id: str) -> dict:
-    return post(f"/calculator/active/{version_id}", {})
-
-
 @st.cache_data(ttl=30, show_spinner=False)
 def code_status() -> dict:
     return get("/code/status")

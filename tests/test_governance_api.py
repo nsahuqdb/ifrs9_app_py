@@ -14,35 +14,38 @@ from backend.main import app
 client = TestClient(app)
 
 
+@pytest.fixture
+def own_root(tmp_path, monkeypatch):
+    """The registry in a temporary project, not the repo's config folder."""
+    from backend.routes import governance
+    monkeypatch.setattr(governance, "PROJECT_ROOT", tmp_path)
+    return tmp_path
+
+
 class TestCalculatorVersions:
-    def test_the_registry_and_the_live_fingerprint_are_both_reported(self):
+    def test_the_registry_and_the_live_fingerprint_are_both_reported(self, own_root):
         r = client.get("/api/calculator/versions")
         assert r.status_code == 200
         body = r.json()
-        assert set(body) >= {"root", "versions", "live_fingerprint", "for_run"}
+        assert set(body) >= {"root", "versions", "live_fingerprint", "for_run",
+                             "engine_version"}
         # The pair is the point: the registry says what a run would claim, the
         # fingerprint says what it would actually execute.
         assert len(body["live_fingerprint"]) == 32
 
-    def test_an_empty_registry_is_not_an_error(self):
+    def test_the_calculator_version_is_the_engine_version(self, own_root):
+        from ifrs9qdb import __version__
         body = client.get("/api/calculator/versions").json()
-        assert isinstance(body["versions"], list)
+        assert body["engine_version"] == __version__
+        assert body["for_run"]["id"] == __version__
+        assert [v["id"] for v in body["versions"] if v["current"]] == [__version__]
+        assert (own_root / "calculator_versions" / __version__ / "src").is_dir()
 
-    def test_nothing_to_compare_reads_as_unknown(self):
+    def test_nothing_to_compare_reads_as_unknown(self, own_root):
         """None, not False - unknown is not the same as drifted."""
         for_run = client.get("/api/calculator/versions").json()["for_run"]
         if not for_run.get("registered_hash"):
             assert for_run["matches_registered"] is None
-
-    def test_a_bad_version_id_is_refused_with_400(self):
-        r = client.post("/api/calculator/versions",
-                        json={"id": "v1.0/../etc"})
-        assert r.status_code == 400
-        assert "letters, digits" in r.text
-
-    def test_activating_an_unknown_version_is_404(self):
-        r = client.post("/api/calculator/active/does-not-exist")
-        assert r.status_code == 404
 
 
 class TestCodeStatus:

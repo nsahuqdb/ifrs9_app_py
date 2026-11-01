@@ -13,11 +13,11 @@ the test suites.
 
 | R app | Here | Checked |
 |---|---|---|
-| Runs table: status, run, date, purpose, type, scenario, portfolio date, run by, approver, config version, calculator, outputs, validation fails, reconciliation; search, sort, page | the same columns, plus the engine that produced the run and whether it carries a readiness report | browser |
+| Runs table: status, run, date, purpose, type, scenario, portfolio date, run by, approver, config version, calculator, outputs, validation fails, reconciliation; search, sort, page | the same columns (the calculator version is the engine version), plus whether it carries a readiness report; a filter per column in place of the search | browser |
 | Tiles: total, approved, pending checker, unofficial, with validation fails; runs folder and Refresh | the same | browser |
 | Run title, status pill, path | the same | browser |
 | Export card, gated: approved or unofficial only, UNOFFICIAL marking, include-inputs choice, zip download; the handler refuses a run that is not exportable | the same, gate enforced in the backend too | browser: 66 files, 9.7 MB, downloaded |
-| Apply an overlay to the run (drafts included, status shown); totals model → overlay → final; conflicts; applied list with Remove | the same | rendered; applied in the browser from the overlays page |
+| Apply an overlay to the run (drafts included, status shown); totals model → overlay → final; conflicts; applied list with Remove | the same, with the impact checked before Apply is enabled | browser |
 | Tabs: Manifest, Validation, Overrides, Reconciliation, Outputs (file pick, size, filterable preview) | the same, plus **Readiness** | browser: every tab |
 
 ## Runs → Run the pipeline (`mod_run_trigger.R` → `views/pipeline.py`)
@@ -62,9 +62,9 @@ the test suites.
 | Create: label pattern, description required, base version | the same | browser |
 | Promote: draft → tested → pending_final → approved; reason required; the creator cannot approve under separation | the same | browser: created by maker1, approved by checker1 |
 | Edit config: drafts only, clone a locked version to a new draft; files grouped, advanced toggle, help per file; YAML with discard and error context; CSV with add/delete rows, download, upload, discard | the same | rendered |
-| Calculator versions: registered versions, active one, deployed-code fingerprint and match; register; set active | the same | rendered |
+| Calculator versions: registered versions, active one, deployed-code fingerprint and match; register; set active | the calculator version is the engine version, registered and archived the first time it is used, so there is nothing to register or activate; fingerprint and match as R | rendered |
 
-## ECL overlays (`mod_overlays.R` → `views/overlays.py`)
+## Management overlay (`mod_overlays.R` → `views/overlays.py`)
 
 | R app | Here | Checked |
 |---|---|---|
@@ -72,8 +72,8 @@ the test suites.
 | Rules: method, level (whole book, stage, portfolio, rating, flag, sector, customer, contract), target, value, reason | the same; the target is typed (with a guide per level) where R offers a picker | browser |
 | Save: an existing id asks replace or append; any save returns the overlay to draft | the same | browser (a new overlay); API |
 | Preview against a run: model, overlay, final, per rule; conflicts (a contract matched twice) block | the same | browser: +QAR 87,785,735 (+4.46%) |
-| Saved list: Submit (draft/rejected), Approve / Reject (pending), Edit, Remove with confirmation | the same | browser: submitted by maker1, approved by checker1 |
-| Apply to a run; applied list; remove its outputs | the same | browser (apply, list) |
+| Saved list: Submit (draft/rejected), Approve / Reject (pending), Edit, Remove with confirmation | one page: the overlays in a table; the selected one is edited in place while draft (back to draft otherwise), checked against the selected run, and moved on | browser |
+| Apply to a run; applied list; remove its outputs | on the Runs page, after an impact check | browser |
 
 ## Validation suppressions (`mod_suppressions.R` → `views/suppressions.py`)
 

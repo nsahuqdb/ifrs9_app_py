@@ -2,8 +2,9 @@
 
 The workbook holds the run's inputs for the customer and every step from them
 to the provision as a live formula -- staging with overrides, LGD from the
-collateral, the run's monthly PD curves, the EAD path, the ECL month
-by month -- and checks each position against the report. Built by the backend
+collateral, the PD curves calculated from the run's PD model (internal and
+external scales), the EAD path, the ECL month by month -- and checks each
+position against the report. Built by the backend
 (ifrs9qdb.calc_workbook); each export is written to the audit log.
 """
 import pandas as pd
@@ -66,7 +67,7 @@ if st.session_state.get(key):
         "Download the workbook (.xlsx)", st.session_state[key],
         file_name=f"ECL_calculator_{run_id}_{safe}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    caption("Tabs: Summary, Settings, Lines (inputs), Overrides, Staging, LGD, "
-            "PD, EAD, ECL. Blue cells are the "
-            "run's inputs; black cells are formulas. Excel recalculates on "
-            "opening.")
+    caption("Tabs: Summary, Lines (inputs), Staging, LGD, PD internal / PD external "
+            "(the PD model, year by year), PD curves (monthly, against the run's "
+            "StPD), EAD, ECL. Blue cells are the run's inputs; black cells are "
+            "formulas. Excel recalculates on opening.")

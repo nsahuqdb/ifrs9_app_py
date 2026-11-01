@@ -27,6 +27,10 @@ pip install -e ".[dev]"              # this
 
 ## Running it
 
+On Windows, double-click `start_ifrs9.bat`: it gets the code, sets up Python
+and the requirements the first time, and from then on updates and restarts the
+app (run.md). By hand:
+
 ```bash
 # 1. backend -- the project folder holds config, versions, runs and the log
 IFRS9_PROJECT_ROOT=/path/to/project uvicorn backend.main:app --reload --port 8000
@@ -187,7 +191,7 @@ runs, validation, approval queue); **Portfolio** (overview, staging, risk
 parameters, concentration, segments, scenarios, data quality);
 **Comparison** (movement, migration, reconcile & export);
 **Stress testing** (parameter stress, scenario library, scenario stress,
-macro data); **Governance** (config versions, calculator versions, ECL overlays,
+macro data); **Governance** (config versions, calculator versions, management overlay,
 validation suppressions, live configuration, model assumptions, audit log);
 and **Help** (assistant, how this works). The menu holding the page on screen
 is highlighted, as the page is in its list.

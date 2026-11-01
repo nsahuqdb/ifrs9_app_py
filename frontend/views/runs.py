@@ -9,8 +9,8 @@ import pandas as pd
 import streamlit as st
 
 import api
-from ui import (accepted_findings_table, callout, caption, guard, kpis, money,
-                page_setup, pill, style_severity)
+from ui import (accepted_findings_table, callout, caption, column_filters, flash,
+                guard, kpis, money, overlay_impact, page_setup, pill, style_severity)
 
 page_setup("Browse runs", "Every run, where it stands in approval, and everything "
            "it recorded. Select one to open it.")
@@ -50,6 +50,17 @@ def _dash(v):
     return "—" if v is None or (isinstance(v, float) and pd.isna(v)) or v == "" else v
 
 
+def _calc_version(r) -> str:
+    """The calculator version, which is the engine version; for a run made
+    before the two were one number, the calculator it named."""
+    v = _dash(r.get("calculator_version"))
+    if v != "—":
+        lab = _dash(r.get("calculator_label"))
+        return v if lab in ("—", v) else f"{v} ({lab})"
+    eng = _dash(r.get("engine"))
+    return eng.split()[-1] if eng != "—" else "—"
+
+
 show = pd.DataFrame({
     "Status": runs["status"].map(lambda s: STATUS_ICON.get(s, str(s).upper())),
     "Run": runs["run_id"],
@@ -62,25 +73,17 @@ show = pd.DataFrame({
     "Approver": runs["approver"].map(_dash),
     "Config version": runs["config_version"].map(
         lambda v: "(live config)" if _dash(v) == "—" else v),
-    "Calculator": runs.apply(lambda r: next((x for x in (r["calculator_label"],
-                                                         r["calculator_version"])
-                                             if _dash(x) != "—"), "—"), axis=1),
-    "Engine": runs["engine"].map(_dash),
+    "Calculator version": runs.apply(_calc_version, axis=1),
     "Outputs": runs["n_outputs"],
     "Validation fails": runs["n_validation_failures"],
     "Recon": runs["has_reconciliation"].map({True: "yes", False: "no"}),
     "Readiness": runs["has_readiness"].map({True: "yes", False: "—"}),
 })
-c_q, c_r = st.columns([6, 1], vertical_alignment="bottom")
-q = c_q.text_input("Search runs", placeholder="Search: run id, user, purpose, "
-                   "version…", label_visibility="collapsed")
+c_f, _, c_r = st.columns([1, 5, 1], vertical_alignment="bottom")
+show = column_filters(show, "runs_f", where=c_f)
 if c_r.button("Refresh", icon=":material/refresh:", width="stretch"):
     api.clear()
     st.rerun()
-if q:
-    mask = show.apply(lambda r: q.lower() in " ".join(map(str, r.values)).lower(),
-                      axis=1)
-    show = show[mask]
 STATUS_COLOURS = {"APPROVED": ("#ecfdf3", "#067647"), "PENDING": ("#fffaeb", "#b54708"),
                   "REJECTED": ("#fef3f2", "#b42318"), "UNOFFICIAL": ("#eff8ff", "#175cd3")}
 
@@ -150,47 +153,55 @@ with c_exp:
                 if res.get("skipped"):
                     caption("Not present: " + ", ".join(res["skipped"]))
 
-# ---- apply an overlay to this run ---------------------------------------
+# ---- apply a management overlay to this run ------------------------------
 with c_ovl:
     with st.container(border=True):
-        st.markdown("**Apply ECL overlay to this run**")
-        caption("Apply a saved overlay to this completed run without re-running "
-                "the pipeline. The model report is preserved; a new overlaid "
-                "report is written alongside it. To correct a wrong overlay, "
-                "remove it below and apply the corrected one.")
+        st.markdown("**Management overlay**")
+        caption("Check an overlay's impact on this run, then apply it. The model "
+                "report is kept and the overlaid report written beside it. To "
+                "correct an applied overlay, remove it below and apply the "
+                "corrected one.")
         with guard():
             bundles = api.overlay_bundles()["bundles"]
-        choices = {f"{b['id']} [{(b.get('status') or 'draft').upper()}]": b["id"]
-                   for b in bundles}
-        c1, c2 = st.columns([3, 1])
-        pick = c1.selectbox("Overlay", ["(select an overlay)"] + list(choices),
+        status = {b["id"]: (b.get("status") or "draft") for b in bundles}
+        pick = st.selectbox("Overlay", list(status), index=None,
+                            placeholder="Select an overlay",
+                            format_func=lambda i: f"{i} [{status[i].upper()}]",
                             label_visibility="collapsed", key=f"ovp_{run_id}")
-        if c2.button("Apply overlay", type="primary", key=f"ova_{run_id}",
-                     use_container_width=True):
-            if pick.startswith("("):
-                st.warning("Pick an overlay to apply.")
-            else:
+        chk_key = f"ovchk_{run_id}"
+        if pick:
+            if status[pick] != "approved":
+                st.warning(f"{pick} is {status[pick]}. It can be applied (the "
+                           "status travels with the output) but should be "
+                           "approved before the figure is used.", icon="⚠️")
+            c1, c2 = st.columns(2)
+            if c1.button("Check impact", key=f"ovc_{run_id}", width="stretch",
+                         icon=":material/science:"):
+                with guard():
+                    pv = api.preview_bundle(pick, run_id)
+                st.session_state[chk_key] = (pick, pv)
+            chk = st.session_state.get(chk_key)
+            checked = bool(chk and chk[0] == pick)
+            ok = overlay_impact(chk[1]) if checked else False
+            if c2.button("Apply", type="primary", key=f"ova_{run_id}",
+                         width="stretch", disabled=not ok,
+                         help=None if ok else "Check the impact first."):
                 try:
-                    r = api.apply_bundle(choices[pick], run_id)
+                    r = api.apply_bundle(pick, run_id)
                 except api.BackendError as e:
                     st.error(str(e))
                 else:
                     if not r.get("ok"):
-                        st.error("Conflict: " + "; ".join(r.get("errors", []))
-                                 + ". Overlay not applied — resolve it on the "
-                                   "Overlays page.", icon="⚠️")
-                        if r.get("contracts"):
-                            st.dataframe(pd.DataFrame({"contract": r["contracts"][:10]}),
-                                         hide_index=True)
+                        st.error("Not applied: " + "; ".join(r.get("errors", [])),
+                                 icon="⚠️")
                     else:
                         tt = r["totals"]
-                        st.success(
-                            f"Overlay '{choices[pick]}' [{(r.get('status') or 'draft').upper()}] "
-                            f"applied. Model {money(tt['model'])} → overlay "
-                            f"+{money(tt['overlay'])} → final {money(tt['final'])} "
-                            f"(+{100 * tt['overlay'] / max(tt['model'], 1):.2f}%).",
-                            icon="✅")
+                        st.session_state.pop(chk_key, None)
                         api.clear()
+                        flash(f"{pick} [{(r.get('status') or 'draft').upper()}] "
+                              f"applied: model {money(tt['model'])} + overlay "
+                              f"{money(tt['overlay'])} = {money(tt['final'])}.")
+                        st.rerun()
         st.markdown("**Overlays applied to this run**")
         with guard():
             ap = api.applied_overlays(run_id)["applied"]
@@ -289,11 +300,7 @@ with t_val:
                         "this run, or by a standing suppression that took effect")
             accepted_findings_table(acc["rows"])
         vf = pd.DataFrame(v["rows"])
-        fq = st.text_input("Filter checks", key=f"vq_{run_id}",
-                           placeholder="id, stage, message…")
-        if fq:
-            vf = vf[vf.apply(lambda r: fq.lower() in " ".join(map(str, r.values)).lower(),
-                             axis=1)]
+        vf = column_filters(vf, f"vq_{run_id}", where=st.columns([1, 6])[0])
         st.dataframe(style_severity(vf), hide_index=True, width="stretch", height=460,
                      column_config={"message": st.column_config.TextColumn(width="large"),
                                     "description": st.column_config.TextColumn(width="medium")})

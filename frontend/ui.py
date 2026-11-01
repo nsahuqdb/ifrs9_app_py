@@ -986,3 +986,63 @@ def metric_row(items: list[tuple]) -> None:
         label, value = item[0], item[1]
         delta = item[2] if len(item) > 2 else None
         col.metric(label, value, delta)
+
+
+def overlay_impact(pv: dict) -> bool:
+    """A management overlay's impact on a run (a preview), or why it cannot
+    apply. True when it can be applied."""
+    if not pv.get("ok"):
+        st.error("Not applicable: " + "; ".join(pv.get("errors", [])), icon="⚠️")
+        if pv.get("contracts"):
+            st.dataframe(pd.DataFrame({"contract": pv["contracts"][:10]}),
+                         hide_index=True)
+        return False
+    t = pv["total"]
+    metric_row([("Model ECL", money(t["model"])),
+                ("Overlay", "+" + money(t["overlay"])),
+                ("Final ECL", money(t["final"])),
+                ("Change", f"+{100 * t['overlay'] / max(t['model'], 1):.2f}%")])
+    if pv.get("summary"):
+        shown = {"overlay_id": "Rule", "rationale": "Reason", "contracts": "Contracts",
+                 "customers": "Customers", "exposure": "Exposure",
+                 "ecl_model": "Model ECL", "overlay_amount": "Overlay",
+                 "ecl_final": "Final ECL"}
+        t = pd.DataFrame(pv["summary"])
+        t = t[[c for c in shown if c in t.columns]].rename(columns=shown)
+        st.dataframe(t, hide_index=True, use_container_width=True, column_config={
+            c: st.column_config.NumberColumn(format="localized")
+            for c in ("Exposure", "Model ECL", "Overlay", "Final ECL")})
+    return True
+
+
+def column_filters(df: pd.DataFrame, key: str, columns: list | None = None,
+                   where=None) -> pd.DataFrame:
+    """A filter per column, under one Filter button: pick values in any
+    column (or type part of one, where a column holds many) to keep only the
+    rows that match every filter set. Returns the filtered rows."""
+    cols = [c for c in (columns or list(df.columns)) if c in df.columns]
+    keys = {c: f"{key}__{c}" for c in cols}
+    n_on = sum(bool(st.session_state.get(k)) for k in keys.values())
+    box = (where or st).popover(f"Filter · {n_on}" if n_on else "Filter",
+                                icon=":material/filter_list:", width="stretch")
+    out = df
+    with box:
+        for c in cols:
+            vals = df[c].dropna().astype(str)
+            uniq = sorted(vals.unique())
+            if len(uniq) < 2 and not st.session_state.get(keys[c]):
+                continue
+            if len(uniq) <= 200:
+                sel = st.multiselect(str(c), uniq, key=keys[c])
+                if sel:
+                    out = out[out[c].astype(str).isin(sel)]
+            else:
+                txt = st.text_input(str(c), key=keys[c], placeholder="contains…")
+                if txt:
+                    out = out[out[c].astype(str).str.contains(txt, case=False,
+                                                              regex=False, na=False)]
+        if n_on and st.button("Clear filters", key=f"{key}__clear"):
+            for k in keys.values():
+                st.session_state.pop(k, None)
+            st.rerun()
+    return out

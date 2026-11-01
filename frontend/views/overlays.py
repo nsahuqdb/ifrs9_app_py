@@ -1,25 +1,27 @@
-"""ECL overlays: post-model adjustments, built as bundles of rules.
+"""Management overlay: post-model adjustments, kept as sets of rules.
 
-The R app's overlay page. A bundle is a set of rules under one overlay id --
-each rule a method, the level it applies at, a target, a value and a reason --
-with an approval flow of its own (draft -> pending -> approved). Stage 3 is
-never touched, and a contract matched by two rules blocks the overlay rather
-than being adjusted twice. Saving a bundle always returns it to draft: an
-edited overlay cannot keep an approval given to different rules.
+One page, laid out like Config versions: the overlays in a table; select one
+to see its rules, edit them while it is a draft, check them against the run
+selected at the top, and move it through draft -> pending -> approved. Saving
+always returns an overlay to draft: an edited overlay cannot keep an approval
+given to different rules. Stage 3 is never touched, and a contract matched by
+two rules blocks the overlay rather than being adjusted twice. An overlay is
+applied to a completed run from the Runs page, after the same check there.
 """
 import pandas as pd
 import streamlit as st
 
 import api
-from ui import caption, guard, metric_row, money, page_setup, pill, flash
+from ui import caption, flash, guard, metric_row, overlay_impact, page_setup, pill
 
-page_setup("ECL overlays",
-           "Build a bundle of post-model adjustment rules and save it under one "
-           "overlay id. Overlays are applied to a completed run from the Runs "
-           "page (or the Apply tab here); the model report is kept and the "
-           "overlaid one written beside it.")
+S = st.session_state
 
-run_id = st.session_state.get("run_id")
+page_setup("Management overlay",
+           "A post-model adjustment: a set of rules under one id, approved "
+           "before it is used. Check it against a run here, then apply it to "
+           "that run from the Runs page.")
+
+run_id = S.get("run_id")
 
 METHODS = {"Uplift %": "uplift_pct",
            "Higher-of (floor % of exposure)": "higher_of",
@@ -30,31 +32,25 @@ LEVELS = {"Whole book": "whole_book", "Stage": "stage", "Portfolio": "portfolio"
           "Customer": "customer", "Contract": "contract"}
 L_LABEL = {v: k for k, v in LEVELS.items()}
 TARGETS = {
-    "whole_book": "no target — all Stage 1 and 2 contracts",
+    "whole_book": "no target: all Stage 1 and 2 contracts",
     "stage": "1, 2 (Stage 3 is never touched)",
     "portfolio": "Business Finance, Off BS, Al Dhameen, Tasdeer, Investments, "
                  "Banks and Fis",
     "flag": "watchlist, default, default_gcc, insolvency, local1 … local6",
-    "sector": "sector names — inert: the report carries no sector, so it "
-              "matches nothing (as in R)",
+    "sector": "sector names: the report carries no sector, so this matches "
+              "nothing (as in R)",
     "rating": "rating grades, e.g. QDB 7, QDB 8",
     "customer": "customer ids, comma-separated",
     "contract": "contract ids, comma-separated",
 }
 STATUS_TONE = {"draft": "info", "pending": "warn", "approved": "ok",
                "rejected": "err"}
-
-st.info("**Value guide.** Uplift % — enter the percentage (15 = +15% of model "
-        "ECL). Higher-of — the floor as a percentage of exposure (5 = 5% of "
-        "exposure). Absolute add — the amount in QAR (1,000,000), spread across "
-        "the matched contracts by exposure. **Stage 3 is never touched**, and a "
-        "contract hit by two rules blocks the overlay.", icon="ℹ️")
-
-with guard():
-    reg = api.overlay_bundles()
-bundles = reg["bundles"]
-by_id = {b.get("id"): b for b in bundles}
-caption(f"Stored in `{reg['path']}`")
+# The moves the backend allows from each status, as buttons.
+MOVES = {"draft": [("Submit for approval", "pending")],
+         "rejected": [("Submit for approval", "pending"), ("Back to draft", "draft")],
+         "pending": [("Approve", "approved"), ("Reject", "rejected"),
+                     ("Back to draft", "draft")],
+         "approved": [("Back to draft", "draft")]}
 
 
 def _to_display(rules: list) -> pd.DataFrame:
@@ -93,49 +89,10 @@ def _from_display(df: pd.DataFrame) -> list[dict]:
     return out
 
 
-def _rule_line(r: dict) -> str:
-    m, v = r.get("method"), float(r.get("value") or 0)
-    vtxt = {"uplift_pct": f"+{v * 100:.4g}%",
-            "higher_of": f"floor {v * 100:.4g}% of exposure",
-            "absolute_add": f"QAR {v:,.0f}"}.get(m, str(v))
-    tgt = "whole book" if r.get("level") == "whole_book" else \
-        f"{r.get('level')}: {r.get('target')}"
-    return (f"**{M_LABEL.get(m, m)}** — {vtxt} on {tgt}"
-            + (f"  *({r.get('comment')})*" if r.get("comment") else ""))
-
-
-builder, saved, apply_tab, applied_tab = st.tabs(
-    ["Builder", "Saved overlays", "Preview & apply", "Applied to this run"])
-
-# ================================================================ builder ==
-with builder:
-    editing = st.session_state.get("ovl_edit")
-    current = by_id.get(editing, {}) if editing else {}
-    st.markdown(f"**{'Editing: ' + editing if current else 'New overlay'}**")
-    if current:
-        st.markdown(f"Currently {pill(current.get('status', 'draft'), STATUS_TONE.get(current.get('status', 'draft'), 'info'))} "
-                    "— saving returns it to **draft** for re-approval.",
-                    unsafe_allow_html=True)
-    c1, c2, c3 = st.columns(3)
-    oid = c1.text_input("Overlay ID", value=current.get("id", ""),
-                        placeholder="e.g. OV-2026Q2", key=f"b_id_{editing}")
-    owner = c2.text_input("Owner", value=current.get("owner", "FRM"),
-                          key=f"b_owner_{editing}")
-    ref = c3.text_input("Approval reference", value=current.get("approval_ref", ""),
-                        key=f"b_ref_{editing}")
-    c4, c5, c6 = st.columns(3)
-    eff = c4.text_input("Effective from", value=current.get("effective_date", ""),
-                        placeholder="2026-06-30", key=f"b_eff_{editing}")
-    exp = c5.text_input("Expires", value=current.get("expiry", ""),
-                        placeholder="2026-12-31", key=f"b_exp_{editing}")
-    who = c6.text_input("Your name", key="b_who")
-    st.markdown("**Rules**")
-    with st.expander("Targets by level"):
-        st.table(pd.DataFrame({"what to enter": list(TARGETS.values())},
-                              index=[L_LABEL[k] for k in TARGETS]))
-    edited = st.data_editor(
-        _to_display(current.get("rules")), num_rows="dynamic",
-        use_container_width=True, key=f"rules_{editing}",
+def _rules_editor(rules: list, key: str) -> list[dict]:
+    """The rules as an editable table; returns them in the engine's form."""
+    df = st.data_editor(
+        _to_display(rules), num_rows="dynamic", use_container_width=True, key=key,
         column_config={
             "Method": st.column_config.SelectboxColumn(options=list(METHODS),
                                                        required=True),
@@ -144,201 +101,172 @@ with builder:
             "Target": st.column_config.TextColumn(
                 help="Comma-separate several: Off BS, Tasdeer"),
             "Value": st.column_config.NumberColumn(
-                help="Uplift / higher-of in percent; absolute add in QAR",
-                format="%.4g"),
+                help="Uplift and higher-of in percent; absolute add in QAR"),
             "Reason": st.column_config.TextColumn("Reason (required)", width="large")})
-    exists = oid.strip() in by_id and oid.strip() != (editing or "")
-    mode = "replace"
-    if exists:
-        n_rules = len(by_id[oid.strip()].get("rules") or [])
-        st.warning(f"Overlay '{oid.strip()}' already exists with {n_rules} rule(s).",
-                   icon="⚠️")
-        mode = {"Replace its rules": "replace",
-                "Append these rules to it": "append"}[
-            st.radio("Save as", ["Replace its rules", "Append these rules to it"],
-                     horizontal=True)]
-    b1, b2, b3, _ = st.columns([1, 1, 1, 3])
-    if b1.button("Save overlay", type="primary", icon=":material/save:"):
-        if not oid.strip():
-            st.error("Overlay ID is required.")
-        else:
-            payload = {"id": oid.strip(), "owner": owner, "approval_ref": ref,
-                       "effective_date": eff, "expiry": exp, "by": who,
-                       "mode": mode, "rules": _from_display(edited)}
-            if not payload["rules"]:
+    return _from_display(df)
+
+
+def _last(b: dict) -> str:
+    tr = b.get("transitions") or []
+    return str(tr[-1].get("at") or "")[:16].replace("T", " ") if tr else ""
+
+
+def _detail(b: dict) -> None:
+    oid, stt = b["id"], b.get("status") or "draft"
+    editable = stt in ("draft", "rejected")
+    st.subheader(f"Overlay {oid}")
+    st.markdown(f"status {pill(stt, STATUS_TONE.get(stt, 'info'))}"
+                + ("" if editable else " · move it back to draft to edit"),
+                unsafe_allow_html=True)
+    S.setdefault("ovl_who", S.get("_user") or "")
+    ver = len(b.get("transitions") or [])          # resets the editor on save
+
+    # ---- rules
+    st.markdown("**Rules**")
+    if editable:
+        c1, c2, c3, c4 = st.columns(4)
+        owner = c1.text_input("Owner", b.get("owner") or "", key=f"ovo_{oid}_{ver}")
+        ref = c2.text_input("Approval reference", b.get("approval_ref") or "",
+                            key=f"ovr_{oid}_{ver}")
+        eff = c3.text_input("Effective from", b.get("effective_date") or "",
+                            placeholder="2026-12-31", key=f"ove_{oid}_{ver}")
+        exp = c4.text_input("Expires", b.get("expiry") or "",
+                            placeholder="2027-03-31", key=f"ovx_{oid}_{ver}")
+        rules = _rules_editor(b.get("rules"), key=f"ovt_{oid}_{ver}")
+        if st.button("Save", type="primary", icon=":material/save:", key=f"ovs_{oid}"):
+            if not rules:
                 st.error("Add at least one rule.")
             else:
                 try:
-                    api.save_overlay_bundle(payload)
+                    api.save_overlay_bundle({
+                        "id": oid, "owner": owner, "approval_ref": ref,
+                        "effective_date": eff, "expiry": exp, "by": S.get("ovl_who", ""),
+                        "mode": "replace", "rules": rules})
                 except api.BackendError as e:
                     st.error(str(e))
                 else:
                     api.clear()
-                    st.session_state.pop("ovl_edit", None)
-                    flash(f"Saved overlay '{oid.strip()}' "
-                          f"({len(payload['rules'])} rule(s), status: draft).")
+                    flash(f"Saved {oid} ({len(rules)} rule(s), draft).")
                     st.rerun()
-    if b2.button("Clear", icon=":material/ink_eraser:"):
-        st.session_state.pop("ovl_edit", None)
-        st.rerun()
-    if b3.button("Preview impact", icon=":material/science:"):
-        if not run_id:
-            st.warning("Select a run at the top to preview against.")
-        else:
-            with guard():
-                prev = api.overlay_preview_rules(run_id, oid.strip() or "PREVIEW",
-                                                 _from_display(edited))
-            if not prev.get("ok"):
-                st.error("Conflict or invalid rules: "
-                         + "; ".join(prev.get("errors", [])), icon="⚠️")
-                if prev.get("contracts"):
-                    st.dataframe(pd.DataFrame({"contract": prev["contracts"][:10]}),
-                                 hide_index=True)
-            else:
-                t = prev["total"]
-                metric_row([("Model", money(t["model"])),
-                            ("Overlay", "+" + money(t["overlay"])),
-                            ("Final", money(t["final"])),
-                            ("Change", f"+{100 * t['overlay'] / max(t['model'], 1):.2f}%")])
-                if prev.get("summary"):
-                    st.dataframe(pd.DataFrame(prev["summary"]), hide_index=True,
-                                 use_container_width=True)
-
-# ================================================================== saved ==
-with saved:
-    caption("Edit loads a bundle back into the builder. Submit, approve and "
-            "reject move it through draft → pending → approved; each is recorded "
-            "with who and why.")
-    if not bundles:
-        st.info("No overlays yet.")
-    actor = st.text_input("Acting as (your name)", key="ovl_actor")
-    for b in bundles:
-        stt = b.get("status") or "draft"
-        with st.container(border=True):
-            h1, h2 = st.columns([3, 2])
-            h1.markdown(f"#### {b['id']} &nbsp;{pill(stt.upper(), STATUS_TONE.get(stt, 'info'))}",
-                        unsafe_allow_html=True)
-            h2.caption(f"{len(b.get('rules') or [])} rule(s) · owner "
-                       f"{b.get('owner') or '—'}")
-            for r in b.get("rules") or []:
-                st.markdown("- " + _rule_line(r))
-            reason = st.text_input("Reason for the status change", key=f"why_{b['id']}")
-            cols = st.columns(5)
-
-            def _move(to, oid=b["id"], rkey=f"why_{b['id']}"):
-                why = st.session_state.get(rkey, "").strip()
-                if not actor.strip() or not why:
-                    st.warning("Your name and a reason are both required.")
-                    return
-                try:
-                    api.set_bundle_status(oid, to, actor.strip(), why)
-                except api.BackendError as e:
-                    st.error(str(e))
-                else:
-                    api.clear()
-                    flash(f"Overlay '{oid}' is now {to}.")
-                    st.rerun()
-            if stt in ("draft", "rejected") and cols[0].button(
-                    "Submit for approval", key=f"sub_{b['id']}"):
-                _move("pending")
-            if stt == "pending":
-                if cols[0].button("Approve", type="primary", key=f"app_{b['id']}"):
-                    _move("approved")
-                if cols[1].button("Reject", key=f"rej_{b['id']}"):
-                    _move("rejected")
-            if cols[2].button("Edit", key=f"ed_{b['id']}"):
-                st.session_state["ovl_edit"] = b["id"]
-                st.rerun()
-            with cols[3].popover("Remove"):
-                st.write(f"Remove overlay '{b['id']}' and all its rules?")
-                if st.button("Remove", type="primary", key=f"del_{b['id']}"):
-                    try:
-                        api.delete_overlay_bundle(b["id"])
-                    except api.BackendError as e:
-                        st.error(str(e))
-                    else:
-                        api.clear()
-                        st.rerun()
-            if b.get("transitions"):
-                with st.expander("History"):
-                    st.dataframe(pd.DataFrame(b["transitions"]), hide_index=True,
-                                 use_container_width=True)
-
-# ========================================================= preview & apply ==
-with apply_tab:
-    if not run_id:
-        st.info("No run selected.", icon="👈")
-    elif not bundles:
-        caption("Define an overlay first.")
     else:
-        pick = st.selectbox("Overlay", list(by_id), key="apply_pick",
-                            format_func=lambda i: f"{i} [{(by_id[i].get('status') or 'draft').upper()}]")
-        if st.button("Preview", type="primary"):
-            try:
-                pv = api.preview_bundle(pick, run_id)
-            except api.BackendError as e:
-                st.error(str(e))
-            else:
-                if not pv.get("ok"):
-                    st.error("Conflict: " + "; ".join(pv.get("errors", []))
-                             + " — resolve before applying.", icon="⚠️")
-                    if pv.get("contracts"):
-                        st.dataframe(pd.DataFrame({"contract": pv["contracts"][:10]}),
-                                     hide_index=True)
-                else:
-                    t = pv["total"]
-                    metric_row([("Model ECL", money(t["model"])),
-                                ("Overlay", "+" + money(t["overlay"])),
-                                ("Final ECL", money(t["final"])),
-                                ("Contracts", money(pv.get("contracts_touched", 0)))])
-                    if pv.get("summary"):
-                        st.dataframe(pd.DataFrame(pv["summary"]), hide_index=True,
-                                     use_container_width=True)
-        status = (by_id.get(pick) or {}).get("status", "draft")
-        if status != "approved":
-            st.warning(f"This overlay is **{status}**. Applying an unapproved "
-                       "overlay is allowed — the status travels with the output — "
-                       "but it should be approved before the figure is used.",
-                       icon="⚠️")
-        if st.button("Apply to this run"):
-            try:
-                res = api.apply_bundle(pick, run_id)
-            except api.BackendError as e:
-                st.error(str(e))
-            else:
-                if not res.get("ok"):
-                    st.error("Conflict: " + "; ".join(res.get("errors", [])), icon="⚠️")
-                else:
-                    t = res["totals"]
-                    st.success(f"Applied. Model {money(t['model'])} → overlay "
-                               f"+{money(t['overlay'])} → final {money(t['final'])} "
-                               f"(+{100 * t['overlay'] / max(t['model'], 1):.2f}%).")
-                    api.clear()
+        rules = b.get("rules") or []
+        st.dataframe(_to_display(rules), hide_index=True, use_container_width=True)
+        caption(f"Owner {b.get('owner') or '—'} · approval reference "
+                f"{b.get('approval_ref') or '—'} · effective "
+                f"{b.get('effective_date') or '—'} · expires {b.get('expiry') or '—'}")
 
-# ================================================================ applied ==
-with applied_tab:
+    # ---- check against the selected run
+    st.markdown("**Check against a run**")
     if not run_id:
-        st.info("No run selected.", icon="👈")
-    else:
+        caption("Select a run at the top to check this overlay against it.")
+    elif st.button(f"Check against run {run_id}", icon=":material/science:",
+                   key=f"ovc_{oid}"):
         with guard():
-            ap = api.applied_overlays(run_id)
-        rows = ap["applied"]
-        if not rows:
-            caption("No overlay has been applied to this run.")
-        else:
-            st.dataframe(pd.DataFrame(rows)[["overlay_id", "report_file", "applied_at"]],
-                         hide_index=True, use_container_width=True)
-            caption("Read from what is on disk, so an overlay whose files were "
-                    "removed stops showing up. The analytics pages read the "
-                    "overlaid report while one is applied, as the R app does.")
-            drop = st.selectbox("Remove", [r["overlay_id"] for r in rows],
-                                key="drop_applied")
-            if st.button("Remove its outputs"):
+            pv = (api.overlay_preview_rules(run_id, oid, rules) if editable
+                  else api.preview_bundle(oid, run_id))
+        S["ovl_check"] = (oid, run_id, pv)
+    chk = S.get("ovl_check")
+    if chk and chk[0] == oid and chk[1] == run_id:
+        overlay_impact(chk[2])
+        if editable:
+            caption("Checked with the rules as they stand in the table, saved or not.")
+
+    # ---- approval
+    st.markdown("**Approval**")
+    c1, c2 = st.columns([1, 2])
+    who = c1.text_input("Your name", key="ovl_who")
+    reason = c2.text_input("Reason for the change of status", key=f"ovw_{oid}")
+    cols = st.columns(len(MOVES.get(stt, [])) + 1)
+    for col, (label, to) in zip(cols, MOVES.get(stt, [])):
+        if col.button(label, key=f"ovm_{oid}_{to}",
+                      type="primary" if to in ("pending", "approved") else "secondary"):
+            if not who.strip() or not reason.strip():
+                st.warning("Your name and a reason are both required.")
+            else:
                 try:
-                    api.remove_applied_overlay(run_id, drop)
+                    api.set_bundle_status(oid, to, who.strip(), reason.strip())
                 except api.BackendError as e:
                     st.error(str(e))
                 else:
                     api.clear()
-                    flash(f"Removed {drop}. The model report is untouched.")
+                    flash(f"{oid} is now {to}.")
                     st.rerun()
+    with cols[-1].popover("Remove"):
+        st.write(f"Remove overlay {oid} and its rules? Runs it was applied to "
+                 "keep their overlaid reports.")
+        if st.button("Remove", type="primary", key=f"ovd_{oid}"):
+            try:
+                api.delete_overlay_bundle(oid)
+            except api.BackendError as e:
+                st.error(str(e))
+            else:
+                api.clear()
+                flash(f"Removed {oid}.")
+                st.rerun()
+    if b.get("transitions"):
+        with st.expander("History"):
+            st.dataframe(pd.DataFrame(b["transitions"]), hide_index=True,
+                         use_container_width=True)
+
+
+# ===================================================================== page ==
+with guard():
+    reg = api.overlay_bundles()
+bundles = reg["bundles"]
+by_id = {b.get("id"): b for b in bundles}
+n = pd.Series([b.get("status") or "draft" for b in bundles], dtype="object")
+metric_row([("Overlays", str(len(bundles))),
+            ("Approved", str(int((n == "approved").sum()))),
+            ("Drafts", str(int(n.isin(["draft", "rejected"]).sum()))),
+            ("Awaiting approval", str(int((n == "pending").sum())))])
+
+with st.expander("Values and targets"):
+    st.markdown("Uplift %: the percentage of model ECL (15 = +15%). Higher-of: the "
+                "floor as a percentage of exposure (5 = 5%). Absolute add: the "
+                "amount in QAR, spread over the matched contracts by exposure.")
+    st.table(pd.DataFrame({"Target to enter": list(TARGETS.values())},
+                          index=[L_LABEL[k] for k in TARGETS]))
+
+with st.expander("New overlay", icon=":material/add:"):
+    c1, c2 = st.columns(2)
+    nid = c1.text_input("Overlay id", placeholder="OV-2026Q4", key="ovn_id").strip()
+    nowner = c2.text_input("Owner", "FRM", key="ovn_owner")
+    nrules = _rules_editor([], key="ovn_rules")
+    if st.button("Create as draft", type="primary", key="ovn_go"):
+        if not nid:
+            st.error("An overlay id is required.")
+        elif nid in by_id:
+            st.error(f"{nid} already exists: select it below to edit it.")
+        elif not nrules:
+            st.error("Add at least one rule.")
+        else:
+            try:
+                api.save_overlay_bundle({"id": nid, "owner": nowner, "mode": "new",
+                                         "by": S.get("ovl_who") or S.get("_user") or "",
+                                         "rules": nrules})
+            except api.BackendError as e:
+                st.error(str(e))
+            else:
+                api.clear()
+                for k in ("ovn_id", "ovn_rules"):
+                    S.pop(k, None)
+                flash(f"Created {nid} as a draft. Select it below to check and "
+                      "submit it.")
+                st.rerun()
+
+if not bundles:
+    st.info("No overlays yet. Create one above.")
+else:
+    table = pd.DataFrame([{
+        "Overlay": b["id"], "Status": b.get("status") or "draft",
+        "Rules": len(b.get("rules") or []), "Owner": b.get("owner") or "",
+        "Effective": b.get("effective_date") or "", "Expires": b.get("expiry") or "",
+        "Last change": _last(b)} for b in bundles])
+    ev = st.dataframe(table, hide_index=True, use_container_width=True,
+                      on_select="rerun", selection_mode="single-row", key="ovl_tbl")
+    rows = ev.selection.rows if ev and ev.selection else []
+    if not rows:
+        caption("Select an overlay to see its rules, edit, check and approve it.")
+    else:
+        _detail(by_id[table.iloc[rows[0]]["Overlay"]])
+caption(f"Stored in `{reg['path']}`")

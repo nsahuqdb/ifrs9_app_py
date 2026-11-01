@@ -792,18 +792,19 @@ def _settings_card(vers: dict, calcs: dict) -> dict:
             "Run purpose", list(purposes), key=f"wf_pp_{run_type}",
             help="Every run is priced on the probability-weighted PD curve and "
                  "on each scenario; the weighted figure is the provision.")]
-        clabels = {"Active calculator": ""}
+        now = calcs.get("engine_version") or (calcs["active"] or {}).get("id") or ""
+        clabels = {f"{now} (this engine)": ""}
         for c in calcs["versions"]:
-            clabels[c["label"] + (" · active" if c.get("active") else "")] = c["id"]
+            if not c.get("current") and c["runs_archived_code"]:
+                clabels[f"{c['id']} (archived)"] = c["id"]
         cur_calc = clabels.get(S.get("wf_calc"), "")
         crow = next((c for c in calcs["versions"] if c["id"] == cur_calc), None)
         code = (crow or calcs["active"] or {}).get("code_hash") or "?"
         calc_id = clabels[c4.selectbox(
-            "Calculator", list(clabels), key="wf_calc",
+            "Calculator version", list(clabels), key="wf_calc",
             help=f"Fingerprint {code[:10]}: "
-                 + ("runs this version's archived code."
-                    if crow and crow["runs_archived_code"]
-                    else "runs the live deployed code."))]
+                 + ("runs this version's archived code." if crow
+                    else "runs the deployed code."))]
         S.setdefault("wf_pdate_in", date.today())
         pdate = c5.date_input("Portfolio date", key="wf_pdate_in",
                               format="DD/MM/YYYY",

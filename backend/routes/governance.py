@@ -267,53 +267,27 @@ def add_run_suppression(run_id: str, body: SuppressionIn) -> dict:
 # ------------------------------------------- calculator versions -----------
 
 
-class CalculatorIn(BaseModel):
-    id: str
-    label: str = ""
-    description: str = ""
-    created_by: str = ""
-    make_active: bool = True
-
-
 @router.get("/calculator/versions")
 def calculator_versions() -> dict:
-    """The registry, plus what the CURRENTLY DEPLOYED code fingerprints to.
-
-    The two together are the point: the registry says what a run would claim,
-    the live fingerprint says what it would actually execute.
-    """
+    """The calculator versions: the running engine version (registered and
+    archived the first time it is seen) and the earlier ones, with what the
+    deployed code fingerprints to against what was registered."""
     from ifrs9qdb.calculator_versions import (calculator_version_for_run,
                                               compute_code_fingerprint,
+                                              engine_version,
+                                              ensure_current_registered,
                                               list_calculator_versions)
+    ensure_current_registered(PROJECT_ROOT)
     table = list_calculator_versions(PROJECT_ROOT)
+    if len(table):
+        table = table.assign(current=table["id"] == engine_version())
     return {
         "root": str(PROJECT_ROOT),
+        "engine_version": engine_version(),
         "versions": _records(table),
         "live_fingerprint": compute_code_fingerprint(),
         "for_run": calculator_version_for_run(root=PROJECT_ROOT),
     }
-
-
-@router.post("/calculator/versions")
-def register_calculator(body: CalculatorIn) -> dict:
-    from ifrs9qdb.calculator_versions import register_calculator_version
-    try:
-        entry = register_calculator_version(
-            body.id, body.label or None, body.description,
-            body.created_by or None, body.make_active, root=PROJECT_ROOT)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    return {"ok": True, "version": entry}
-
-
-@router.post("/calculator/active/{version_id}")
-def activate_calculator(version_id: str) -> dict:
-    from ifrs9qdb.calculator_versions import set_active_calculator_version
-    try:
-        set_active_calculator_version(version_id, PROJECT_ROOT)
-    except ValueError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    return {"ok": True, "active": version_id}
 
 
 @router.get("/code/status")

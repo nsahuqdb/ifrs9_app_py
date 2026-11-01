@@ -1,6 +1,26 @@
 # Running the app
 
-Two processes, as with the transaction model app.
+## Windows: one file
+
+`start_ifrs9.bat` does everything. Put it in the folder that should hold the
+two repositories (for example `Documents\IFRS9_apps`) and double-click it:
+
+* the first time it downloads `ifrs9qdb_py` and `ifrs9_app_py` (git when
+  installed, else the branch's zip), finds Python 3.10 or later (or installs
+  Python 3.12 for the user), creates a virtual environment in
+  `%LOCALAPPDATA%\ifrs9_app\venv`, installs the requirements, starts the
+  backend and the interface and opens the browser;
+* every later time it fetches the latest code, reinstalls only when a
+  `pyproject.toml` changed, and restarts the app.
+
+An update never overwrites the configuration, runs, config versions, macro
+store or logs: with git, a file changed on this computer that the new code
+also changes stops that repository's update (the file names are listed and
+the app starts on the current code); from a zip, only new default files are
+added to `config/` and `data-raw/`. The branch, the ports and a proxy are set
+at the top of the file. Each step's output is in `launcher_logs`.
+
+By hand, it is two processes, as with the transaction model app.
 
 ## 1. Backend
 

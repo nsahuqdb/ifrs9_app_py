@@ -31,8 +31,13 @@ data/
 logs/
 calculator_versions/
 config_snapshots/
+# the calculator registry: written by the app the first time a version runs
+config/calculator_versions.yml
 
 # The macro store: fetched data, a deployment keeps its own vintages
 macro_store/
 # Saved stress scenarios: the deployment's own database
 scenarios/
+
+# The launcher's logs (start_ifrs9.bat)
+launcher_logs/

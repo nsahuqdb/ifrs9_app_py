@@ -386,17 +386,23 @@ def run_type_check(run_type: str = "unofficial", version: str = "__LIVE__") -> d
 
 @router.get("/workflow/calculators")
 def calculators() -> dict:
-    """Calculator versions, active first, and what each would execute."""
+    """Calculator versions -- the running engine version first -- and what
+    each would execute."""
     from ifrs9qdb.calculator_versions import (calculator_version_for_run,
+                                              engine_version,
+                                              ensure_current_registered,
                                               list_calculator_versions)
     from ifrs9qdb.runs import archived_code_for
+    ensure_current_registered(settings.PROJECT_ROOT)
     cv = list_calculator_versions(settings.PROJECT_ROOT)
+    now = engine_version()
     rows = []
-    for r in _records(cv.sort_values("active", ascending=False) if len(cv) else cv):
-        rows.append({**r, "runs_archived_code":
+    for r in _records(cv):
+        rows.append({**r, "current": r["id"] == now, "runs_archived_code":
                      archived_code_for(r["id"], settings.PROJECT_ROOT) is not None})
+    rows.sort(key=lambda r: not r["current"])
     active = calculator_version_for_run(root=settings.PROJECT_ROOT)
-    return {"versions": rows, "active": active}
+    return {"versions": rows, "active": active, "engine_version": now}
 
 
 # ------------------------------------------------------ 3. pre-run check ----

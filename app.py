@@ -117,7 +117,7 @@ pages = {
                 icon=":material/inventory_2:"),
         st.Page(P + "calculator.py", title="Calculator versions",
                 icon=":material/deployed_code:"),
-        st.Page(P + "overlays.py", title="ECL overlays", icon=":material/tune:"),
+        st.Page(P + "overlays.py", title="Management overlay", icon=":material/tune:"),
         st.Page(P + "suppressions.py", title="Validation suppressions",
                 icon=":material/rule_folder:"),
         st.Page(P + "config.py", title="Live configuration",
@@ -140,7 +140,7 @@ NEEDS_RUN = {"Overview", "Staging", "Concentration", "Segments",
              "Parameter stress", "Scenario stress",
              "Model assumptions", "ECL calculator"}
 COMPARES = {"Movement", "Migration", "Reconcile & export"}
-OPTIONAL_RUN = {"ECL overlays", "Assistant", "Audit log"}
+OPTIONAL_RUN = {"Management overlay", "Assistant", "Audit log"}
 
 nav = st.navigation(pages, position="top")
 # The menu holding the page on screen is marked like the page in its list.
