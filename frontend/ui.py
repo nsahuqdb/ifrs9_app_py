@@ -1046,3 +1046,36 @@ def column_filters(df: pd.DataFrame, key: str, columns: list | None = None,
                 st.session_state.pop(k, None)
             st.rerun()
     return out
+
+
+# the management overlay's rule methods and levels, as the pages name them
+OVERLAY_METHODS = {"Uplift %": "uplift_pct",
+                   "Higher-of (floor % of exposure)": "higher_of",
+                   "Absolute add (QAR)": "absolute_add"}
+OVERLAY_LEVELS = {"Whole book": "whole_book", "Stage": "stage",
+                  "Portfolio": "portfolio", "Rating": "rating", "Flag": "flag",
+                  "Sector": "sector", "Customer": "customer", "Contract": "contract"}
+
+
+def overlay_rules_frame(rules: list, blank_row: bool = False) -> pd.DataFrame:
+    """An overlay's rules as a table: values in percent (absolute add in
+    QAR). ``blank_row``: one example row when there are none (the editor's
+    starting point)."""
+    m_label = {v: k for k, v in OVERLAY_METHODS.items()}
+    l_label = {v: k for k, v in OVERLAY_LEVELS.items()}
+    rows = []
+    for r in rules or []:
+        m = r.get("method") or "uplift_pct"
+        try:
+            v = float(r.get("value"))
+        except (TypeError, ValueError):
+            v = None
+        rows.append({"Method": m_label.get(m, m),
+                     "Level": l_label.get(r.get("level") or "whole_book", "Whole book"),
+                     "Target": r.get("target") or "",
+                     "Value": v if m == "absolute_add" or v is None else v * 100,
+                     "Reason": r.get("comment") or ""})
+    if not rows and blank_row:
+        rows = [{"Method": "Uplift %", "Level": "Portfolio",
+                 "Target": "Business Finance", "Value": 10.0, "Reason": ""}]
+    return pd.DataFrame(rows, columns=["Method", "Level", "Target", "Value", "Reason"])

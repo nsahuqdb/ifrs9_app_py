@@ -157,23 +157,29 @@ with c_exp:
 with c_ovl:
     with st.container(border=True):
         st.markdown("**Management overlay**")
+        official = str(run.get("run_type") or "") == "official"
         caption("Check an overlay's impact on this run, then apply it. The model "
                 "report is kept and the overlaid report written beside it. To "
                 "correct an applied overlay, remove it below and apply the "
-                "corrected one.")
+                "corrected one. "
+                + ("An official run takes approved overlays only." if official else
+                   "An unofficial run takes tested or approved overlays."))
         with guard():
             bundles = api.overlay_bundles()["bundles"]
-        status = {b["id"]: (b.get("status") or "draft") for b in bundles}
+        usable = ("approved",) if official else ("tested", "approved")
+        status = {b["id"]: (b.get("status") or "draft") for b in bundles
+                  if (b.get("status") or "draft") in usable}
         pick = st.selectbox("Overlay", list(status), index=None,
-                            placeholder="Select an overlay",
+                            placeholder="Select an overlay" if status else
+                            "No overlay can be applied to this run yet",
                             format_func=lambda i: f"{i} [{status[i].upper()}]",
                             label_visibility="collapsed", key=f"ovp_{run_id}")
         chk_key = f"ovchk_{run_id}"
         if pick:
             if status[pick] != "approved":
-                st.warning(f"{pick} is {status[pick]}. It can be applied (the "
-                           "status travels with the output) but should be "
-                           "approved before the figure is used.", icon="⚠️")
+                st.warning(f"{pick} is tested, not yet approved: fine for this "
+                           "unofficial run; an official run needs it approved.",
+                           icon="⚠️")
             c1, c2 = st.columns(2)
             if c1.button("Check impact", key=f"ovc_{run_id}", width="stretch",
                          icon=":material/science:"):

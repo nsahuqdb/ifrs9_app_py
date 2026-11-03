@@ -266,18 +266,8 @@ def audit(run_id: str) -> list:
 
 
 @st.cache_data(ttl=30, show_spinner=False)
-def approval(run_id: str) -> dict:
-    return get(f"/approval/{run_id}")
-
-
-@st.cache_data(ttl=30, show_spinner=False)
 def approval_queue() -> list:
     return get("/approval")
-
-
-def approve(run_id: str, stage: str, approver: str, comment: str = "") -> dict:
-    return post(f"/approval/{run_id}",
-                {"stage": stage, "approver": approver, "comment": comment})
 
 
 @st.cache_data(ttl=120, show_spinner="Comparing the runs…")
@@ -722,6 +712,14 @@ def queue_run_context(run_id: str, acting_as: str | None = None) -> dict:
 
 def queue_versions() -> dict:
     return get("/approval-queue/versions")
+
+
+def queue_overlays() -> dict:
+    return get("/approval-queue/overlays")
+
+
+def copy_overlay_bundle(overlay_id: str, new_id: str, by: str = "") -> dict:
+    return post(f"/overlay-bundles/{overlay_id}/copy", {"new_id": new_id, "by": by})
 
 
 def clone_snapshot(label: str, new_label: str, description: str,

@@ -1,35 +1,31 @@
 """Management overlay: post-model adjustments, kept as sets of rules.
 
 One page, laid out like Config versions: the overlays in a table; select one
-to see its rules, edit them while it is a draft, check them against the run
-selected at the top, and move it through draft -> pending -> approved. Saving
-always returns an overlay to draft: an edited overlay cannot keep an approval
-given to different rules. Stage 3 is never touched, and a contract matched by
-two rules blocks the overlay rather than being adjusted twice. An overlay is
+to see its rules. A draft is edited, checked against the run selected at the
+top, and marked tested by its maker, which locks it: unofficial runs may then
+use it, and it goes to the Approval queue, where somebody else approves it for
+official runs. A locked overlay is changed by copying it to a new draft. Only
+a draft is removed. Stage 3 is never touched, and a contract matched by two
+rules blocks the overlay rather than being adjusted twice. An overlay is
 applied to a completed run from the Runs page, after the same check there.
 """
 import pandas as pd
 import streamlit as st
 
 import api
-from ui import caption, flash, guard, metric_row, overlay_impact, page_setup, pill
+from ui import (OVERLAY_LEVELS, OVERLAY_METHODS, caption, flash, guard, metric_row,
+                overlay_impact, overlay_rules_frame, page_setup, pill)
 
 S = st.session_state
 
 page_setup("Management overlay",
-           "A post-model adjustment: a set of rules under one id, approved "
-           "before it is used. Check it against a run here, then apply it to "
-           "that run from the Runs page.")
+           "A post-model adjustment: a set of rules under one id. Draft, then "
+           "tested by its maker (locked; unofficial runs), then approved by somebody "
+           "else (official runs). Apply it to a run from the Runs page.")
 
 run_id = S.get("run_id")
 
-METHODS = {"Uplift %": "uplift_pct",
-           "Higher-of (floor % of exposure)": "higher_of",
-           "Absolute add (QAR)": "absolute_add"}
-M_LABEL = {v: k for k, v in METHODS.items()}
-LEVELS = {"Whole book": "whole_book", "Stage": "stage", "Portfolio": "portfolio",
-          "Rating": "rating", "Flag": "flag", "Sector": "sector",
-          "Customer": "customer", "Contract": "contract"}
+METHODS, LEVELS = OVERLAY_METHODS, OVERLAY_LEVELS
 L_LABEL = {v: k for k, v in LEVELS.items()}
 TARGETS = {
     "whole_book": "no target: all Stage 1 and 2 contracts",
@@ -43,34 +39,18 @@ TARGETS = {
     "customer": "customer ids, comma-separated",
     "contract": "contract ids, comma-separated",
 }
-STATUS_TONE = {"draft": "info", "pending": "warn", "approved": "ok",
+STATUS_TONE = {"draft": "info", "tested": "warn", "approved": "ok",
                "rejected": "err"}
-# The moves the backend allows from each status, as buttons.
-MOVES = {"draft": [("Submit for approval", "pending")],
-         "rejected": [("Submit for approval", "pending"), ("Back to draft", "draft")],
-         "pending": [("Approve", "approved"), ("Reject", "rejected"),
-                     ("Back to draft", "draft")],
-         "approved": [("Back to draft", "draft")]}
-
-
-def _to_display(rules: list) -> pd.DataFrame:
-    rows = []
-    for r in rules or []:
-        m = r.get("method") or "uplift_pct"
-        v = r.get("value")
-        try:
-            v = float(v)
-        except (TypeError, ValueError):
-            v = None
-        rows.append({"Method": M_LABEL.get(m, m),
-                     "Level": L_LABEL.get(r.get("level") or "whole_book", "Whole book"),
-                     "Target": r.get("target") or "",
-                     "Value": (v if m == "absolute_add" or v is None else v * 100),
-                     "Reason": r.get("comment") or ""})
-    if not rows:
-        rows = [{"Method": "Uplift %", "Level": "Portfolio",
-                 "Target": "Business Finance", "Value": 10.0, "Reason": ""}]
-    return pd.DataFrame(rows)
+STATUS_NOTE = {
+    "draft": "Edit it, check it against a run, then mark it tested. Marking it "
+             "tested locks it: unofficial runs may then use it, and it goes to the "
+             "Approval queue.",
+    "tested": "Locked. Unofficial runs may use it; it awaits approval in the "
+              "Approval queue. To change it, copy it to a new draft.",
+    "approved": "Locked. Official and unofficial runs may use it. To change it, "
+                "copy it to a new draft.",
+    "rejected": "Locked and applied to no run. To change it, copy it to a new draft.",
+}
 
 
 def _from_display(df: pd.DataFrame) -> list[dict]:
@@ -92,7 +72,8 @@ def _from_display(df: pd.DataFrame) -> list[dict]:
 def _rules_editor(rules: list, key: str) -> list[dict]:
     """The rules as an editable table; returns them in the engine's form."""
     df = st.data_editor(
-        _to_display(rules), num_rows="dynamic", use_container_width=True, key=key,
+        overlay_rules_frame(rules, blank_row=True), num_rows="dynamic",
+        use_container_width=True, key=key,
         column_config={
             "Method": st.column_config.SelectboxColumn(options=list(METHODS),
                                                        required=True),
@@ -113,11 +94,10 @@ def _last(b: dict) -> str:
 
 def _detail(b: dict) -> None:
     oid, stt = b["id"], b.get("status") or "draft"
-    editable = stt in ("draft", "rejected")
+    editable = stt == "draft"
     st.subheader(f"Overlay {oid}")
-    st.markdown(f"status {pill(stt, STATUS_TONE.get(stt, 'info'))}"
-                + ("" if editable else " · move it back to draft to edit"),
-                unsafe_allow_html=True)
+    st.markdown(f"status {pill(stt, STATUS_TONE.get(stt, 'info'))} · "
+                + STATUS_NOTE.get(stt, ""), unsafe_allow_html=True)
     S.setdefault("ovl_who", S.get("_user") or "")
     ver = len(b.get("transitions") or [])          # resets the editor on save
 
@@ -150,7 +130,8 @@ def _detail(b: dict) -> None:
                     st.rerun()
     else:
         rules = b.get("rules") or []
-        st.dataframe(_to_display(rules), hide_index=True, use_container_width=True)
+        st.dataframe(overlay_rules_frame(rules), hide_index=True,
+                     use_container_width=True)
         caption(f"Owner {b.get('owner') or '—'} · approval reference "
                 f"{b.get('approval_ref') or '—'} · effective "
                 f"{b.get('effective_date') or '—'} · expires {b.get('expiry') or '—'}")
@@ -169,39 +150,55 @@ def _detail(b: dict) -> None:
     if chk and chk[0] == oid and chk[1] == run_id:
         overlay_impact(chk[2])
         if editable:
-            caption("Checked with the rules as they stand in the table, saved or not.")
+            caption("Checked with the rules as they stand in the table, saved or not. "
+                    "Nothing is written to the run.")
 
-    # ---- approval
-    st.markdown("**Approval**")
-    c1, c2 = st.columns([1, 2])
-    who = c1.text_input("Your name", key="ovl_who")
-    reason = c2.text_input("Reason for the change of status", key=f"ovw_{oid}")
-    cols = st.columns(len(MOVES.get(stt, [])) + 1)
-    for col, (label, to) in zip(cols, MOVES.get(stt, [])):
-        if col.button(label, key=f"ovm_{oid}_{to}",
-                      type="primary" if to in ("pending", "approved") else "secondary"):
+    if editable:
+        # ---- mark tested, or remove
+        st.markdown("**Mark tested**")
+        c1, c2 = st.columns([1, 2])
+        who = c1.text_input("Your name", key="ovl_who")
+        reason = c2.text_input("Reason", key=f"ovw_{oid}",
+                               placeholder="e.g. impact checked on run …")
+        b1, b2, _ = st.columns([1, 1, 3])
+        if b1.button("Mark tested", type="primary", key=f"ovm_{oid}", width="stretch"):
             if not who.strip() or not reason.strip():
                 st.warning("Your name and a reason are both required.")
             else:
                 try:
-                    api.set_bundle_status(oid, to, who.strip(), reason.strip())
+                    api.set_bundle_status(oid, "tested", who.strip(), reason.strip())
                 except api.BackendError as e:
                     st.error(str(e))
                 else:
                     api.clear()
-                    flash(f"{oid} is now {to}.")
+                    flash(f"{oid} is tested and locked; it is in the Approval queue.")
                     st.rerun()
-    with cols[-1].popover("Remove"):
-        st.write(f"Remove overlay {oid} and its rules? Runs it was applied to "
-                 "keep their overlaid reports.")
-        if st.button("Remove", type="primary", key=f"ovd_{oid}"):
+        with b2.popover("Remove", width="stretch"):
+            st.write(f"Remove the draft {oid} and its rules?")
+            if st.button("Remove", type="primary", key=f"ovd_{oid}"):
+                try:
+                    api.delete_overlay_bundle(oid)
+                except api.BackendError as e:
+                    st.error(str(e))
+                else:
+                    api.clear()
+                    flash(f"Removed {oid}.")
+                    st.rerun()
+    else:
+        # ---- a locked overlay changes as a new draft
+        st.markdown("**Copy to a new draft**")
+        c1, c2 = st.columns([2, 1], vertical_alignment="bottom")
+        new_id = c1.text_input("New overlay id", key=f"ovcp_{oid}",
+                               placeholder=f"{oid}-v2").strip()
+        if c2.button("Copy to a new draft", key=f"ovcpb_{oid}", width="stretch",
+                     disabled=not new_id):
             try:
-                api.delete_overlay_bundle(oid)
+                api.copy_overlay_bundle(oid, new_id, S.get("ovl_who") or "")
             except api.BackendError as e:
                 st.error(str(e))
             else:
                 api.clear()
-                flash(f"Removed {oid}.")
+                flash(f"Copied {oid} to the draft {new_id}. Select it below to edit it.")
                 st.rerun()
     if b.get("transitions"):
         with st.expander("History"):
@@ -217,8 +214,8 @@ by_id = {b.get("id"): b for b in bundles}
 n = pd.Series([b.get("status") or "draft" for b in bundles], dtype="object")
 metric_row([("Overlays", str(len(bundles))),
             ("Approved", str(int((n == "approved").sum()))),
-            ("Drafts", str(int(n.isin(["draft", "rejected"]).sum()))),
-            ("Awaiting approval", str(int((n == "pending").sum())))])
+            ("Drafts", str(int((n == "draft").sum()))),
+            ("Tested, awaiting approval", str(int((n == "tested").sum())))])
 
 with st.expander("Values and targets"):
     st.markdown("Uplift %: the percentage of model ECL (15 = +15%). Higher-of: the "
@@ -250,8 +247,8 @@ with st.expander("New overlay", icon=":material/add:"):
                 api.clear()
                 for k in ("ovn_id", "ovn_rules"):
                     S.pop(k, None)
-                flash(f"Created {nid} as a draft. Select it below to check and "
-                      "submit it.")
+                flash(f"Created {nid} as a draft. Select it below to check it and "
+                      "mark it tested.")
                 st.rerun()
 
 if not bundles:
@@ -266,7 +263,8 @@ else:
                       on_select="rerun", selection_mode="single-row", key="ovl_tbl")
     rows = ev.selection.rows if ev and ev.selection else []
     if not rows:
-        caption("Select an overlay to see its rules, edit, check and approve it.")
+        caption("Select an overlay to see its rules, edit a draft, check it and "
+                "mark it tested.")
     else:
         _detail(by_id[table.iloc[rows[0]]["Overlay"]])
 caption(f"Stored in `{reg['path']}`")

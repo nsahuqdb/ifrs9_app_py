@@ -136,9 +136,9 @@ Runs, inputs and uploads are real portfolio data and are never committed;
 ## A quarter, in the app
 
 1. **Run the pipeline** — pick the input (configured folder, a data-drop
-   folder, or a zip), **Validate inputs** (structure, then every input check
-   as a preview), pick the config version, run type and purpose, then
-   **Pre-run check**: the config, static and input checks, and the
+   folder, or a zip) and the config version, run type and purpose, then the
+   three buttons side by side: **Validate inputs** (structure, then every input
+   check as a preview), **Pre-run check**: the config, static and input checks, and the
    pricing-readiness dry run — which contracts would get no ECL, which LIC
    would leave blank, which are priced from incomplete inputs, with the
    reasons, the fixes and the row funnel. Start stays disabled while any
@@ -148,7 +148,12 @@ Runs, inputs and uploads are real portfolio data and are never committed;
    finishes the run, Cancel removes it.
 3. An official run lands in the **Approval queue**; another user approves or
    rejects it with a reason (separation of duties is enforced when
-   `approval.enforce_separation_of_duties` is true).
+   `approval.enforce_separation_of_duties` is true). Config versions and
+   management overlays follow one lifecycle: a **draft** is edited and used in
+   no run; its maker marks it **tested**, which locks it (no edit, no removal)
+   and lets unofficial runs use it; another user **approves** it in the
+   Approval queue, and only then may an official run use it. A change after
+   that is a new draft, copied from it.
 4. **Browse runs** shows every run: manifest, validation, readiness,
    overrides, reconciliation, outputs, the export package, and overlays.
 

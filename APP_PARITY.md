@@ -50,9 +50,11 @@ the test suites.
 | Pending runs table | the same, with duration, outputs, validation fails, overrides | browser |
 | Run review: dev-mode banner when separation is off; Validation / Overrides applied / Outputs tabs | the same, plus the readiness line | browser |
 | Approve / Reject: maker, acting user, separation flag; reason required; Approve disabled for the maker when separation is enforced | the same | browser: approved by checker1; engine tests: the maker refused |
-| History of runs with the audit trail | the same | rendered |
-| Pending versions: approve or reject with a reason | the same | rendered; a version approved in the browser from Config versions |
+| History of runs with the audit trail | the decided runs, in a list under the pending ones | rendered |
+| Pending versions: approve or reject with a reason | the versions their makers marked tested; approved or rejected here only (the approver is neither creator nor tester under separation) | browser |
 | History of versions | the same | rendered |
+| (none) | Management overlays marked tested: rules, a check against the selected run, approve or reject | browser |
+| Risk and Finance sign-off | removed: an official run is signed off once, above | — |
 
 ## Config (`mod_snapshots.R`, `mod_snapshot_manager.R`, `mod_snapshot_editor.R`, `mod_calculator_versions.R` → `views/snapshots.py`, `views/calculator.py`)
 
@@ -60,7 +62,7 @@ the test suites.
 |---|---|---|
 | Versions table and detail: metadata; every file under `config/` and `static/`, read-only, 200 KB preview | the same | rendered |
 | Create: label pattern, description required, base version | the same | browser |
-| Promote: draft → tested → pending_final → approved; reason required; the creator cannot approve under separation | the same | browser: created by maker1, approved by checker1 |
+| Promote: draft → tested → pending_final → approved; reason required; the creator cannot approve under separation | draft → tested (its maker; locks it; unofficial runs) → approved (somebody else, in the Approval queue; official runs) → archived; a draft is used in no run; pending_final reads as tested | browser |
 | Edit config: drafts only, clone a locked version to a new draft; files grouped, advanced toggle, help per file; YAML with discard and error context; CSV with add/delete rows, download, upload, discard | the same | rendered |
 | Calculator versions: registered versions, active one, deployed-code fingerprint and match; register; set active | the calculator version is the engine version, registered and archived the first time it is used, so there is nothing to register or activate; fingerprint and match as R | rendered |
 
@@ -72,7 +74,7 @@ the test suites.
 | Rules: method, level (whole book, stage, portfolio, rating, flag, sector, customer, contract), target, value, reason | the same; the target is typed (with a guide per level) where R offers a picker | browser |
 | Save: an existing id asks replace or append; any save returns the overlay to draft | the same | browser (a new overlay); API |
 | Preview against a run: model, overlay, final, per rule; conflicts (a contract matched twice) block | the same | browser: +QAR 87,785,735 (+4.46%) |
-| Saved list: Submit (draft/rejected), Approve / Reject (pending), Edit, Remove with confirmation | one page: the overlays in a table; the selected one is edited in place while draft (back to draft otherwise), checked against the selected run, and moved on | browser |
+| Saved list: Submit (draft/rejected), Approve / Reject (pending), Edit, Remove with confirmation | one page: the overlays in a table; a draft is edited in place, checked against the selected run, removed, or marked tested (locked); a locked one is copied to a new draft; approval in the Approval queue. A run takes tested or approved overlays, an official run approved ones | browser |
 | Apply to a run; applied list; remove its outputs | on the Runs page, after an impact check | browser |
 
 ## Validation suppressions (`mod_suppressions.R` → `views/suppressions.py`)

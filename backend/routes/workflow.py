@@ -344,13 +344,15 @@ def validate_inputs(body: SourceIn) -> dict:
 def versions() -> dict:
     """Config versions newest first, the active one (latest approved) pinned
     to the top and preselected; the default config last -- or first when
-    nothing is approved yet."""
-    from ifrs9qdb.snapshots import list_snapshots
+    nothing is approved yet. ``usable``: whether an unofficial run may use
+    the version (tested or approved; a draft never)."""
+    from ifrs9qdb.snapshots import list_snapshots, snapshot_usable
     s = list_snapshots(settings.SNAPSHOTS_ROOT)
     rows = _records(s)
     active = next((r["label"] for r in rows if r.get("status") == "approved"), None)
     for r in rows:
         r["active"] = r["label"] == active
+        r["usable"] = snapshot_usable(r.get("status"), "unofficial")[0]
     if active:
         rows = [r for r in rows if r["active"]] + [r for r in rows if not r["active"]]
     return {"versions": rows, "active": active,
@@ -359,29 +361,28 @@ def versions() -> dict:
 
 @router.get("/workflow/run-type-check")
 def run_type_check(run_type: str = "unofficial", version: str = "__LIVE__") -> dict:
-    """Whether this (run type, version) pair may start -- the R gate: an
-    official run needs an APPROVED config version."""
-    from ifrs9qdb.snapshots import read_snapshot_metadata
+    """Whether this (run type, version) pair may start: an official run needs
+    an approved config version; an unofficial one a tested or approved one,
+    or the live config. A draft is never used in a run."""
+    from ifrs9qdb.snapshots import read_snapshot_metadata, snapshot_usable
     purposes = RUN_PURPOSES.get(run_type, RUN_PURPOSES["unofficial"])
     base = {"purposes": [{"id": p, "label": PURPOSE_LABELS[p]} for p in purposes]}
-    if run_type != "official":
-        return {"ok": True, "reason": "", **base,
-                "note": "Unofficial run — skips approval. Export is marked UNOFFICIAL."}
+    note = ("Official run — subject to approval." if run_type == "official" else
+            "Unofficial run — skips approval. Export is marked UNOFFICIAL.")
     if not version or version == "__LIVE__":
+        if run_type != "official":
+            return {"ok": True, "reason": "", **base, "note": note}
         return {"ok": False, **base,
-                "reason": "Official runs require an approved version. Default "
-                          "config has no approval status — pick an approved "
-                          "version, or switch to Unofficial."}
+                "reason": "An official run needs an approved config version; the "
+                          "default config has none. Pick an approved version, or "
+                          "switch to Unofficial."}
     meta = read_snapshot_metadata(version, settings.SNAPSHOTS_ROOT)
     if meta is None:
         return {"ok": False, "reason": "Could not read version metadata.", **base}
-    if meta.get("status") != "approved":
-        return {"ok": False, **base,
-                "reason": f"Official runs require an approved version. "
-                          f"'{version}' is currently '{meta.get('status') or 'unknown'}'. "
-                          "Promote it to approved first, or switch to Unofficial."}
-    return {"ok": True, "reason": "", **base,
-            "note": "Official run — subject to approval."}
+    ok, why = snapshot_usable(meta.get("status"), run_type)
+    if not ok:
+        return {"ok": False, **base, "reason": f"{version}: {why}"}
+    return {"ok": True, "reason": "", **base, "note": note}
 
 
 @router.get("/workflow/calculators")
@@ -584,7 +585,7 @@ def start(body: StartIn) -> dict:
         raise HTTPException(400, f"No input directory at {d}")
     gate = run_type_check(body.run_type, body.version or "__LIVE__")
     if not gate["ok"]:
-        raise HTTPException(400, "Cannot start an Official run: " + gate["reason"])
+        raise HTTPException(400, "Cannot start this run: " + gate["reason"])
     purposes = RUN_PURPOSES.get(body.run_type, RUN_PURPOSES["unofficial"])
     purpose = body.run_purpose if body.run_purpose in purposes else purposes[0]
     cfg, st, meta = _version_paths(body.version)

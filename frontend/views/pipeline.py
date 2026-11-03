@@ -657,7 +657,9 @@ def _done_page() -> None:
 
 
 # ========================================================== idle: cards ====
-def _inputs_card(src: dict, default_version: str) -> None:
+def _inputs_card(src: dict) -> tuple[dict, bool]:
+    """Where the 12 files come from. Returns the source and whether it is
+    ready to validate (the button is in Check and start)."""
     val = S.get("wf_val")
     with st.container(border=True):
         card_header("Input extracts", None, right=(
@@ -718,39 +720,19 @@ def _inputs_card(src: dict, default_version: str) -> None:
                                          placeholder=r"e.g. D:\IFRS9\input\2026-06")
             ready = bool((body["path"] or "").strip())
 
-        b, s = st.columns([2, 3], vertical_alignment="center")
-        go = b.button("Validate inputs" if val is None else "Validate again",
-                      icon=":material/fact_check:",
-                      type="primary" if val is None or not val["ok"] else "secondary",
-                      disabled=not ready, width="stretch")
-        with s:
-            if val is None:
-                caption("Checks the files are all there and readable, and "
-                        "previews their data quality.")
-            elif val["ok"]:
-                caption(f"{val['n_pass']} structural checks passed. Results on "
-                        "the right.")
-            else:
-                caption(f"**{val['n_fail']} structural check(s) failed.** "
-                        "Results on the right.")
-        if go:
-            body["version"] = S.get("wf_version", default_version)
-            with st.spinner("Reading the files and checking them…"):
-                with guard():
-                    S["wf_val"] = api.wf_validate_inputs(body)
-            _reset_checks()
-            if S["wf_val"].get("extract_date"):
-                # The widget's own key: a keyed date_input ignores a changed
-                # default, so the extract date is written straight into its
-                # state (allowed here, before the widget is drawn in this run).
-                S["wf_pdate_in"] = date.fromisoformat(S["wf_val"]["extract_date"])
-            st.rerun()
+        if val is not None:
+            caption(f"{val['n_pass']} structural checks passed. Results on the right."
+                    if val["ok"] else
+                    f"**{val['n_fail']} structural check(s) failed.** Results on the "
+                    "right.")
+    return body, ready
 
 
 def _settings_card(vers: dict, calcs: dict) -> dict:
     with st.container(border=True):
         card_header("Run settings")
-        vrows = vers["versions"]
+        # a draft is used in no run: it is offered once its maker marks it tested
+        vrows = [r for r in vers["versions"] if r.get("usable", True)]
         vlabels = {}
         for r in vrows:
             vlabels[f"{r['label']} · {r['status']}"
@@ -760,8 +742,9 @@ def _settings_card(vers: dict, calcs: dict) -> dict:
         cur_pick = S.get("wf_version", vers["default_pick"])
         cur = next((k for k, v in vlabels.items() if v == cur_pick), live)
         vhelp = ("The default config reads `config/` and `data-raw/static/` as "
-                 "they sit on disk now. A config version is a frozen, approved "
-                 "copy of both; an official run needs one.")
+                 "they sit on disk now. A config version is a frozen copy of both: "
+                 "tested ones for unofficial runs, approved ones for official runs. "
+                 "Drafts are not offered.")
         if cur_pick != "__LIVE__":
             meta = next((r for r in vrows if r["label"] == cur_pick), {})
             vhelp = (f"{cur_pick} ({meta.get('status')}): "
@@ -816,7 +799,22 @@ def _settings_card(vers: dict, calcs: dict) -> dict:
             "calc_id": calc_id, "pdate": pdate, "gate": gate}
 
 
-def _actions_card(val, cfg: dict) -> None:
+def _validate(body: dict, version: str) -> None:
+    body = {**body, "version": version}
+    with st.spinner("Reading the files and checking them…"):
+        with guard():
+            S["wf_val"] = api.wf_validate_inputs(body)
+    _reset_checks()
+    if S["wf_val"].get("extract_date"):
+        # The widget's own key: a keyed date_input ignores a changed default,
+        # so the extract date is written straight into its state (allowed
+        # here, before the widget is drawn in the next run).
+        S["wf_pdate_in"] = date.fromisoformat(S["wf_val"]["extract_date"])
+    st.rerun()
+
+
+def _actions_card(val, cfg: dict, body: dict, ready: bool) -> None:
+    """Validate inputs, the pre-run check and Start, side by side."""
     pre, rdy = S.get("wf_pre"), S.get("wf_ready")
     checked = pre is not None and rdy is not None
     rdy_failed = checked and rdy.get("status") != "done"
@@ -828,8 +826,12 @@ def _actions_card(val, cfg: dict) -> None:
         card_header("Check and start", None, right=(
             "" if not checked else pill("blocked", "err") if blocking or rdy_failed
             else pill("ready", "ok")))
-        b1, b2 = st.columns(2)
-        pre_go = b1.button("Run the pre-run check" if not checked else "Check again",
+        b0, b1, b2 = st.columns(3)
+        val_go = b0.button("Validate inputs" if val is None else "Validate again",
+                           icon=":material/rule:", disabled=not ready,
+                           type="primary" if val is None or not val["ok"] else "secondary",
+                           width="stretch")
+        pre_go = b1.button("Pre-run check" if not checked else "Check again",
                            type="primary" if can_pre and not checked else "secondary",
                            disabled=not can_pre, icon=":material/fact_check:",
                            width="stretch")
@@ -837,8 +839,13 @@ def _actions_card(val, cfg: dict) -> None:
         start_go = b2.button("Start official run" if official else "Start unofficial run",
                              type="primary", disabled=not can_run,
                              icon=":material/play_arrow:", width="stretch")
-        if not can_pre:
-            caption("Validate the inputs first.")
+        if not ready:
+            caption("Choose where the 12 input files are, above.")
+        elif val is None:
+            caption("Validate: are the files all there and readable, and how is their "
+                    "data quality, against the chosen config version.")
+        elif not can_pre:
+            caption("Fix the structural problems on the right and validate again.")
         elif not checked:
             caption("Runs every input validator with the chosen config, then a "
                     "pricing dry run: which contracts would get no ECL, before "
@@ -853,6 +860,8 @@ def _actions_card(val, cfg: dict) -> None:
         else:
             callout("ok", "Ready. The run pauses after phase 1 so you can add "
                     "overrides, then finishes.")
+    if val_go:
+        _validate(body, cfg["version"])
     if pre_go:
         _request_checks({"input_dir": val["input_dir"], "version": cfg["version"],
                          "run_type": cfg["run_type"]})
@@ -1144,8 +1153,8 @@ with guard():
 
 left, right = st.columns([5, 7], gap="medium")
 with left:
-    _inputs_card(src, vers["default_pick"])
+    body, ready = _inputs_card(src)
     cfg = _settings_card(vers, calcs)
-    _actions_card(S.get("wf_val"), cfg)
+    _actions_card(S.get("wf_val"), cfg, body, ready)
 with right:
     _results(S.get("wf_val"))

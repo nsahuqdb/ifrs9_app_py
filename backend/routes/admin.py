@@ -1,9 +1,9 @@
 """The R app's governance pages that had no Python counterpart.
 
-    Approval queue   runs awaiting a checker and the decided history, with the
-                     maker, the acting user and whether separation of duties
-                     stops the maker approving; config versions awaiting
-                     approval and their history
+    Approval queue   everything awaiting a second person: official runs,
+                     config versions and management overlays marked tested,
+                     with the maker, the acting user and whether separation
+                     of duties stops the maker approving; and what was decided
     Config versions  clone a version into a new draft; browse every file a
                      version froze; who created it and who is acting
     Suppressions     the PROJECT's suppressions (config/validation_
@@ -82,29 +82,61 @@ def run_context(run_id: str, acting_as: str | None = None) -> dict:
 
 @router.get("/approval-queue/versions")
 def queue_versions() -> dict:
-    """Config versions awaiting approval (pending_final), and the approved and
-    archived ones with their decision trail -- newest decision first."""
+    """Config versions awaiting approval (tested), and the approved, rejected
+    and archived ones with their decision -- newest decision first."""
     from ifrs9qdb.snapshots import list_snapshots, read_snapshot_metadata
     s = list_snapshots(settings.SNAPSHOTS_ROOT)
-    pending = s[s["status"].isin(["pending_final", "pending"])] if len(s) else s
-    hist = []
+    pending, hist = [], []
     for r in _records(s):
-        if r.get("status") not in ("approved", "archived"):
-            continue
         m = read_snapshot_metadata(r["label"], settings.SNAPSHOTS_ROOT) or {}
+        if r.get("status") == "tested":
+            pending.append({**r, "tested_at": m.get("tested_at") or ""})
+            continue
+        if r.get("status") not in ("approved", "rejected", "archived"):
+            continue
         trans = m.get("transitions") or []
         last = next((t for t in reversed(trans)
-                     if t.get("to") == r["status"]), {}) if trans else {}
+                     if t.get("to") in ("approved", "rejected")), {})
         hist.append({"label": r["label"], "status": r["status"],
                      "description": m.get("description") or "",
-                     "requested_by": m.get("created_by"),
-                     "requested_at": m.get("created_at"),
-                     "decided_by": m.get("approved_by") or last.get("by"),
-                     "decided_at": m.get("approved_at") or last.get("at"),
-                     "decision_comment": m.get("approval_reason") or last.get("reason"),
-                     "code_sha": m.get("code_sha_at_creation")})
+                     "created_by": m.get("created_by"),
+                     "tested_by": m.get("tested_by"),
+                     "decided_by": last.get("by") or m.get("approved_by"),
+                     "decided_at": last.get("at") or m.get("approved_at"),
+                     "decision_comment": last.get("reason") or m.get("approval_reason")})
     hist.sort(key=lambda d: str(d.get("decided_at") or ""), reverse=True)
-    return {"pending": _records(pending), "decided": hist}
+    return {"pending": pending, "decided": hist}
+
+
+@router.get("/approval-queue/overlays")
+def queue_overlays() -> dict:
+    """Management overlays awaiting approval (tested), and the approved and
+    rejected ones with their decision -- newest decision first."""
+    from ifrs9qdb.overlays import read_overlay_bundles
+    pending, hist = [], []
+    for b in read_overlay_bundles(settings.OVERLAYS_FILE):
+        st = b.get("status")
+        trans = b.get("transitions") or []
+        row = {"id": b.get("id"), "status": st, "owner": b.get("owner") or "",
+               "rules": b.get("rules") or [], "n_rules": len(b.get("rules") or []),
+               "created_by": b.get("created_by") or (trans[0].get("by") if trans else ""),
+               "tested_by": b.get("tested_by") or next(
+                   (t.get("by") for t in reversed(trans)
+                    if t.get("to") in ("tested", "pending")), ""),
+               "tested_at": b.get("tested_at") or "",
+               "approval_ref": b.get("approval_ref") or "",
+               "effective_date": b.get("effective_date") or "",
+               "expiry": b.get("expiry") or "", "transitions": trans}
+        if st == "tested":
+            pending.append(row)
+        elif st in ("approved", "rejected"):
+            last = next((t for t in reversed(trans)
+                         if t.get("to") in ("approved", "rejected")), {})
+            hist.append({**row, "decided_by": last.get("by"),
+                         "decided_at": last.get("at"),
+                         "decision_comment": last.get("reason")})
+    hist.sort(key=lambda d: str(d.get("decided_at") or ""), reverse=True)
+    return {"pending": pending, "decided": hist}
 
 
 # ------------------------------------------------------- config versions ----
@@ -177,16 +209,18 @@ def snapshot_raw(label: str, relpath: str) -> dict:
 def promote_context(label: str, acting_as: str | None = None) -> dict:
     """The allowed next statuses, the creator, the acting user, and whether
     separation of duties stops the creator approving."""
-    from ifrs9qdb.snapshots import ALLOWED_TRANSITIONS, read_snapshot_metadata
+    from ifrs9qdb.snapshots import (ALLOWED_TRANSITIONS, normalise_snapshot_status,
+                                    read_snapshot_metadata)
     meta = read_snapshot_metadata(label, settings.SNAPSHOTS_ROOT)
     if meta is None:
         raise HTTPException(404, f"No version named {label!r}")
-    cur = str(meta.get("status") or "draft")
-    cur = "pending_final" if cur == "pending" else cur
+    cur = normalise_snapshot_status(meta.get("status"))
     creator = meta.get("created_by") or ""
     me = (acting_as or "").strip() or settings.current_user()
     enforce = settings.separation_enforced()
-    cant = enforce and creator and creator.strip().lower() == me.lower()
+    makers = {str(meta.get(k) or "").strip().lower()
+              for k in ("created_by", "tested_by")} - {""}
+    cant = enforce and me.lower() in makers
     return {"label": label, "status": cur, "meta": meta,
             "allowed": list(ALLOWED_TRANSITIONS.get(cur, ())),
             "created_by": creator, "acting_as": me, "enforced": enforce,

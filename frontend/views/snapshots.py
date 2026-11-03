@@ -1,9 +1,10 @@
 """Config versions: the frozen copy of everything a run is told.
 
-The R app's three config pages in one: browse versions (metadata and every
-frozen file), manage them (create, move through draft -> tested ->
-pending_final -> approved), and edit a draft (CSV tables and YAML), with clone
--to-draft for a version that is locked.
+Browse versions (metadata and every frozen file), create them and mark a
+draft tested, edit a draft (CSV tables and YAML), and copy a locked version to
+a new draft. The lifecycle: draft (editable, used in no run) -> tested (marked
+by its maker, locked, unofficial runs may use it) -> approved (by somebody
+else, in the Approval queue; official runs) -> archived.
 """
 import io
 import re
@@ -31,17 +32,16 @@ with guard():
 snaps = pd.DataFrame(reg["snapshots"])
 labels = list(snaps["label"]) if not snaps.empty else []
 
-STATUS_TONE = {"draft": "info", "tested": "warn", "pending_final": "warn",
-               "approved": "ok", "rejected": "err", "archived": "info",
-               "unknown": "err"}
+STATUS_TONE = {"draft": "info", "tested": "warn", "approved": "ok",
+               "rejected": "err", "archived": "info", "unknown": "err"}
 
 caption(f"versions directory: `{reg['root']}` · {len(snaps)} versions")
 metric_row([
     ("Versions", str(len(snaps))),
     ("Approved", str(int((snaps["status"] == "approved").sum()) if not snaps.empty else 0)),
     ("Drafts", str(int((snaps["status"] == "draft").sum()) if not snaps.empty else 0)),
-    ("Awaiting approval", str(int(snaps["status"].isin(["pending_final", "pending"]).sum())
-                              if not snaps.empty else 0)),
+    ("Tested, awaiting approval", str(int((snaps["status"] == "tested").sum())
+                                      if not snaps.empty else 0)),
 ])
 
 versions, manage, editor, compare = st.tabs(
@@ -145,58 +145,59 @@ with manage:
                             st.rerun()
     with right:
         with st.container(border=True):
-            st.markdown("**Promote version**")
-            caption("draft → tested → pending_final → approved. Each move needs a "
-                    "reason and is recorded in the audit log. Use a draft in "
-                    "unofficial runs to test its impact, mark it tested, submit it, "
-                    "and a different user approves it for official runs.")
-            if not labels:
-                caption("Create a version first.")
+            st.markdown("**Mark tested**")
+            caption("A draft is used in no run. Its maker marks it tested, which "
+                    "locks it: unofficial runs may then use it, and it goes to the "
+                    "Approval queue, where somebody else approves it for official "
+                    "runs. To change a locked version, copy it to a new draft on "
+                    "the Edit config tab.")
+            drafts = [r for r in reg["snapshots"] if r["status"] == "draft"]
+            approved = [r["label"] for r in reg["snapshots"] if r["status"] == "approved"]
+            if not drafts:
+                caption("No draft to mark tested.")
             else:
-                rank = {"draft": 0, "tested": 1, "pending_final": 2, "approved": 3,
-                        "rejected": 4, "archived": 5}
-                ordered = sorted(reg["snapshots"],
-                                 key=lambda r: (rank.get(r["status"], 9), r["created_at"]))
-                opts = {f"{r['label']} [{r['status']}]": r["label"] for r in ordered}
-                pick = opts[st.selectbox("Version", list(opts), key="sn_promote")]
-                acting = st.text_input("Acting as (your name)", key="sn_actor")
-                with guard():
-                    ctx = api.promote_context(pick, acting or None)
-                m = ctx["meta"]
-                st.table(pd.DataFrame({"": [
-                    ctx["status"], m.get("description") or "—",
-                    ctx["created_by"] or "?", ctx["acting_as"],
-                    "Yes" if ctx["enforced"] else "No (dev mode)",
-                    m.get("approved_by") or "—", m.get("approved_at") or "—",
-                    m.get("approval_reason") or "—"]},
-                    index=["status", "description", "created by", "acting as",
-                           "separation enforced", "approved_by", "approved_at",
-                           "approval_reason"]).astype(str))
-                if not ctx["allowed"]:
-                    caption(f"No transitions allowed from status '{ctx['status']}'.")
-                else:
-                    reason = st.text_area("Reason / notes (required)", height=70,
-                                          key=f"sn_reason_{pick}")
-                    cols = st.columns(len(ctx["allowed"]))
-                    for col, target in zip(cols, ctx["allowed"]):
-                        blocked = target == "approved" and ctx["creator_cannot_approve"]
-                        if col.button(f"→ {target}", key=f"sn_to_{target}",
-                                      disabled=blocked,
-                                      type="primary" if target == "approved" else "secondary"):
-                            if not reason.strip():
-                                st.warning("Reason is required for any transition.")
+                pick = st.selectbox("Draft", [r["label"] for r in drafts],
+                                    key="sn_promote")
+                c1, c2 = st.columns([1, 2])
+                acting = c1.text_input("Your name", key="sn_actor")
+                reason = c2.text_input("Reason", key=f"sn_reason_{pick}",
+                                       placeholder="e.g. checked the inputs")
+                if st.button("Mark tested", type="primary", key="sn_to_tested"):
+                    if not acting.strip() or not reason.strip():
+                        st.warning("Your name and a reason are both required.")
+                    else:
+                        try:
+                            api.promote_snapshot(pick, "tested", acting.strip(),
+                                                 reason.strip())
+                        except api.BackendError as e:
+                            st.error(str(e))
+                        else:
+                            api.clear()
+                            flash(f"{pick} is tested and locked; it is in the "
+                                  "Approval queue.")
+                            st.rerun()
+            if approved:
+                with st.expander("Archive an approved version"):
+                    caption("An archived version is no longer offered for new runs; "
+                            "runs that used it keep their frozen copy.")
+                    apick = st.selectbox("Approved version", approved, key="sn_arch")
+                    areason = st.text_input("Reason", key="sn_arch_reason")
+                    if st.button("Archive", key="sn_arch_go"):
+                        if not (st.session_state.get("sn_actor") or "").strip() \
+                                or not areason.strip():
+                            st.warning("Your name (above) and a reason are both "
+                                       "required.")
+                        else:
+                            try:
+                                api.promote_snapshot(apick, "archived",
+                                                     st.session_state["sn_actor"].strip(),
+                                                     areason.strip())
+                            except api.BackendError as e:
+                                st.error(str(e))
                             else:
-                                try:
-                                    api.promote_snapshot(pick, target, ctx["acting_as"],
-                                                         reason.strip())
-                                except api.BackendError as e:
-                                    st.error(str(e))
-                                else:
-                                    api.clear()
-                                    flash(f"Version {pick} -> {target}")
-                                    st.rerun()
-                        if blocked:
-                            col.caption("(maker can't approve own work)")
+                                api.clear()
+                                flash(f"{apick} archived.")
+                                st.rerun()
     st.markdown("#### Config version history")
     if snaps.empty:
         caption("No versions yet. Create one above.")
@@ -212,15 +213,16 @@ with manage:
 with editor:
     with st.expander("How to use this page"):
         st.markdown("1. Pick a **draft** version (any other status shows a "
-                    "clone-to-draft form).\n2. Pick a file: CSVs open as an "
+                    "copy-to-a-new-draft form).\n2. Pick a file: CSVs open as an "
                     "editable table (or download, edit in Excel, re-upload); YAML "
                     "in a text editor.\n3. Save is atomic — the whole file writes "
-                    "or nothing changes.\n4. When done: **Manage** → tested → "
-                    "pending_final; a reviewer approves on the **Approval queue**.")
+                    "or nothing changes.\n4. When done: **Manage** → Mark tested "
+                    "(locks it; unofficial runs may use it); somebody else approves "
+                    "it on the **Approval queue**.")
     if not labels:
         caption("Nothing to edit yet.")
     else:
-        rank = {"draft": 0, "tested": 1, "pending_final": 2, "approved": 3}
+        rank = {"draft": 0, "tested": 1, "approved": 2}
         ordered = sorted(reg["snapshots"], key=lambda r: (rank.get(r["status"], 9),
                                                           r["created_at"]))
         eopts = {f"{r['label']} [{r['status']}]": r["label"] for r in ordered}
@@ -229,25 +231,26 @@ with editor:
             d = api.snapshot_detail(epick)
         meta = d["meta"] or {}
         status = meta.get("status", "unknown")
+        status = "tested" if status in ("pending", "pending_final") else status
         if status != "draft":
-            st.warning(f"This version is in status '{status}'. Edits are locked. "
-                       "Clone it to a new draft below to make a revision.", icon="🔒")
+            st.warning(f"This version is {status} and locked: runs may use it. Copy "
+                       "it to a new draft below to change it.", icon="🔒")
             with st.form("clone_form"):
-                st.markdown("**Clone to a new draft**")
+                st.markdown("**Copy to a new draft**")
                 caption("The new draft inherits everything and is free to edit; "
                         "the lineage (parent) is preserved.")
                 new_label = st.text_input("New label", placeholder="e.g. 2026-Q3-draft-1")
                 new_desc = st.text_area("Description", height=60,
                                         placeholder="What's the goal of this revision?")
                 who = st.text_input("Created by")
-                if st.form_submit_button("Clone to new draft", type="primary"):
+                if st.form_submit_button("Copy to a new draft", type="primary"):
                     try:
                         api.clone_snapshot(epick, new_label.strip(), new_desc.strip(), who)
                     except api.BackendError as e:
                         st.error(str(e))
                     else:
                         api.clear()
-                        flash(f"Cloned {epick} -> {new_label.strip()} (draft)")
+                        flash(f"Copied {epick} to the draft {new_label.strip()}")
                         st.rerun()
         else:
             base_src = str(meta.get("base_source") or "")

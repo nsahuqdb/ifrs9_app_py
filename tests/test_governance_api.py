@@ -113,14 +113,13 @@ class TestSnapshots:
         assert r.status_code == 404
 
     def test_an_illegal_promotion_is_400(self):
-        # A draft, tested or pending version cannot jump to archived; an
-        # approved one can (R's transitions), so it is no test of the refusal
-        # -- and trying it would archive it.
+        # A draft or tested version cannot jump to archived; an approved one
+        # can, so it is no test of the refusal -- and trying it would archive it.
         snaps = client.get("/api/snapshots").json()["snapshots"]
         labels = [s["label"] for s in snaps
-                  if s.get("status") in ("draft", "tested", "pending_final")]
+                  if s.get("status") in ("draft", "tested")]
         if not labels:
-            pytest.skip("no draft, tested or pending version to try")
+            pytest.skip("no draft or tested version to try")
         r = client.post(f"/api/snapshots/{labels[0]}/promote",
                         json={"status": "archived", "by": "priya",
                               "reason": "skip ahead"})
@@ -131,7 +130,7 @@ class TestSnapshots:
         if not labels:
             pytest.skip("no snapshots configured")
         r = client.post(f"/api/snapshots/{labels[0]}/promote",
-                        json={"status": "pending_final", "by": "priya",
+                        json={"status": "tested", "by": "priya",
                               "reason": ""})
         assert r.status_code == 400
 
@@ -186,6 +185,91 @@ class TestOverlayBundles:
         r = client.get(f"/api/overlay-bundles/applied/{runs[0]['run_id']}")
         assert r.status_code == 200
         assert "applied" in r.json()
+
+
+@pytest.fixture
+def own_overlays(tmp_path, monkeypatch):
+    """The overlays in a temporary file, not the repo's config folder."""
+    from backend import settings
+    from backend.routes import governance
+    p = tmp_path / "overlays.yml"
+    monkeypatch.setattr(governance, "OVERLAYS_FILE", p)
+    monkeypatch.setattr(settings, "OVERLAYS_FILE", p)
+    monkeypatch.setattr(settings, "separation_enforced", lambda: True)
+    return p
+
+
+RULE = {"method": "uplift_pct", "level": "whole_book", "value": 0.05,
+        "comment": "Q4 view"}
+
+
+class TestOverlayLifecycle:
+    """draft -> tested (its maker; locked) -> approved by somebody else."""
+
+    def _new(self, oid="OV1", by="maker"):
+        r = client.post("/api/overlay-bundles",
+                        json={"id": oid, "rules": [RULE], "by": by, "mode": "new"})
+        assert r.status_code == 200, r.text
+        return r.json()["bundle"]
+
+    def _move(self, oid, to, by):
+        return client.post(f"/api/overlay-bundles/{oid}/status",
+                           json={"status": to, "by": by, "reason": "x"})
+
+    def test_a_draft_is_edited_and_removed_freely(self, own_overlays):
+        assert self._new()["created_by"] == "maker"
+        r = client.post("/api/overlay-bundles", json={"id": "OV1", "rules": [RULE],
+                                                      "by": "maker"})
+        assert r.status_code == 200
+        assert client.delete("/api/overlay-bundles/OV1").status_code == 200
+
+    def test_tested_locks_it(self, own_overlays):
+        self._new()
+        assert self._move("OV1", "tested", "maker").status_code == 200
+        r = client.post("/api/overlay-bundles", json={"id": "OV1", "rules": [RULE]})
+        assert r.status_code == 409 and "locked" in r.text
+        assert client.delete("/api/overlay-bundles/OV1").status_code == 409
+        assert self._move("OV1", "draft", "maker").status_code == 400
+
+    def test_the_maker_cannot_approve_and_somebody_else_can(self, own_overlays):
+        self._new()
+        self._move("OV1", "tested", "maker")
+        assert self._move("OV1", "approved", "maker").status_code == 403
+        q = client.get("/api/approval-queue/overlays").json()
+        assert [o["id"] for o in q["pending"]] == ["OV1"]
+        assert self._move("OV1", "approved", "checker").status_code == 200
+        q = client.get("/api/approval-queue/overlays").json()
+        assert q["pending"] == [] and q["decided"][0]["decided_by"] == "checker"
+
+    def test_a_locked_overlay_is_copied_to_a_new_draft(self, own_overlays):
+        self._new()
+        self._move("OV1", "tested", "maker")
+        r = client.post("/api/overlay-bundles/OV1/copy", json={"new_id": "OV2",
+                                                               "by": "maker"})
+        assert r.status_code == 200
+        b = r.json()["bundle"]
+        assert b["id"] == "OV2" and b["status"] == "draft"
+        assert b["rules"][0]["value"] == 0.05
+
+
+class TestTheRunGate:
+    """A draft config version is used in no run."""
+
+    def test_a_draft_cannot_be_used(self):
+        snaps = client.get("/api/snapshots").json()["snapshots"]
+        drafts = [s["label"] for s in snaps if s.get("status") == "draft"]
+        if not drafts:
+            pytest.skip("no draft version to try")
+        r = client.get("/api/workflow/run-type-check",
+                       params={"run_type": "unofficial", "version": drafts[0]}).json()
+        assert r["ok"] is False and "draft" in r["reason"]
+
+    def test_the_live_config_runs_unofficial_only(self):
+        ok = client.get("/api/workflow/run-type-check",
+                        params={"run_type": "unofficial"}).json()
+        no = client.get("/api/workflow/run-type-check",
+                        params={"run_type": "official"}).json()
+        assert ok["ok"] and not no["ok"]
 
 
 class TestReconcileAndExport:

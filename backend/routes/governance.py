@@ -532,6 +532,8 @@ def _bundle_dict(body: BundleIn, existing: dict | None = None) -> dict:
     out = dict(existing or {})
     out.update({k: v for k, v in body.model_dump().items()
                 if k not in ("rules", "mode", "by")})
+    if existing is None:
+        out["created_by"] = body.by or current_user()
     rules = [r.model_dump() for r in body.rules]
     if existing is not None and body.mode == "append":
         rules = list(existing.get("rules") or []) + rules
@@ -564,6 +566,10 @@ def save_overlay_bundle(body: BundleIn) -> dict:
         raise HTTPException(409, f"Overlay '{body.id}' already exists with "
                                  f"{len(existing.get('rules') or [])} rule(s). "
                                  "Replace it, or append these rules to it.")
+    if existing is not None and (existing.get("status") or "draft") != "draft":
+        raise HTTPException(409, f"Overlay '{body.id}' is {existing.get('status')} "
+                                 "and locked: runs may use it. Copy it to a new "
+                                 "draft to change it.")
     bundle = _bundle_dict(body, existing)
     try:
         upsert_overlay(bundle, OVERLAYS_FILE)
@@ -577,40 +583,82 @@ def save_overlay_bundle(body: BundleIn) -> dict:
 
 @router.delete("/overlay-bundles/{overlay_id}")
 def delete_overlay_bundle(overlay_id: str) -> dict:
-    from ifrs9qdb.overlays import remove_overlay
-    if not remove_overlay(overlay_id, OVERLAYS_FILE):
+    """Remove a draft. A tested or approved overlay is kept: runs may use it."""
+    from ifrs9qdb.overlays import get_overlay, remove_overlay
+    b = get_overlay(overlay_id, OVERLAYS_FILE)
+    if b is None:
         raise HTTPException(404, f"No overlay named {overlay_id!r}")
+    if (b.get("status") or "draft") != "draft":
+        raise HTTPException(409, f"Overlay '{overlay_id}' is {b.get('status')}: "
+                                 "only a draft can be removed.")
+    remove_overlay(overlay_id, OVERLAYS_FILE)
     return {"ok": True}
+
+
+class CopyIn(BaseModel):
+    new_id: str
+    by: str = ""
+
+
+@router.post("/overlay-bundles/{overlay_id}/copy")
+def copy_overlay_bundle(overlay_id: str, body: CopyIn) -> dict:
+    """A new draft with the overlay's rules: how a locked overlay is changed."""
+    from ifrs9qdb.overlays import get_overlay
+    src = get_overlay(overlay_id, OVERLAYS_FILE)
+    if src is None:
+        raise HTTPException(404, f"No overlay named {overlay_id!r}")
+    new = (body.new_id or "").strip()
+    if not new:
+        raise HTTPException(400, "A new overlay id is required.")
+    keep = ("owner", "approval_ref", "effective_date", "expiry", "name")
+    return save_overlay_bundle(BundleIn(
+        id=new, mode="new", by=body.by,
+        rules=[RuleIn(**{k: r.get(k) for k in ("method", "level", "target", "value",
+                                              "comment") if r.get(k) is not None})
+               for r in src.get("rules") or []],
+        **{k: str(src.get(k) or "") for k in keep}))
 
 
 @router.post("/overlay-bundles/{overlay_id}/status")
 def set_bundle_status(overlay_id: str, body: StatusIn) -> dict:
+    """draft -> tested (the maker), tested -> approved or rejected (somebody
+    else, where separation of duties is enforced)."""
     from ifrs9qdb.audit_log import audit_event
     from ifrs9qdb.overlays import get_overlay, set_overlay_status
-    # R's buttons: submit a draft (or rejected) overlay; approve or reject a
-    # pending one. A move outside that is refused rather than recorded.
-    allowed = {"draft": ("pending",), "rejected": ("pending", "draft"),
-               "pending": ("approved", "rejected", "draft"),
-               "approved": ("draft",)}
+
+    from ..settings import separation_enforced
     bundle = get_overlay(overlay_id, OVERLAYS_FILE)
     if bundle is None:
         raise HTTPException(404, f"No overlay named {overlay_id!r}")
     cur = bundle.get("status") or "draft"
-    if body.status not in allowed.get(cur, ()):
-        raise HTTPException(400, f"An overlay that is {cur} cannot move to "
-                                 f"{body.status}. Allowed: "
-                                 f"{', '.join(allowed.get(cur, ())) or 'none'}.")
     try:
         b = set_overlay_status(overlay_id, body.status, body.by, body.reason,
-                               OVERLAYS_FILE)
+                               OVERLAYS_FILE, enforce_separation=separation_enforced())
     except FileNotFoundError as exc:
         raise HTTPException(404, str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     audit_event({"event": "overlay_status", "overlay_id": overlay_id,
                  "from_status": cur, "to_status": body.status,
                  "user": body.by, "reason": body.reason})
     return {"ok": True, "bundle": b}
+
+
+def _run_type(run: Path) -> str:
+    """official or unofficial, as the run recorded it."""
+    from ifrs9qdb.run_status import read_run_status
+    rt = (read_run_status(run) or {}).get("run_type")
+    if not rt:
+        import json
+        p = run / "reports" / "manifest.json"
+        try:
+            rt = (json.loads(p.read_text(encoding="utf-8")).get("run_metadata") or {}
+                  ).get("run_type") if p.is_file() else None
+        except Exception:
+            rt = None
+    return str(rt or "unofficial")
 
 
 @router.post("/overlay-bundles/{overlay_id}/preview/{run_id}")
@@ -656,12 +704,17 @@ def preview_rules(run_id: str, body: PreviewRulesIn) -> dict:
 
 @router.post("/overlay-bundles/{overlay_id}/apply/{run_id}")
 def apply_bundle(overlay_id: str, run_id: str) -> dict:
-    """Apply the overlay to the run, alongside what it already produced."""
-    from ifrs9qdb.overlays import apply_overlay_to_run, get_overlay
+    """Apply the overlay to the run, alongside what it already produced: a
+    tested or approved overlay to an unofficial run, an approved one to an
+    official run."""
+    from ifrs9qdb.overlays import apply_overlay_to_run, get_overlay, overlay_usable
     bundle = get_overlay(overlay_id, OVERLAYS_FILE)
     if bundle is None:
         raise HTTPException(404, f"No overlay named {overlay_id!r}")
     run = _run(run_id)
+    ok, why = overlay_usable(bundle, _run_type(run))
+    if not ok:
+        raise HTTPException(409, why)
     try:
         res = apply_overlay_to_run(run, bundle)
     except FileNotFoundError as exc:

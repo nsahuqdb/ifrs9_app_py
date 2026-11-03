@@ -25,6 +25,10 @@ st.markdown("""
    or rating; Reconcile & export says which files differ.
 5. **Overlay, then approve.** Management overlays sit on top of a completed
    run rather than inside it, so the engine's number stays visible underneath.
+   A config version or an overlay is a draft while it is edited, used in no
+   run; its maker marks it tested, which locks it for unofficial runs; somebody
+   else approves it in the Approval queue for official runs, where official
+   runs are also signed off.
 
 ## Which page answers which question
 
