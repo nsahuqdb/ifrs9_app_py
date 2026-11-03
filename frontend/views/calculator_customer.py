@@ -67,7 +67,8 @@ if st.session_state.get(key):
         "Download the workbook (.xlsx)", st.session_state[key],
         file_name=f"ECL_calculator_{run_id}_{safe}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    caption("Tabs: Summary, Lines (inputs), Staging, LGD, PD internal / PD external "
-            "(the PD model, year by year), PD curves (monthly, against the run's "
-            "StPD), EAD, ECL. Blue cells are the run's inputs; black cells are "
-            "formulas. Excel recalculates on opening.")
+    caption("Tabs, from start to end: Summary, Facilities (the inputs), Rating (how "
+            "each rating was set), Staging (the customer's stage and each "
+            "facility's, with the reason), PD internal / PD external (the PD model "
+            "and the scenario weights), PD curves, LGD, EAD, ECL. Blue cells are the "
+            "run's inputs; black cells are formulas. Excel recalculates on opening.")
