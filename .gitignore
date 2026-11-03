@@ -20,6 +20,8 @@ uploads/
 drops/
 tests/fixtures/FinalEclReport.csv
 .streamlit/secrets.toml
+# Keys kept on one computer (the FRED API key): never committed
+secrets.yml
 
 # Vendored engine wheels for the container build
 wheels/*

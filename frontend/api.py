@@ -592,12 +592,16 @@ def run_outputs(run_id: str) -> dict:
 
 
 def run_output_preview(run_id: str, name: str, offset: int = 0, limit: int = 200,
-                       q: str | None = None, column: str | None = None) -> dict:
+                       q: str | None = None, column: str | None = None,
+                       sort: str | None = None, desc: bool = False) -> dict:
     params = {"offset": offset, "limit": limit}
     if q:
         params["q"] = q
     if column:
         params["column"] = column
+    if sort:
+        params["sort"] = sort
+        params["desc"] = "true" if desc else "false"
     return get(f"/runs/{run_id}/outputs/{name}", **params)
 
 
@@ -794,6 +798,18 @@ def macro_catalogue() -> dict:
 
 def macro_refresh(payload: dict) -> dict:
     return post("/macro/refresh", payload)
+
+
+def macro_fred() -> dict:
+    return get("/macro/fred")
+
+
+def macro_fred_save(key: str) -> dict:
+    return post("/macro/fred", {"key": key})
+
+
+def macro_fred_test() -> dict:
+    return post("/macro/fred/test", {}, _timeout=90)
 
 
 def macro_refresh_status(job: str) -> dict:

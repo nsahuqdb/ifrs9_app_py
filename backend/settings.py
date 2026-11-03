@@ -54,6 +54,8 @@ STRESS_PACKAGES_FILE = CONFIG_DIR / "stress_packages.yml"
 SCENARIOS_DB = _env_path("IFRS9_SCENARIOS_DB", PROJECT_ROOT / "scenarios" / "scenarios.sqlite")
 # the macro store: every IMF (and QCB, Council, FRED) series, by vintage
 MACRO_STORE_DIR = _env_path("IFRS9_MACRO_STORE", PROJECT_ROOT / "macro_store")
+# Keys kept on this computer only (gitignored): the FRED API key
+SECRETS_FILE = _env_path("IFRS9_SECRETS", PROJECT_ROOT / "secrets.yml")
 
 
 def ensure_project() -> list[str]:
@@ -164,3 +166,36 @@ def current_user() -> str:
 def separation_enforced() -> bool:
     return bool((run_config().get("approval") or {})
                 .get("enforce_separation_of_duties"))
+
+
+def fred_key() -> tuple[str, str]:
+    """(the FRED API key, where it came from): FRED_API_KEY in the
+    environment, else ``fred_api_key`` in secrets.yml, else ("", "")."""
+    k = os.environ.get("FRED_API_KEY", "").strip()
+    if k:
+        return k, "environment (FRED_API_KEY)"
+    try:
+        import yaml
+        d = yaml.safe_load(SECRETS_FILE.read_text(encoding="utf-8")) or {}
+        k = str(d.get("fred_api_key") or "").strip()
+    except Exception:
+        k = ""
+    return (k, SECRETS_FILE.name) if k else ("", "")
+
+
+def save_fred_key(key: str) -> None:
+    """Write (or, with "", remove) the FRED key in secrets.yml, keeping any
+    other entry there."""
+    import yaml
+    d = {}
+    if SECRETS_FILE.is_file():
+        try:
+            d = yaml.safe_load(SECRETS_FILE.read_text(encoding="utf-8")) or {}
+        except Exception:
+            d = {}
+    if key.strip():
+        d["fred_api_key"] = key.strip()
+    else:
+        d.pop("fred_api_key", None)
+    SECRETS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SECRETS_FILE.write_text(yaml.safe_dump(d, sort_keys=True), encoding="utf-8")

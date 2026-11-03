@@ -26,6 +26,7 @@ from ifrs9qdb.macro.store import last_actual_guess
 from ifrs9qdb.macro.quarter import apply as apply_quarter
 from ifrs9qdb.macro.quarter import MODELS, propose
 
+from .. import settings
 from ..settings import CONFIG_DIR, MACRO_STORE_DIR, PROJECT_ROOT, SNAPSHOTS_ROOT, STATIC_DIR
 
 router = APIRouter(tags=["macro"])
@@ -109,7 +110,8 @@ def do_refresh(body: RefreshIn) -> dict:
         try:
             r = refresh(store(), PROJECT_ROOT, groups=body.groups or None,
                         datasets=body.datasets or None, sources=tuple(body.sources),
-                        fred_key=body.fred_key or None, label=body.label,
+                        fred_key=body.fred_key or settings.fred_key()[0] or None,
+                        label=body.label,
                         only_default=not body.all_datasets,
                         progress=lambda m: _JOBS[job]["steps"].append(m))
             _JOBS[job].update(status="done", result=js(r))
@@ -117,6 +119,50 @@ def do_refresh(body: RefreshIn) -> dict:
             _JOBS[job].update(status="failed", error=str(exc))
     threading.Thread(target=work, daemon=True).start()
     return {"job": job}
+
+
+class FredKeyIn(BaseModel):
+    key: str = ""
+
+
+@router.get("/macro/fred")
+def fred_key_status() -> dict:
+    """Whether a FRED key is saved, and where (never the key itself)."""
+    k, where = settings.fred_key()
+    return {"saved": bool(k), "from": where, "file": str(settings.SECRETS_FILE)}
+
+
+@router.post("/macro/fred")
+def fred_key_save(body: FredKeyIn) -> dict:
+    """Save the FRED key in secrets.yml on this computer ("" removes it)."""
+    settings.save_fred_key(body.key)
+    return fred_key_status()
+
+
+@router.post("/macro/fred/test")
+def fred_test() -> dict:
+    """One series (FEDFUNDS) both ways -- the API with the key and the CSV
+    download -- with the answer each gave, so a blocked route is named."""
+    import time
+
+    from ifrs9qdb.macro.sources import FRED_TIMEOUT, Fred, _get
+    key, _ = settings.fred_key()
+    out = []
+    routes = [("CSV download (no key)", f"{Fred.GRAPH}?id=FEDFUNDS")]
+    if key:
+        routes.insert(0, ("FRED API (with the key)",
+                          f"{Fred.BASE}/series?series_id=FEDFUNDS&api_key={key}"
+                          "&file_type=json"))
+    for name, url in routes:
+        t0 = time.time()
+        try:
+            body = _get(None, url, timeout=FRED_TIMEOUT)
+            ok, detail = True, f"answered ({len(body):,} bytes)"
+        except Exception as e:
+            ok, detail = False, str(e).replace(key, "<key>") if key else str(e)
+        out.append({"route": name, "ok": ok, "seconds": round(time.time() - t0, 1),
+                    "detail": detail[:300]})
+    return {"key_saved": bool(key), "results": out}
 
 
 @router.get("/macro/refresh")

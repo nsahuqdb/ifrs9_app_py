@@ -325,3 +325,63 @@ def test_an_archived_calculator_drops_what_its_phase_one_cannot_take():
     old = types.SimpleNamespace(run_etl=run_etl, run_etl_phase1=run_etl_phase1)
     assert _accepts(old, "overrides") and _accepts(old, "run_purpose")
     assert not _accepts(old, "accepted_findings")
+
+
+class TestOutputPreview:
+    """An output file sorts as numbers over the whole file, ids stay text."""
+
+    def _run(self, tmp_path, monkeypatch):
+        from backend import settings
+        run = tmp_path / "run_00001" / "Output"
+        run.mkdir(parents=True)
+        rows = ["Contract Id,Portfolio Code,Exposure On Bal,LGD Rate"]
+        amounts = [900, 25000, 3000, 100000, 75, ""]
+        for i, a in enumerate(amounts):
+            rows.append(f"00{i + 1},Business Finance,{a},0.45")
+        (run / "FinalEclReport.csv").write_text("\n".join(rows) + "\n")
+        monkeypatch.setattr(settings, "RUNS_DIR", tmp_path)
+
+    def test_amounts_sort_as_numbers_largest_first(self, tmp_path, monkeypatch):
+        self._run(tmp_path, monkeypatch)
+        r = client.get("/api/runs/run_00001/outputs/FinalEclReport.csv",
+                       params={"sort": "Exposure On Bal", "desc": "true",
+                               "limit": 2}).json()
+        assert [x["Exposure On Bal"] for x in r["rows"]] == [100000, 25000]
+        assert r["total"] == 6 and r["sort"] == "Exposure On Bal"
+
+    def test_smallest_first_puts_blanks_last(self, tmp_path, monkeypatch):
+        self._run(tmp_path, monkeypatch)
+        r = client.get("/api/runs/run_00001/outputs/FinalEclReport.csv",
+                       params={"sort": "Exposure On Bal", "desc": "false"}).json()
+        assert [x["Exposure On Bal"] for x in r["rows"]] == [75, 900, 3000, 25000,
+                                                            100000, None]
+
+    def test_ids_stay_text(self, tmp_path, monkeypatch):
+        self._run(tmp_path, monkeypatch)
+        r = client.get("/api/runs/run_00001/outputs/FinalEclReport.csv").json()
+        assert r["rows"][0]["Contract Id"] == "001"
+        assert "Contract Id" not in r["numeric"]
+        assert set(r["numeric"]) == {"Exposure On Bal", "LGD Rate"}
+
+
+class TestFredKey:
+    """The FRED key is kept in secrets.yml on the computer, never shown back."""
+
+    def test_saved_then_used_never_echoed(self, tmp_path, monkeypatch):
+        from backend import settings
+        monkeypatch.delenv("FRED_API_KEY", raising=False)
+        monkeypatch.setattr(settings, "SECRETS_FILE", tmp_path / "secrets.yml")
+        assert client.get("/api/macro/fred").json()["saved"] is False
+        r = client.post("/api/macro/fred", json={"key": "k123"}).json()
+        assert r["saved"] is True and r["from"] == "secrets.yml"
+        assert "k123" not in str(r)
+        assert settings.fred_key() == ("k123", "secrets.yml")
+        client.post("/api/macro/fred", json={"key": ""})
+        assert settings.fred_key() == ("", "")
+
+    def test_the_environment_wins(self, tmp_path, monkeypatch):
+        from backend import settings
+        monkeypatch.setattr(settings, "SECRETS_FILE", tmp_path / "secrets.yml")
+        settings.save_fred_key("file-key")
+        monkeypatch.setenv("FRED_API_KEY", "env-key")
+        assert settings.fred_key()[0] == "env-key"

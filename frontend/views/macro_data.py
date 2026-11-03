@@ -70,7 +70,34 @@ with tab_s:
         g = st.multiselect("Dataset groups", groups, [],
                            help="Empty: every dataset marked for fetching.")
         allds = st.toggle("Also the datasets not fetched by default", value=False)
-        fred = st.text_input("FRED API key (optional)", type="password")
+        with guard():
+            fk = api.macro_fred()
+        cf1, cf2 = st.columns([3, 1], vertical_alignment="bottom")
+        cf1.caption("FRED API key: " + (f"saved on this computer ({fk['from']})"
+                                        if fk["saved"] else "none saved; FRED is "
+                                        "read from its CSV download instead"))
+        with cf2.popover("FRED key", width="stretch"):
+            nk = st.text_input("FRED API key", type="password", key="fred_new",
+                               help="Kept in secrets.yml on this computer, never "
+                                    "in the code repository.")
+            b1, b2, b3 = st.columns(3)
+            if b1.button("Save", type="primary", key="fred_save", disabled=not nk):
+                with guard():
+                    api.macro_fred_save(nk)
+                st.rerun()
+            if fk["saved"] and fk["from"] == "secrets.yml" and \
+                    b2.button("Remove", key="fred_rm"):
+                with guard():
+                    api.macro_fred_save("")
+                st.rerun()
+            if b3.button("Test", key="fred_test"):
+                with st.spinner("Asking FRED…"):
+                    with guard():
+                        t = api.macro_fred_test()
+                for x in t["results"]:
+                    (st.success if x["ok"] else st.error)(
+                        f"{x['route']}: {x['detail']} ({x['seconds']} s)")
+        fred = None
         lab = st.text_input("Label", placeholder="e.g. WEO October 2026")
         with guard():
             running = [x for x in api.macro_refresh_jobs() if x["status"] == "running"]

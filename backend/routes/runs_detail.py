@@ -196,19 +196,47 @@ def run_outputs(run_id: str) -> dict:
                        "path": str(p)} for p in files]}
 
 
+PREVIEW_ROWS = 500_000      # a file longer than this is previewed from its top
+
+
+def _is_identifier(col: str) -> bool:
+    """Ids and codes stay text: a contract id keeps its digits as written,
+    and is not summed or sorted as a number."""
+    c = str(col).strip().lower().replace("_", " ")
+    return (c.endswith("id") or c.endswith(" code") or c.endswith("code")
+            or "contract" in c or "customer" in c)
+
+
+def _numeric_columns(df: pd.DataFrame) -> list[str]:
+    """Columns whose every filled cell is a number (ids excepted)."""
+    out = []
+    for c in df.columns:
+        if _is_identifier(c):
+            continue
+        s = df[c].str.strip()
+        filled = s != ""
+        if not filled.any():
+            continue
+        v = pd.to_numeric(s[filled].str.replace(",", "", regex=False), errors="coerce")
+        if v.notna().all():
+            out.append(c)
+    return out
+
+
 @router.get("/runs/{run_id}/outputs/{name}")
 def run_output_preview(run_id: str, name: str, offset: int = 0,
                        limit: int = Query(200, le=5000),
-                       q: str | None = None, column: str | None = None) -> dict:
+                       q: str | None = None, column: str | None = None,
+                       sort: str | None = None, desc: bool = False) -> dict:
     """A page of one output CSV, optionally filtered -- on one column, or on
-    any column containing ``q``. Identifier columns are compared as text, so
-    a contract id finds its row exactly. Up to 20,000 rows are read, as the R
-    preview does."""
+    any column containing ``q`` -- and sorted on ``sort`` over the whole file,
+    not only the page shown. Numeric columns sort and come back as numbers;
+    ids and codes stay text, so a contract id finds its row exactly."""
     files = {p.name: p for p in list_run_outputs(_run_path(run_id))}
     p = files.get(name)
     if p is None:
         raise HTTPException(404, f"No output {name!r} in {run_id}")
-    df = pd.read_csv(p, dtype=str, keep_default_na=False, nrows=20000)
+    df = pd.read_csv(p, dtype=str, keep_default_na=False, nrows=PREVIEW_ROWS)
     with open(p, "rb") as fh:
         n_lines = sum(chunk.count(b"\n") for chunk in iter(lambda: fh.read(1 << 20), b""))
     if q:
@@ -220,13 +248,29 @@ def run_output_preview(run_id: str, name: str, offset: int = 0,
             for c in df.columns:
                 m |= df[c].str.lower().str.contains(ql, regex=False)
         df = df[m]
+    nums = _numeric_columns(df)
+    if sort and sort in df.columns:
+        if sort in nums:
+            key = pd.to_numeric(df[sort].str.replace(",", "", regex=False),
+                                errors="coerce")
+        else:
+            key = df[sort].str.lower()
+        # blanks last, either way
+        df = df.assign(_k=key).sort_values("_k", ascending=not desc,
+                                           na_position="last", kind="stable")
+        df = df.drop(columns="_k")
     total = int(len(df))
-    page = df.iloc[offset: offset + limit]
+    page = df.iloc[offset: offset + limit].copy()
+    for c in nums:
+        page[c] = pd.to_numeric(page[c].str.replace(",", "", regex=False),
+                                errors="coerce")
+    rows = [{k: _clean(v) for k, v in r.items()} for r in page.to_dict(orient="records")]
     return {"file": name, "path": str(p),
             "size_kb": round(p.stat().st_size / 1024, 1),
-            "lines": max(0, n_lines - 1), "truncated": n_lines - 1 > 20000,
-            "columns": list(df.columns), "total": total, "offset": offset,
-            "rows": page.to_dict(orient="records")}
+            "lines": max(0, n_lines - 1), "truncated": n_lines - 1 > PREVIEW_ROWS,
+            "columns": list(df.columns), "numeric": nums, "total": total,
+            "offset": offset, "sort": sort if sort in df.columns else None,
+            "desc": bool(desc), "rows": rows}
 
 
 class ExportIn(BaseModel):

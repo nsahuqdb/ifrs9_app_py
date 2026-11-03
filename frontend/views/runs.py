@@ -2,8 +2,8 @@
 
 The R app's "Browse runs" page. The table carries each run's approval status
 and health; selecting one shows its manifest, validation, pricing readiness,
-overrides, reconciliation and output files, with the export (approved or
-unofficial runs only) and the overlays applied to it.
+overrides and output files (any column sorted over the whole file), with the
+export (approved or unofficial runs only) and the overlays applied to it.
 """
 import pandas as pd
 import streamlit as st
@@ -76,7 +76,6 @@ show = pd.DataFrame({
     "Calculator version": runs.apply(_calc_version, axis=1),
     "Outputs": runs["n_outputs"],
     "Validation fails": runs["n_validation_failures"],
-    "Recon": runs["has_reconciliation"].map({True: "yes", False: "no"}),
     "Readiness": runs["has_readiness"].map({True: "yes", False: "—"}),
 })
 c_f, _, c_r = st.columns([1, 5, 1], vertical_alignment="bottom")
@@ -105,7 +104,7 @@ ev = st.dataframe(show.style.map(_status_style, subset=["Status"]),
 sel = ev.selection.rows if ev and ev.selection else []
 if not sel:
     caption("Select a run above to see its manifest, validation, readiness, "
-            "overrides, reconciliation and outputs.")
+            "overrides and outputs.")
     st.stop()
 
 run = runs.loc[show.index[sel[0]]]
@@ -231,8 +230,8 @@ with c_ovl:
                         st.rerun()
 
 # ---- detail tabs --------------------------------------------------------
-t_man, t_val, t_rdy, t_ov, t_rec, t_out = st.tabs(
-    ["Manifest", "Validation", "Readiness", "Overrides", "Reconciliation", "Outputs"])
+t_man, t_val, t_rdy, t_ov, t_out = st.tabs(
+    ["Manifest", "Validation", "Readiness", "Overrides", "Outputs"])
 
 with t_man:
     with guard():
@@ -362,42 +361,45 @@ with t_ov:
             st.dataframe(pd.DataFrame(f["rows"]), hide_index=True,
                          use_container_width=True)
 
-with t_rec:
-    with guard():
-        rc = api.run_reconciliation(run_id)
-    if not rc.get("markdown"):
-        caption("No reconciliation for this run. Configure "
-                "`paths.reference_outputs` in config.yml to enable it, or use "
-                "**Reconcile & export** to compare two runs.")
-    else:
-        st.markdown(rc["markdown"])
-        st.markdown("**Mismatches**")
-        if rc["mismatches"]:
-            st.dataframe(pd.DataFrame(rc["mismatches"])[["file", "size_bytes"]],
-                         hide_index=True)
-        else:
-            caption("(no mismatch CSVs)")
-
 with t_out:
     with guard():
         outs = api.run_outputs(run_id)["files"]
     if not outs:
-        st.info("No output CSVs found.")
+        st.info("No output files found.")
     else:
         names = [f["file"] for f in outs]
-        c1, c2, c3 = st.columns([2, 2, 1])
-        pick = c1.selectbox("File", names, key=f"of_{run_id}")
+        main = "FinalEclReport.csv"
+        c1, c2 = st.columns([2, 3])
+        pick = c1.selectbox("File", names, key=f"of_{run_id}",
+                            index=names.index(main) if main in names else 0)
         fq = c2.text_input("Find (contract, customer, any value)", key=f"oq_{run_id}")
-        page = c3.number_input("Page", min_value=1, value=1, step=1,
+        with guard():
+            head = api.run_output_preview(run_id, pick, offset=0, limit=1)
+        c3, c4, c5 = st.columns([3, 1, 1], vertical_alignment="bottom")
+        srt = c3.selectbox("Sort by", head["columns"], index=None,
+                           placeholder="File order", key=f"os_{run_id}_{pick}")
+        desc = c4.toggle("Largest first", value=True, key=f"od_{run_id}_{pick}")
+        page = c5.number_input("Page", min_value=1, value=1, step=1,
                                key=f"op_{run_id}")
         with guard():
             pv = api.run_output_preview(run_id, pick, offset=(page - 1) * 200,
-                                        limit=200, q=fq or None)
-        caption(f"path: `{pv['path']}` · size {pv['size_kb']:,.1f} KB · "
-                f"{pv['lines']:,} rows"
-                + (" (first 20,000 searchable)" if pv["truncated"] else "")
+                                        limit=200, q=fq or None, sort=srt,
+                                        desc=desc)
+        caption(f"{pv['lines']:,} rows"
+                + (" (the first 500,000 read)" if pv["truncated"] else "")
                 + f" · {pv['total']:,} match · showing "
                   f"{pv['offset'] + 1 if pv['total'] else 0}–"
-                  f"{min(pv['offset'] + 200, pv['total'])}")
+                  f"{min(pv['offset'] + 200, pv['total'])}"
+                + (f" · sorted by {pv['sort']}, "
+                   f"{'largest' if pv['desc'] else 'smallest'} first, over the "
+                   "whole file" if pv["sort"] else "")
+                + f" · `{pv['path']}`")
         st.dataframe(pd.DataFrame(pv["rows"], columns=pv["columns"]),
-                     hide_index=True, use_container_width=True, height=440)
+                     hide_index=True, use_container_width=True, height=440,
+                     column_config={c: st.column_config.NumberColumn(format="%,.2f")
+                                    for c in pv.get("numeric", [])
+                                    if any(w in c.lower() for w in
+                                           ("amount", "balance", "bal", "ead",
+                                            "exposure", "value", "ecl"))
+                                    and not any(w in c.lower() for w in
+                                                ("pd", "lgd", "rate"))})
