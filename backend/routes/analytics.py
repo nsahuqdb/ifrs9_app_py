@@ -529,28 +529,47 @@ def calculator_customers(run_id: str) -> dict:
     return {"customers": _records(run_customers(run))}
 
 
-@router.get("/analytics/{run_id}/calculator")
-def calculator_workbook(run_id: str, customer: str = Query(...),
-                        user: str | None = None):
-    """One customer's ECL as an Excel calculator: the run's inputs and every
-    step to the provision as a formula, checked against the report
-    (ifrs9qdb.calc_workbook). Each export is written to the audit log, since
-    the workbook carries the customer's positions."""
-    from fastapi.responses import Response
-    from ifrs9qdb.audit_log import audit_event
-    from ifrs9qdb.calc_workbook import customer_ecl_workbook
+@router.get("/analytics/{run_id}/calculator/contracts")
+def calculator_contracts(run_id: str) -> dict:
+    """Every position of a run the calculator can be exported for: contract
+    (LIC and source id), customer id and name, product, book, on-balance
+    exposure, largest first."""
+    from ifrs9qdb.calc_workbook import run_contracts
     run = RUNS_DIR / run_id
     if not run.is_dir() or ".." in run_id or "/" in run_id:
         raise HTTPException(404, f"No run named {run_id!r}")
+    return {"contracts": _records(run_contracts(run))}
+
+
+@router.get("/analytics/{run_id}/calculator")
+def calculator_workbook(run_id: str, customer: str | None = None,
+                        contract: str | None = None, book: str | None = None,
+                        user: str | None = None):
+    """One customer's -- or one contract's -- ECL as an Excel calculator: the
+    run's inputs and every step to the provision as a formula, checked
+    against the report (ifrs9qdb.calc_workbook). Each export is written to
+    the audit log, since the workbook carries the customer's positions."""
+    from fastapi.responses import Response
+    from ifrs9qdb.audit_log import audit_event
+    from ifrs9qdb.calc_workbook import contract_ecl_workbook, customer_ecl_workbook
+    run = RUNS_DIR / run_id
+    if not run.is_dir() or ".." in run_id or "/" in run_id:
+        raise HTTPException(404, f"No run named {run_id!r}")
+    if not customer and not contract:
+        raise HTTPException(422, "Give a customer or a contract.")
     try:
-        data = customer_ecl_workbook(run, customer)
+        data = (contract_ecl_workbook(run, contract, book or None) if contract
+                else customer_ecl_workbook(run, customer))
     except KeyError as exc:
         raise HTTPException(404, str(exc.args[0]) if exc.args else str(exc))
     except FileNotFoundError as exc:
         raise HTTPException(404, str(exc))
-    audit_event({"event": "customer_calculator_exported", "run_id": run_id,
-                 "customer_id": customer, "user": user})
-    safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in customer)
+    audit_event({"event": "contract_calculator_exported", "run_id": run_id,
+                 "contract_id": contract, "book": book, "user": user} if contract
+                else {"event": "customer_calculator_exported", "run_id": run_id,
+                      "customer_id": customer, "user": user})
+    who = contract or customer
+    safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in who)
     return Response(
         data,
         media_type="application/vnd.openxmlformats-officedocument."

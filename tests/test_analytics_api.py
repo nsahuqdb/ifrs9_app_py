@@ -421,6 +421,19 @@ class TestCustomerCalculator:
         assert "attachment" in r.headers["content-disposition"]
 
     @needs_run
+    def test_the_contracts_and_one_contract_workbook(self):
+        body = client.get(f"/api/analytics/{RUN}/calculator/contracts").json()
+        assert body["contracts"], "a run with positions has contracts"
+        c = body["contracts"][0]
+        assert {"contract_id", "customer_id", "customer_name", "book"} <= set(c)
+        r = client.get(f"/api/analytics/{RUN}/calculator",
+                       params={"contract": c["contract_id"], "book": c["book"]})
+        assert r.status_code == 200 and r.content[:2] == b"PK"
+        assert client.get(f"/api/analytics/{RUN}/calculator",
+                          params={"contract": "no such contract"}).status_code == 404
+        assert client.get(f"/api/analytics/{RUN}/calculator").status_code == 422
+
+    @needs_run
     def test_an_unknown_customer_is_a_404(self):
         r = client.get(f"/api/analytics/{RUN}/calculator",
                        params={"customer": "no such customer"})

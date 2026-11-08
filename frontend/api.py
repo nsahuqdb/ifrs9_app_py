@@ -464,10 +464,19 @@ def calculator_customers(run_id: str) -> list:
     return get(f"/analytics/{run_id}/calculator/customers")["customers"]
 
 
-def calculator_workbook(run_id: str, customer: str, user: str | None = None) -> bytes:
-    """One customer's ECL calculator (.xlsx)."""
+@st.cache_data(ttl=60, show_spinner=False)
+def calculator_contracts(run_id: str) -> list:
+    """The positions the ECL calculator can be exported for, largest first."""
+    return get(f"/analytics/{run_id}/calculator/contracts")["contracts"]
+
+
+def calculator_workbook(run_id: str, customer: str | None = None,
+                        user: str | None = None, contract: str | None = None,
+                        book: str | None = None) -> bytes:
+    """One customer's, or one contract's, ECL calculator (.xlsx)."""
     import requests as _r
-    params = {"customer": customer}
+    params = ({"contract": contract, **({"book": book} if book else {})}
+              if contract else {"customer": customer})
     if user:
         params["user"] = user
     try:

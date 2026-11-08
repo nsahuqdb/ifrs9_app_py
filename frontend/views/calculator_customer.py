@@ -1,4 +1,5 @@
-"""ECL calculator: one customer's provision as an Excel workbook.
+"""ECL calculator: one customer's, or one contract's, provision as an Excel
+workbook. Customer is the default level.
 
 The workbook holds the run's inputs for the customer and every step from them
 to the provision as a live formula -- staging with overrides, LGD from the
@@ -19,28 +20,69 @@ if not run_id:
             "backend at a folder of existing runs.", icon="👈")
     st.stop()
 page_setup("ECL calculator",
-           "Pick a customer and download an Excel workbook that rebuilds its "
-           "provision from the run's inputs with formulas, so the figures can "
-           "be checked against the report.")
+           "Pick a customer, or one contract, and download an Excel workbook that "
+           "rebuilds its provision from the run's inputs with formulas, so the "
+           "figures can be checked against the report.")
 
-with guard():
-    cust = pd.DataFrame(api.calculator_customers(run_id))
-if len(cust) == 0:
-    st.info("This run has no positions to export.")
-    st.stop()
+level = st.segmented_control("Level", ["Customer", "Contract"], default="Customer",
+                             required=True, key="calc_level")
 
 
-def _label(i: int) -> str:
-    r = cust.iloc[i]
-    name = f" — {r['customer_name']}" if r.get("customer_name") else ""
-    return (f"{r['customer_id']}{name} ({r['book']}, {int(r['positions'])} "
-            f"position{'s' if int(r['positions']) != 1 else ''})")
+def _n(v) -> str:
+    try:
+        return f"QAR {float(v):,.0f}"
+    except (TypeError, ValueError):
+        return ""
 
 
-pick = st.selectbox("Customer", range(len(cust)), format_func=_label,
-                    key=f"calc_cust_{run_id}",
-                    help="Type to search by id or name. Largest exposure first.")
-cid = str(cust.iloc[pick]["customer_id"])
+if level == "Customer":
+    with guard():
+        cust = pd.DataFrame(api.calculator_customers(run_id))
+    if len(cust) == 0:
+        st.info("This run has no positions to export.")
+        st.stop()
+
+    def _label(i: int) -> str:
+        r = cust.iloc[i]
+        n = int(r["positions"])
+        tail = f"({r['book']}, {n} position{'s' if n != 1 else ''})"
+        if r.get("customer_name"):
+            return f"{r['customer_name']} · {r['customer_id']} {tail}"
+        return f"{r['customer_id']} {tail}"
+
+    pick = st.selectbox("Customer", range(len(cust)), format_func=_label,
+                        key=f"calc_cust_{run_id}",
+                        help="Type to search by name or id. Largest exposure first.")
+    cid = str(cust.iloc[pick]["customer_id"])
+    contract = book = None
+    who = cid
+else:
+    with guard():
+        con = pd.DataFrame(api.calculator_contracts(run_id))
+    if len(con) == 0:
+        st.info("This run has no positions to export.")
+        st.stop()
+
+    def _clabel(i: int) -> str:
+        r = con.iloc[i]
+        src = (f" (source {r['contract_original']})"
+               if r.get("contract_original") and r["contract_original"] != r["contract_id"]
+               else "")
+        name = r.get("customer_name") or r["customer_id"]
+        return (f"{r['contract_id']}{src} · {name} · {r['product']} · "
+                f"{_n(r['on_balance'])}")
+
+    pick = st.selectbox("Contract", range(len(con)), format_func=_clabel,
+                        key=f"calc_con_{run_id}",
+                        help="Type to search by contract, customer name or product. "
+                             "Largest exposure first.")
+    row = con.iloc[pick]
+    cid, contract, book = str(row["customer_id"]), str(row["contract_id"]), str(row["book"])
+    who = contract
+    caption("The workbook prices this contract. Its Facilities, Rating and Staging "
+            "tabs also show the customer's other facilities, because the customer's "
+            "worst facility sets the rating and any Stage 2 or 3 facility lifts the "
+            "stage.")
 
 with guard():
     found = api.customers(run_id, cid, spaces=False).get("found") or []
@@ -51,21 +93,23 @@ if len(rows):
     st.dataframe(fmt_table(rows[cols], money_cols=("exposure", "ecl"),
                            pct_cols=("coverage",)),
                  use_container_width=True, hide_index=True)
-    caption(f"ECL in the report: {money(rows['ecl'].sum())} (the stage shown "
-            "is the customer's worst). The workbook's Summary tab rebuilds the "
-            "provision position by position and marks each OK or DIFFERS.")
+    caption(f"The customer's ECL in the report: {money(rows['ecl'].sum())} (the "
+            "stage shown is the customer's worst). The workbook's Summary tab "
+            "rebuilds the provision position by position and marks each OK or "
+            "DIFFERS.")
 
-key = f"calc_xlsx_{run_id}_{cid}"
+key = f"calc_xlsx_{run_id}_{level}_{who}"
 if st.button("Build the calculator", type="primary"):
     with st.spinner("Building the workbook…"):
         with guard():
             st.session_state[key] = api.calculator_workbook(
-                run_id, cid, st.session_state.get("_user") or None)
+                run_id, cid, st.session_state.get("_user") or None,
+                contract=contract, book=book)
 if st.session_state.get(key):
-    safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in cid)
+    safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in who)
     st.download_button(
         "Download the workbook (.xlsx)", st.session_state[key],
-        file_name=f"ECL_calculator_{run_id}_{safe}.xlsx",
+        file_name=f"ECL_calculator_{run_id}_{'contract_' if contract else ''}{safe}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     caption("Tabs, from start to end: Summary, Facilities (the inputs), Rating (how "
             "each rating was set), Staging (the customer's stage and each "
