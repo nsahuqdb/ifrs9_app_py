@@ -416,6 +416,8 @@ def page_setup(title: str, subtitle: str | None = None) -> None:
     at its right (and the comparison run beside it where the page compares
     two), so which run is on screen is never out of sight."""
     S = st.session_state
+    if not S.get("_embedded"):
+        _GRID_N.clear()                  # grid keys restart on every page run
     if S.get("_embedded"):
         # a view drawn inside another page (Parameter stress): the page has
         # its own title row and run picker; this one says what the view does
@@ -785,6 +787,7 @@ def style_severity(df: pd.DataFrame, cols=("severity", "effective_severity",
     sty = df.style
     if present:
         sty = sty.map(cell, subset=present)
+    sty._grid_severity = tuple(present) or ("_",)    # the grid colours these
     return sty
 
 
@@ -861,8 +864,242 @@ def _exact(fn):
     return wrapped
 
 
-if not getattr(st.dataframe, "_exact", False):
-    st.dataframe = _exact(st.dataframe)
+# ------------------------------------------------------------------ tables --
+# Every table is a grid with a filter in each column's header (the funnel)
+# and sorting by clicking the header. A number stays a number -- a column of
+# formatted amounts ("1,234,567") or percentages is read back to numbers and
+# shown with the same format -- so it sorts as a number. Ids and codes stay
+# text. A table coloured by a Styler other than the severity one, or using a
+# column type the grid does not draw (progress bars, links, charts), keeps
+# Streamlit's own table.
+_NUM_TXT = re.compile(r"^[+-]?(\d{1,3}(,\d{3})+|\d+)(\.\d+)?%?$")
+_BLANK = {"", "—", "-", "–", "nan", "None", "NaN"}
+_GRID_N: dict = {}
+_TONE_CSS = {"err": ("#fef3f2", "#b42318"), "warn": ("#fffaeb", "#b54708"),
+             "info": ("#eff8ff", "#175cd3"), "ok": ("#ecfdf3", "#067647")}
+
+
+def _is_id(col) -> bool:
+    c = str(col).strip().lower().replace("_", " ")
+    return (c.endswith(" id") or c == "id" or c.endswith("code") or "contract" in c
+            or c in ("customer", "run", "version", "label", "file", "path"))
+
+
+def _fmt_js(dec: int | None = None, pct: bool = False, exact: bool = False,
+            group: bool = True, scale: float = 1.0):
+    from st_aggrid import JsCode
+    if exact:
+        body = ("return Number(v).toLocaleString('en-US',"
+                "{maximumSignificantDigits:15});")
+    else:
+        body = (f"return (Number(v)*{scale}).toLocaleString('en-US',"
+                f"{{minimumFractionDigits:{dec},maximumFractionDigits:{dec},"
+                f"useGrouping:{'true' if group else 'false'}}})"
+                + ("+'%'" if pct else "") + ";")
+    return JsCode("function(p){var v=p.value;if(v===null||v===undefined||v===''||"
+                  "isNaN(Number(v)))return (v===null||v===undefined)?'':v;" + body + "}")
+
+
+def _printf(fmt: str):
+    """A Streamlit NumberColumn format as (decimals, percent, grouping,
+    scale, exact); None when the grid should not try."""
+    if not fmt or fmt in ("%.15g", EXACT):
+        return (None, False, True, 1.0, True)
+    if fmt in ("localized", "accounting", "dollar", "euro"):
+        return (2, False, True, 1.0, False)
+    if fmt == "plain":
+        return (None, False, False, 1.0, True)
+    if fmt == "percent":
+        return (2, True, True, 100.0, False)
+    m = re.fullmatch(r"(.*?)%(,?)(?:\.(\d+))?([dfi])(.*)", fmt)
+    if not m:
+        return None
+    dec = 0 if m.group(4) in "di" else int(m.group(3) or 6)
+    return (dec, "%" in m.group(5), bool(m.group(2)), 1.0, False)
+
+
+def _grid_frame(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    """Formatted numbers back to numbers; {column: formatter spec}."""
+    out, spec = df.copy(), {}
+    for c in out.columns:
+        s = out[c]
+        if pd.api.types.is_bool_dtype(s):
+            out[c] = s.map(lambda v: "" if pd.isna(v) else ("Yes" if v else "No"))
+            continue
+        if pd.api.types.is_numeric_dtype(s):
+            if pd.api.types.is_integer_dtype(s):
+                big = s.abs().max() if len(s) else 0
+                spec[c] = (0, False, bool(big >= 10000) and not _is_id(c), 1.0, False)
+            else:
+                spec[c] = (None, False, True, 1.0, True)
+            continue
+        if _is_id(c) or s.dtype != object:
+            continue
+        t = s.map(lambda v: "" if v is None or (isinstance(v, float) and pd.isna(v))
+                  else str(v).strip())
+        filled = t[~t.isin(_BLANK)]
+        if not len(filled) or not filled.map(lambda v: bool(_NUM_TXT.match(v))).all():
+            continue
+        if not filled.str.contains(r"[,.%]").any():
+            continue                          # plain digits: may be an id
+        pct_ = bool(filled.str.endswith("%").all())
+        dec = int(filled.map(lambda v: len(v.rstrip("%").split(".")[1])
+                             if "." in v else 0).max())
+        out[c] = pd.to_numeric(t.where(~t.isin(_BLANK)).str.replace(",", "", regex=False)
+                               .str.rstrip("%"), errors="coerce")
+        spec[c] = (dec, pct_, True, 1.0, False)
+    return out, spec
+
+
+def grid(data, *, key: str | None = None, height: int | None = None,
+         column_config: dict | None = None, hide_index: bool | None = None,
+         column_order=None, on_select="ignore", selection_mode="single-row",
+         severity: tuple = ()):
+    """A table with a filter in every column header and header-click sorting.
+    With ``on_select`` it returns Streamlit's shape: ``.selection.rows``, the
+    positions of the selected rows in ``data``."""
+    from types import SimpleNamespace
+
+    from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
+    df = data
+    if hide_index is False or (hide_index is None and not isinstance(
+            df.index, pd.RangeIndex)):
+        df = df.reset_index()
+    if column_order:
+        df = df[[c for c in column_order if c in df.columns]]
+    df, spec = _grid_frame(df)
+    df.columns = [str(c) for c in df.columns]
+    labels, hidden = {}, set()
+    for c, cfg in (column_config or {}).items():
+        c = str(c)
+        if c not in df.columns:
+            continue
+        if cfg is None:
+            hidden.add(c)
+            continue
+        if isinstance(cfg, str):
+            labels[c] = cfg
+            continue
+        if cfg.get("label"):
+            labels[c] = cfg["label"]
+        tc = cfg.get("type_config") or {}
+        if tc.get("type") == "number" and pd.api.types.is_numeric_dtype(df[c]):
+            f = _printf(tc.get("format"))
+            if f:
+                spec[c] = f
+    df.insert(0, "__pos", range(len(df)))
+    gb = GridOptionsBuilder.from_dataframe(df)
+    gb.configure_default_column(filter=True, sortable=True, resizable=True,
+                                suppressHeaderMenuButton=True, minWidth=96)
+    gb.configure_column("__pos", hide=True)
+    for c in hidden:
+        gb.configure_column(c, hide=True)
+    for c, f in spec.items():
+        if c in hidden:
+            continue
+        dec, pct_, group, scale, exact = f
+        gb.configure_column(c, type=["numericColumn"], filter="agNumberColumnFilter",
+                            valueFormatter=_fmt_js(dec, pct_, exact, group, scale))
+    for c, lab in labels.items():
+        gb.configure_column(c, headerName=lab)
+    for c in severity:
+        if c in df.columns:
+            rules = " ".join(
+                f"if(t==='{tone}')return {{backgroundColor:'{bg}',color:'{fg}',"
+                f"fontWeight:600}};" for tone, (bg, fg) in _TONE_CSS.items())
+            tones = {k: v for k, v in _TONE.items()}
+            gb.configure_column(c, cellStyle=JsCode(
+                "function(p){var m=" + str(tones).replace("'", '"') + ";"
+                "var u=String(p.value||'').trim().toUpperCase();var t=m[u];"
+                "if(!t){if(u.indexOf('REJECT')>=0)t='err';"
+                "else if(u.indexOf('PENDING')>=0)t='warn';"
+                "else if(u.indexOf('UNOFFICIAL')>=0)t='info';"
+                "else if(u.indexOf('APPROVED')>=0)t='ok';}" + rules
+                + "return null;}"))
+    sel = on_select not in ("ignore", None, False)
+    if sel:
+        gb.configure_selection("multiple" if "multi" in str(selection_mode) else "single")
+    # widths from the text: the header and the longest value (a sample)
+    vis = [c for c in df.columns if c != "__pos" and c not in hidden]
+    wide = len(vis) > 7
+    head = df.head(300)
+    for c in vis:
+        hdr = labels.get(c, c)
+        if c in spec:
+            txt = head[c].map(lambda v: f"{v:,.2f}" if pd.notna(v) else "").str.len()
+        else:
+            txt = head[c].astype(str).str.len()
+        chars = max(len(str(hdr)) + 3, int(txt.max()) if len(txt) else 0)
+        if wide:
+            gb.configure_column(c, width=int(min(max(8.2 * chars + 30, 90), 380)))
+        else:
+            gb.configure_column(c, flex=max(1, min(chars, 40)), minWidth=90)
+    go = gb.build()
+    if wide:                          # the widths above, with a scroll bar
+        go.pop("autoSizeStrategy", None)
+    n = len(df)
+    if height is None:                # the rows, up to 12, without a scroll
+        height = 44 + 31 * max(min(n, 12), 1) + (14 if wide else 0)
+    if key is None:
+        import sys
+        f = sys._getframe(2)
+        base = f"g_{Path(f.f_code.co_filename).stem}_{f.f_lineno}"
+        _GRID_N[base] = _GRID_N.get(base, -1) + 1
+        key = f"{base}_{_GRID_N[base]}"
+    r = AgGrid(df, gridOptions=go, height=height,
+               theme="streamlit", allow_unsafe_jscode=True, key=key,
+               update_on=["selectionChanged"] if sel else [],
+               show_toolbar=False, show_search=False, show_download_button=False)
+    if not sel:
+        return None
+    rows = r.selected_rows
+    pos = ([] if rows is None or len(rows) == 0
+           else [int(v) for v in pd.DataFrame(rows)["__pos"].tolist()])
+    return SimpleNamespace(selection=SimpleNamespace(rows=pos))
+
+
+_NATIVE_TYPES = {"number", "text", None}
+
+
+def _table(native):
+    """st.dataframe drawn as :func:`grid` where the grid can draw it."""
+    def wrapped(data=None, width="stretch", height="auto", *, use_container_width=None,
+                hide_index=None, column_order=None, column_config=None, key=None,
+                on_select="ignore", selection_mode="single-row", row_height=None,
+                **kwargs):
+        sev = ()
+        frame = data
+        if type(data).__name__ == "Styler":
+            sev = getattr(data, "_grid_severity", ())
+            frame = data.data if sev else None
+        cfg_ok = all(isinstance(c, (str, type(None)))
+                     or (c.get("type_config") or {}).get("type") in _NATIVE_TYPES
+                     for c in (column_config or {}).values())
+        if (isinstance(frame, pd.DataFrame) and len(frame) and len(frame.columns)
+                and cfg_ok and not kwargs):
+            try:
+                return grid(frame, key=key, column_config=column_config,
+                            height=height if isinstance(height, int) else None,
+                            hide_index=hide_index, column_order=column_order,
+                            on_select=on_select, selection_mode=selection_mode,
+                            severity=sev)
+            except Exception:                    # noqa: BLE001 -- the plain table
+                pass
+        kw = dict(width=width, height=height, hide_index=hide_index,
+                  column_order=column_order, column_config=column_config, key=key,
+                  on_select=on_select, selection_mode=selection_mode,
+                  row_height=row_height, **kwargs)
+        if use_container_width is not None:
+            kw["use_container_width"] = use_container_width
+        return native(data, **kw)
+    wrapped._exact = True
+    wrapped._grid = True
+    wrapped.__doc__ = native.__doc__
+    return wrapped
+
+
+if not getattr(st.dataframe, "_grid", False):
+    st.dataframe = _table(_exact(st.dataframe))
     st.data_editor = _exact(st.data_editor)
 
 
@@ -1013,39 +1250,6 @@ def overlay_impact(pv: dict) -> bool:
             c: st.column_config.NumberColumn(format="localized")
             for c in ("Exposure", "Model ECL", "Overlay", "Final ECL")})
     return True
-
-
-def column_filters(df: pd.DataFrame, key: str, columns: list | None = None,
-                   where=None) -> pd.DataFrame:
-    """A filter per column, under one Filter button: pick values in any
-    column (or type part of one, where a column holds many) to keep only the
-    rows that match every filter set. Returns the filtered rows."""
-    cols = [c for c in (columns or list(df.columns)) if c in df.columns]
-    keys = {c: f"{key}__{c}" for c in cols}
-    n_on = sum(bool(st.session_state.get(k)) for k in keys.values())
-    box = (where or st).popover(f"Filter · {n_on}" if n_on else "Filter",
-                                icon=":material/filter_list:", width="stretch")
-    out = df
-    with box:
-        for c in cols:
-            vals = df[c].dropna().astype(str)
-            uniq = sorted(vals.unique())
-            if len(uniq) < 2 and not st.session_state.get(keys[c]):
-                continue
-            if len(uniq) <= 200:
-                sel = st.multiselect(str(c), uniq, key=keys[c])
-                if sel:
-                    out = out[out[c].astype(str).isin(sel)]
-            else:
-                txt = st.text_input(str(c), key=keys[c], placeholder="contains…")
-                if txt:
-                    out = out[out[c].astype(str).str.contains(txt, case=False,
-                                                              regex=False, na=False)]
-        if n_on and st.button("Clear filters", key=f"{key}__clear"):
-            for k in keys.values():
-                st.session_state.pop(k, None)
-            st.rerun()
-    return out
 
 
 # the management overlay's rule methods and levels, as the pages name them

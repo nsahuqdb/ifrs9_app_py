@@ -225,7 +225,7 @@ def _numeric_columns(df: pd.DataFrame) -> list[str]:
 
 @router.get("/runs/{run_id}/outputs/{name}")
 def run_output_preview(run_id: str, name: str, offset: int = 0,
-                       limit: int = Query(200, le=5000),
+                       limit: int = Query(200, le=200_000),
                        q: str | None = None, column: str | None = None,
                        sort: str | None = None, desc: bool = False) -> dict:
     """A page of one output CSV, optionally filtered -- on one column, or on

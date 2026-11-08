@@ -79,10 +79,9 @@ else:
     row = con.iloc[pick]
     cid, contract, book = str(row["customer_id"]), str(row["contract_id"]), str(row["book"])
     who = contract
-    caption("The workbook prices this contract. Its Facilities, Rating and Staging "
-            "tabs also show the customer's other facilities, because the customer's "
-            "worst facility sets the rating and any Stage 2 or 3 facility lifts the "
-            "stage.")
+    caption("The workbook shows this contract only. What the customer's other "
+            "facilities contribute -- its worst days past due, a Tasdeer or Al "
+            "Dhameen facility -- is given as a value on the Rating and Staging tabs.")
 
 with guard():
     found = api.customers(run_id, cid, spaces=False).get("found") or []
@@ -111,8 +110,8 @@ if st.session_state.get(key):
         "Download the workbook (.xlsx)", st.session_state[key],
         file_name=f"ECL_calculator_{run_id}_{'contract_' if contract else ''}{safe}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    caption("Tabs, from start to end: Summary, Facilities (the inputs), Rating (how "
-            "each rating was set), Staging (the customer's stage and each "
-            "facility's, with the reason), PD internal / PD external (the PD model "
-            "and the scenario weights), PD curves, LGD, EAD, ECL. Blue cells are the "
-            "run's inputs; black cells are formulas. Excel recalculates on opening.")
+    caption("Tabs, start to end: Summary, Facilities (the inputs), Rating (how the "
+            "customer's rating was set), Staging (the customer's stage and why), PD, "
+            "LGD, EAD, ECL; each opens with its result. The assumptions and the PD "
+            "calculation are on hidden tabs (right-click a tab, Unhide). Blue cells "
+            "are the run's inputs; black cells are formulas.")

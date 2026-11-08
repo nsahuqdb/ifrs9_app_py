@@ -1,19 +1,21 @@
-"""Who moved between two runs, on stage and on rating.
+"""Who moved between two runs, on stage and on rating -- and drill down.
 
 Counted as CUSTOMERS, because rating and stage are customer attributes at QDB:
 a contract view counts one customer once per facility and inflates every cell
-by that customer's facility count. What the moves cost is on Movement (Stage
-migration and Rating migration), priced by the ECL bridge.
+by that customer's facility count. Each tab splits by rating scale (internal,
+external) and lists every move with what its customers carried in the previous
+run and now; select a move to see the customers in it. What the moves cost,
+cause by cause, is on Movement (Stage migration and Rating migration).
 """
 import pandas as pd
 import streamlit as st
 
 import api
-from ui import (bar, caption, fmt_table, guard, metric_row, money, page_setup,
-                pct)
+from ui import caption, guard, metric_row, money, page_setup, pct
 
-run_id = st.session_state.get("run_id")
-compare_id = st.session_state.get("compare_id")
+S = st.session_state
+run_id = S.get("run_id")
+compare_id = S.get("compare_id")
 if not run_id:
     st.info("No run selected. Build one on **Run the pipeline**, or point the "
             "backend at a folder of existing runs.", icon="👈")
@@ -22,142 +24,147 @@ if not compare_id:
     st.info("Two runs are needed. Add another run to the runs folder.")
     st.stop()
 page_setup("Migration", f"{compare_id} → {run_id}")
-caption("Customers, not contracts: stage and rating are set per customer. "
-        "What each move cost, and which contracts carried it, is on Movement "
-        "(Stage migration and Rating migration).")
+caption("Customers, not contracts: stage and rating are set per customer. Select "
+        "a move to see its customers. What each move cost is on Movement.")
 
 with guard():
     m = api.migration(compare_id, run_id)
 
+AMT = st.column_config.NumberColumn(format="%,.0f")
+MOVE_CFG = {c: AMT for c in ("Exposure, previous", "Exposure, now", "ECL, previous",
+                             "ECL, now", "Change in ECL")}
+
+
+def _customers(scale: str) -> pd.DataFrame:
+    with guard():
+        return pd.DataFrame(api.migration_customers(compare_id, run_id, scale))
+
+
+def _moves(cust: pd.DataFrame, a: str, b: str, label) -> pd.DataFrame:
+    """One row per move (a cell of the matrix): its customers and what they
+    carried in each run."""
+    g = (cust.groupby([a, b], dropna=True)
+         .agg(customers=("customer", "size"), exposure_prev=("exposure_prev", "sum"),
+              exposure=("exposure_curr", "sum"), ecl_prev=("ecl_prev", "sum"),
+              ecl=("ecl_curr", "sum"))
+         .reset_index())
+    g["Move"] = [label(x, y) for x, y in zip(g[a], g[b])]
+    g["Change in ECL"] = g["ecl"] - g["ecl_prev"]
+    return g
+
+
+def _move_table(g: pd.DataFrame, key: str):
+    """The moves, selectable; returns the selected row or None."""
+    show = g[["Move", "customers", "exposure_prev", "exposure", "ecl_prev", "ecl",
+              "Change in ECL"]].rename(columns={
+                  "customers": "Customers", "exposure_prev": "Exposure, previous",
+                  "exposure": "Exposure, now", "ecl_prev": "ECL, previous",
+                  "ecl": "ECL, now"})
+    ev = st.dataframe(show, hide_index=True, on_select="rerun",
+                      selection_mode="single-row", key=key, column_config=MOVE_CFG)
+    rows = ev.selection.rows if ev and ev.selection else []
+    return g.iloc[rows[0]] if rows else None
+
+
+def _drill(sub: pd.DataFrame, title: str) -> None:
+    st.markdown(f"**{title}** · {len(sub):,} customer{'s' if len(sub) != 1 else ''}")
+    show = sub.rename(columns={
+        "customer": "Customer", "customer_name": "Customer name",
+        "portfolios": "Portfolio", "contracts": "Contracts",
+        "rating_prev": "Rating, previous", "rating_curr": "Rating, now",
+        "stage_prev": "Stage, previous", "stage_curr": "Stage, now",
+        "exposure_prev": "Exposure, previous", "exposure_curr": "Exposure, now",
+        "ecl_prev": "ECL, previous", "ecl_curr": "ECL, now",
+        "ecl_change": "Change in ECL"})
+    st.dataframe(show, hide_index=True, column_config=MOVE_CFG,
+                 height=min(520, 40 + 34 * max(len(show), 1)))
+    caption("Exposure and ECL are each run's figures for the customer; the change "
+            "is everything that moved for it -- stage, rating, repayments, curves.")
+
+
+def _matrix(cust: pd.DataFrame, a: str, b: str, levels: list, name: str) -> None:
+    piv = (cust.pivot_table(index=a, columns=b, values="customer", aggfunc="count")
+           .fillna(0).astype(int))
+    piv = piv.reindex(index=[x for x in levels if x in piv.index],
+                      columns=[x for x in levels if x in piv.columns], fill_value=0)
+    piv.index = [name(x) for x in piv.index]
+    piv.columns = [name(x) for x in piv.columns]
+    piv.index.name = "Previous ↓ / now →"
+    st.dataframe(piv, hide_index=False)
+
+
+# ================================================================ stage ======
 stage_tab, rating_tab = st.tabs(["Stage", "Rating"])
+with stage_tab:
+    scales = ["All"] + [s for s in ("Internal", "External")
+                        if (m.get("stage_by_scale") or {}).get(s)]
+    sc = st.segmented_control("Rating scale", scales, default="All", required=True,
+                              key="mig_stage_scale")
+    cust = _customers(sc)
+    if len(cust) == 0:
+        st.info("No customer appears in both runs.")
+    else:
+        cust = cust.dropna(subset=["stage_prev", "stage_curr"])
+        sp, sn = cust["stage_prev"].astype(int), cust["stage_curr"].astype(int)
+        cust = cust.assign(stage_prev=sp, stage_curr=sn)
+        metric_row([("Customers in both runs", money(len(cust))),
+                    ("Changed stage", money(int((sp != sn).sum()))),
+                    ("Deteriorated", money(int((sn > sp).sum()))),
+                    ("Improved", money(int((sn < sp).sum())))])
+        st.markdown("**From / to**: customers; rows are the previous run's stage, "
+                    "columns this run's.")
+        _matrix(cust, "stage_prev", "stage_curr", [1, 2, 3], lambda x: f"Stage {x}")
+        st.markdown("**Moves**: select one to see its customers")
+        g = _moves(cust, "stage_prev", "stage_curr",
+                   lambda x, y: f"Stage {x} → Stage {y}" if x != y
+                   else f"Stage {x} (no change)")
+        pick = _move_table(g, f"mig_stage_moves_{sc}")
+        if pick is not None:
+            sub = cust[(cust["stage_prev"] == pick["stage_prev"])
+                       & (cust["stage_curr"] == pick["stage_curr"])]
+            _drill(sub, f"{pick['Move']} "
+                        f"({sc.lower() + ' scale' if sc != 'All' else 'both scales'})")
 
-DIRECTION = {"upgrade": "Upgraded", "stable": "Stable", "downgrade": "Downgraded"}
-
-
-def _scale_column(name: str, part: dict) -> None:
-    """One rating scale: the summary, the from/to grid and the moves."""
-    st.markdown(f"#### {name} rating")
-    summary = pd.DataFrame(part.get("summary") or [])
-    grid = pd.DataFrame(part.get("grid") or [])
-    if len(summary) == 0:
-        st.info("No customer on this scale is rated in both runs.")
-        return
-    total = summary["n"].sum()
-    row = {r["direction"]: r for _, r in summary.iterrows()}
-    metric_row([
-        ("Upgraded", money(row.get("upgrade", {}).get("n", 0))),
-        ("Stable", money(row.get("stable", {}).get("n", 0))),
-        ("Downgraded", money(row.get("downgrade", {}).get("n", 0))),
-        ("Downgrade rate", pct(100 * row.get("downgrade", {}).get("n", 0)
-                               / max(total, 1))),
-    ])
-    st.dataframe(
-        fmt_table(summary.assign(direction=summary["direction"].map(DIRECTION))
-                  .rename(columns={"direction": "Direction", "n": "Customers",
-                                   "exposure": "Exposure now",
-                                   "ecl": "ECL now"}),
-                  money_cols=("Customers", "Exposure now", "ECL now")),
-        use_container_width=True, hide_index=True)
-
-    if len(grid):
-        st.markdown("**From / to** — customers; rows are the previous run's "
-                    "rating, columns this run's, best grade first.")
-        levels = part.get("levels") or sorted(set(grid["from"]) | set(grid["to"]))
-        piv = (grid.pivot_table(index="from", columns="to", values="n",
-                                aggfunc="sum").fillna(0).astype(int))
-        piv = piv.reindex(index=[r for r in levels if r in piv.index],
-                          columns=[r for r in levels if r in piv.columns])
-        piv.index.name = "Previous ↓ / now →"
-        st.dataframe(piv, use_container_width=True,
-                     height=35 * (len(piv) + 1) + 3)   # every grade, no scroll
-
-        moved = grid[grid["direction"] != "stable"]
-        if len(moved):
-            st.markdown("**The moves**, largest exposure first")
-            show = (moved.sort_values("exposure", ascending=False)
-                    .assign(direction=lambda f: f["direction"].map(DIRECTION))
-                    [["from", "to", "direction", "n", "exposure", "ecl"]]
-                    .rename(columns={"from": "From", "to": "To",
-                                     "direction": "Direction",
-                                     "n": "Customers", "exposure": "Exposure now",
-                                     "ecl": "ECL now"}))
-            st.dataframe(fmt_table(show, money_cols=("Customers", "Exposure now",
-                                                     "ECL now")),
-                         use_container_width=True, hide_index=True)
-
-
+# ================================================================ rating =====
 with rating_tab:
     by_scale = m.get("rating_by_scale") or {}
     if not by_scale:
         st.info("No rating appears in both runs.")
     else:
-        caption("The internal (QDB) and external (agency) scales side by side: "
-                "they cannot share an axis, and an upgrade is only meaningful "
-                "along a scale's own order. Exposure and ECL are this run's.")
         names = [n for n in ("Internal", "External") if n in by_scale]
-        for col, name in zip(st.columns(len(names)), names):
-            with col:
-                _scale_column(name, by_scale[name])
-
-with stage_tab:
-    stage = pd.DataFrame(m["stage"])
-    if len(stage) == 0:
-        st.info("No customer appears in both runs.")
-    else:
-        moved = stage[stage["from"] != stage["to"]]
-        metric_row([
-            ("Customers in both runs", money(stage["customers"].sum())),
-            ("Changed stage", money(moved["customers"].sum())),
-            ("Deteriorated", money(
-                stage[stage["to"] > stage["from"]]["customers"].sum())),
-            ("Improved", money(
-                stage[stage["to"] < stage["from"]]["customers"].sum())),
-        ])
-        piv = (stage.pivot_table(index="from", columns="to", values="customers",
-                                 aggfunc="sum").fillna(0).astype(int))
-        piv.index = [f"Stage {i}" for i in piv.index]
-        piv.columns = [f"Stage {c}" for c in piv.columns]
-        piv.index.name = "Previous ↓ / now →"
-        caption("Customers in both runs: rows are the stage in the previous "
-                "run, columns the stage now. The diagonal did not move.")
-        st.dataframe(piv, use_container_width=True)
-        if len(moved):
-            st.subheader("What the customers who moved carry")
-            caption("For each move (for example Stage 1 → Stage 2), the "
-                    "customers who made it: their provision in the previous "
-                    "run and in this one. The difference is everything that "
-                    "changed for them -- the stage, but also repayments, "
-                    "rating and PD curves. The stage move alone is priced on "
-                    "Movement, as Stage migration.")
-            mv = moved.assign(cell=[f"Stage {a} → Stage {b}" for a, b in
-                                    zip(moved["from"], moved["to"])])
-            if "ecl_prev" in mv.columns:
-                import plotly.graph_objects as go
-                fig = go.Figure([
-                    go.Bar(name="Previous run", y=mv["cell"], x=mv["ecl_prev"],
-                           orientation="h", marker_color="#c9a9d8"),
-                    go.Bar(name="This run", y=mv["cell"], x=mv["ecl"],
-                           orientation="h", marker_color="#5b1f6e")])
-                fig.update_layout(barmode="group", height=110 + 60 * len(mv),
-                                  plot_bgcolor="white", paper_bgcolor="white",
-                                  margin=dict(l=8, r=8, t=8, b=8),
-                                  xaxis=dict(gridcolor="#f0eef4",
-                                             title="ECL", tickformat=","),
-                                  yaxis=dict(autorange="reversed"),
-                                  legend=dict(orientation="h", y=-0.2),
-                                  font=dict(size=12, color="#4a5162"))
-                st.plotly_chart(fig, use_container_width=True)
-                tbl = mv.assign(change=mv["ecl"] - mv["ecl_prev"])[
-                    ["cell", "customers", "exposure_prev", "exposure",
-                     "ecl_prev", "ecl", "change"]].rename(columns={
-                        "cell": "Move", "customers": "Customers",
-                        "exposure_prev": "Exposure, previous",
-                        "exposure": "Exposure, now",
-                        "ecl_prev": "ECL, previous", "ecl": "ECL, now",
-                        "change": "Change in ECL"})
-                st.dataframe(fmt_table(tbl, money_cols=[c for c in tbl.columns
-                                                        if c != "Move"]),
-                             use_container_width=True, hide_index=True)
-            else:
-                bar(mv, "cell", "ecl",
-                    title="This run's provision on the customers who moved")
+        sc = st.segmented_control("Rating scale", names, default=names[0],
+                                  required=True, key="mig_rating_scale")
+        caption("A scale at a time: an upgrade is only meaningful along a scale's own "
+                "order (best grade first).")
+        part = by_scale[sc]
+        levels = part.get("levels") or []
+        cust = _customers(sc)
+        cust = cust[cust["rating_prev"].isin(levels) & cust["rating_curr"].isin(levels)] \
+            if levels and len(cust) else cust
+        if len(cust) == 0:
+            st.info("No customer on this scale is rated in both runs.")
+        else:
+            rank = {r: i for i, r in enumerate(levels)}
+            rp = cust["rating_prev"].map(rank)
+            rn = cust["rating_curr"].map(rank)
+            metric_row([("Upgraded", money(int((rn < rp).sum()))),
+                        ("Stable", money(int((rn == rp).sum()))),
+                        ("Downgraded", money(int((rn > rp).sum()))),
+                        ("Downgrade rate", pct(100 * (rn > rp).sum() / max(len(cust), 1)))])
+            st.markdown("**From / to**: customers; rows are the previous run's rating, "
+                        "columns this run's, best grade first.")
+            _matrix(cust, "rating_prev", "rating_curr", levels, str)
+            st.markdown("**Moves**: select one to see its customers")
+            g = _moves(cust, "rating_prev", "rating_curr",
+                       lambda x, y: f"{x} → {y}" if x != y else f"{x} (no change)")
+            g = g.assign(_a=g["rating_prev"].map(rank), _b=g["rating_curr"].map(rank))
+            g["Direction"] = ["Stable" if a == b else ("Downgraded" if b > a else "Upgraded")
+                              for a, b in zip(g["_a"], g["_b"])]
+            g = g.sort_values(["_a", "_b"]).reset_index(drop=True)
+            g["Move"] = [m_ if d == "Stable" else f"{m_} ({d.lower()})"
+                         for m_, d in zip(g["Move"], g["Direction"])]
+            pick = _move_table(g, f"mig_rating_moves_{sc}")
+            if pick is not None:
+                sub = cust[(cust["rating_prev"] == pick["rating_prev"])
+                           & (cust["rating_curr"] == pick["rating_curr"])]
+                _drill(sub, f"{pick['Move']} ({sc.lower()} scale)")

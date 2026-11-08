@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 
 import api
-from ui import (accepted_findings_table, callout, caption, column_filters, flash,
+from ui import (accepted_findings_table, callout, caption, flash,
                 guard, kpis, money, overlay_impact, page_setup, pill, style_severity)
 
 page_setup("Browse runs", "Every run, where it stands in approval, and everything "
@@ -78,8 +78,7 @@ show = pd.DataFrame({
     "Validation fails": runs["n_validation_failures"],
     "Readiness": runs["has_readiness"].map({True: "yes", False: "—"}),
 })
-c_f, _, c_r = st.columns([1, 5, 1], vertical_alignment="bottom")
-show = column_filters(show, "runs_f", where=c_f)
+_, c_r = st.columns([6, 1], vertical_alignment="bottom")
 if c_r.button("Refresh", icon=":material/refresh:", width="stretch"):
     api.clear()
     st.rerun()
@@ -94,8 +93,9 @@ def _status_style(v):
     return ""
 
 
-ev = st.dataframe(show.style.map(_status_style, subset=["Status"]),
-                  hide_index=True, width="stretch",
+sty = show.style.map(_status_style, subset=["Status"])
+sty._grid_severity = ("Status",)            # the grid colours the status
+ev = st.dataframe(sty, hide_index=True, width="stretch",
                   height=min(420, 38 + 35 * max(len(show), 1)),
                   on_select="rerun", selection_mode="single-row", key="runs_tbl",
                   column_config={
@@ -305,7 +305,6 @@ with t_val:
                         "this run, or by a standing suppression that took effect")
             accepted_findings_table(acc["rows"])
         vf = pd.DataFrame(v["rows"])
-        vf = column_filters(vf, f"vq_{run_id}", where=st.columns([1, 6])[0])
         st.dataframe(style_severity(vf), hide_index=True, width="stretch", height=460,
                      column_config={"message": st.column_config.TextColumn(width="large"),
                                     "description": st.column_config.TextColumn(width="medium")})
@@ -361,6 +360,9 @@ with t_ov:
             st.dataframe(pd.DataFrame(f["rows"]), hide_index=True,
                          use_container_width=True)
 
+OUT_ROWS = 100_000          # rows of an output file loaded into the table
+
+
 with t_out:
     with guard():
         outs = api.run_outputs(run_id)["files"]
@@ -374,28 +376,14 @@ with t_out:
                             index=names.index(main) if main in names else 0)
         fq = c2.text_input("Find (contract, customer, any value)", key=f"oq_{run_id}")
         with guard():
-            head = api.run_output_preview(run_id, pick, offset=0, limit=1)
-        c3, c4, c5 = st.columns([3, 1, 1], vertical_alignment="bottom")
-        srt = c3.selectbox("Sort by", head["columns"], index=None,
-                           placeholder="File order", key=f"os_{run_id}_{pick}")
-        desc = c4.toggle("Largest first", value=True, key=f"od_{run_id}_{pick}")
-        page = c5.number_input("Page", min_value=1, value=1, step=1,
-                               key=f"op_{run_id}")
-        with guard():
-            pv = api.run_output_preview(run_id, pick, offset=(page - 1) * 200,
-                                        limit=200, q=fq or None, sort=srt,
-                                        desc=desc)
-        caption(f"{pv['lines']:,} rows"
-                + (" (the first 500,000 read)" if pv["truncated"] else "")
-                + f" · {pv['total']:,} match · showing "
-                  f"{pv['offset'] + 1 if pv['total'] else 0}–"
-                  f"{min(pv['offset'] + 200, pv['total'])}"
-                + (f" · sorted by {pv['sort']}, "
-                   f"{'largest' if pv['desc'] else 'smallest'} first, over the "
-                   "whole file" if pv["sort"] else "")
-                + f" · `{pv['path']}`")
+            pv = api.run_output_preview(run_id, pick, offset=0, limit=OUT_ROWS,
+                                        q=fq or None)
+        caption(f"{pv['lines']:,} rows · {pv['total']:,} shown"
+                + (f" (the first {OUT_ROWS:,})" if pv["total"] > OUT_ROWS else "")
+                + " · filter or sort in each column's header · "
+                  f"`{pv['path']}`")
         st.dataframe(pd.DataFrame(pv["rows"], columns=pv["columns"]),
-                     hide_index=True, use_container_width=True, height=440,
+                     hide_index=True, height=480, key=f"out_{run_id}_{pick}",
                      column_config={c: st.column_config.NumberColumn(format="%,.2f")
                                     for c in pv.get("numeric", [])
                                     if any(w in c.lower() for w in

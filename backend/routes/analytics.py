@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from .runs import _output_dir
 from ifrs9qdb.analytics import (
-    collateral_analysis, concentration, customer_lookup,
+    collateral_analysis, concentration, customer_lookup, customer_moves,
     customer_stage_migration, customer_view, data_quality,
     data_quality_detail, dpd_by_stage, ead_runoff, hhi,
     hhi_band, hhi_equivalent_n, lgd_floor_stats, lgd_vs_collateral,
@@ -272,7 +272,35 @@ def migration(prev: str, curr: str, top: int = 12) -> dict:
         "rating_summary": _records(migration_summary(a, b)),
         "rating_by_scale": _rating_by_scale(a, b, curr),
         "stage": _records(customer_stage_migration(a, b)),
+        "stage_by_scale": {name: _records(customer_stage_migration(pa, pb))
+                           for name, pa, pb in _by_scale(a, b)},
     }
+
+
+def _by_scale(a: pd.DataFrame, b: pd.DataFrame):
+    """(scale, previous rows, current rows) for the internal and the external
+    scale, where both runs have positions on it."""
+    for name in ("Internal", "External"):
+        if "rating_type" not in a.columns or "rating_type" not in b.columns:
+            return
+        pa = a[a["rating_type"].astype(str).str.startswith(name)]
+        pb = b[b["rating_type"].astype(str).str.startswith(name)]
+        if len(pa) and len(pb):
+            yield name, pa, pb
+
+
+@router.get("/analytics/migration-customers")
+def migration_customers(prev: str, curr: str, scale: str = "All") -> dict:
+    """The customers behind the migration tables, one row each: rating and
+    stage in both runs, exposure and ECL in both, the change. ``scale``:
+    All, Internal or External."""
+    a, b = _report(prev), _report(curr)
+    if scale != "All":
+        hit = {n: (pa, pb) for n, pa, pb in _by_scale(a, b)}
+        if scale not in hit:
+            return {"customers": []}
+        a, b = hit[scale]
+    return {"customers": _records(customer_moves(a, b))}
 
 
 def _rating_by_scale(a: pd.DataFrame, b: pd.DataFrame, curr: str) -> dict:

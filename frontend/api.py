@@ -431,6 +431,12 @@ def migration(prev: str, curr: str, top: int = 12) -> dict:
     return get("/analytics/migration", prev=prev, curr=curr, top=top)
 
 
+@st.cache_data(ttl=600, show_spinner="Finding the customers…")
+def migration_customers(prev: str, curr: str, scale: str = "All") -> list:
+    return get("/analytics/migration-customers", prev=prev, curr=curr,
+               scale=scale)["customers"]
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def scenarios(run_id: str) -> dict:
     return get(f"/analytics/{run_id}/scenarios")
