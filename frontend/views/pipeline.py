@@ -788,6 +788,10 @@ def _settings_card(vers: dict, calcs: dict) -> dict:
             help=f"Fingerprint {code[:10]}: "
                  + ("runs this version's archived code." if crow
                     else "runs the deployed code."))]
+        # the extract date of the last validation, set before the widget is
+        # drawn: Streamlit refuses a keyed widget's state written after it
+        if "wf_pdate_next" in S:
+            S["wf_pdate_in"] = S.pop("wf_pdate_next")
         S.setdefault("wf_pdate_in", date.today())
         pdate = c5.date_input("Portfolio date", key="wf_pdate_in",
                               format="DD/MM/YYYY",
@@ -806,10 +810,10 @@ def _validate(body: dict, version: str) -> None:
             S["wf_val"] = api.wf_validate_inputs(body)
     _reset_checks()
     if S["wf_val"].get("extract_date"):
-        # The widget's own key: a keyed date_input ignores a changed default,
-        # so the extract date is written straight into its state (allowed
-        # here, before the widget is drawn in the next run).
-        S["wf_pdate_in"] = date.fromisoformat(S["wf_val"]["extract_date"])
+        # The Validate button sits below the date widget, so its state cannot
+        # be written in this run: it is handed to the next one, which sets it
+        # before drawing the widget.
+        S["wf_pdate_next"] = date.fromisoformat(S["wf_val"]["extract_date"])
     st.rerun()
 
 
