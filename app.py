@@ -58,6 +58,10 @@ except api.BackendError as e:
 S["_user"] = h.get("user") or ""
 S["_engine"] = h.get("engine_version") or ""
 ui.header_badge(S["_user"], S["_engine"], api.BACKEND)
+# After a code update the backend keeps running the old code until it is
+# restarted, and a new page then fails with "Not Found": say so plainly.
+if (h.get("app_version") or "") != ui.app_version():
+    ui.restart_banner(h.get("app_version"))
 with_report = [r for r in runs if r.get("has_report")]
 ids = [r["run_id"] for r in with_report]
 

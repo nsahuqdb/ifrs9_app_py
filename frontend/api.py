@@ -466,9 +466,9 @@ def customer_names() -> dict:
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def portfolio_view(run_id: str, exposure: str = "total") -> dict:
+def portfolio_view(run_id: str) -> dict:
     """Every customer with its exposure and ECL per portfolio."""
-    return get(f"/analytics/{run_id}/portfolio-view", exposure=exposure)
+    return get(f"/analytics/{run_id}/portfolio-view")
 
 
 @st.cache_data(ttl=600, show_spinner=False)

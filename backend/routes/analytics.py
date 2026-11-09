@@ -80,22 +80,24 @@ def names() -> dict:
     return {"names": name_book(RUNS_DIR)}
 
 
+# the report's portfolios, in the order of the team's portfolio report
+PORTFOLIOS = ["Al Dhameen", "Banks and Fis", "Business Finance", "Investments",
+              "Off BS", "Tasdeer"]
+
+
 @router.get("/analytics/{run_id}/portfolio-view")
-def portfolio_view(run_id: str, exposure: str = "total") -> dict:
-    """One row per customer: id, name, rating, stage, and its exposure and
-    ECL in each portfolio (Al Dhameen, Banks and FIs, Business Finance,
-    Investments, Off BS, Tasdeer, ...), with the totals. Stage 1 first, then
-    2 and 3; the largest exposure first within a stage. ``exposure``: total
-    (on plus off balance) or on (on balance only)."""
+def portfolio_view(run_id: str) -> dict:
+    """One row per customer: id, name, rating, stage, and the exposure and
+    ECL of its contracts in each portfolio, with the totals. Exposure is the
+    report's Exposure On Bal, as everywhere in the app. Stage 1 first, then 2
+    and 3; the largest exposure first within a stage."""
     d = _report(run_id)
     if len(d) == 0:
-        return {"portfolios": [], "rows": []}
+        return {"portfolios": PORTFOLIOS, "rows": []}
     d = d.copy()
     d["portfolio"] = d["portfolio"].fillna("(unassigned)").astype(str)
-    off = d["exposure_off"].fillna(0.0) if "exposure_off" in d.columns else 0.0
-    d["_exp"] = d["exposure"] + (off if exposure == "total" else 0.0)
-    ports = sorted(d["portfolio"].unique(), key=str.lower)
-    e = d.pivot_table(index="customer", columns="portfolio", values="_exp",
+    ports = PORTFOLIOS + sorted(set(d["portfolio"]) - set(PORTFOLIOS), key=str.lower)
+    e = d.pivot_table(index="customer", columns="portfolio", values="exposure",
                       aggfunc="sum", fill_value=0.0).reindex(columns=ports, fill_value=0.0)
     c = d.pivot_table(index="customer", columns="portfolio", values="ecl",
                       aggfunc="sum", fill_value=0.0).reindex(columns=ports, fill_value=0.0)

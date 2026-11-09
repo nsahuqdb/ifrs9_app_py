@@ -553,6 +553,28 @@ def packages_banner(missing: list[str]) -> None:
         caption(f"Installs into `{sys.executable}`.")
 
 
+def app_version() -> str:
+    """This interface's version, from pyproject.toml as it is on disk now."""
+    try:
+        import tomllib
+        p = Path(__file__).resolve().parent.parent / "pyproject.toml"
+        return str(tomllib.loads(p.read_text(encoding="utf-8"))["project"]["version"])
+    except Exception:                            # noqa: BLE001
+        return ""
+
+
+def restart_banner(backend_version: str | None) -> None:
+    """The backend still runs the code from before an update."""
+    with st.container(border=True):
+        st.markdown(
+            "**Restart the app to finish the update.** The pages are version "
+            f"{app_version()}, but the calculation service is still running "
+            f"{'version ' + backend_version if backend_version else 'the previous version'}"
+            ", so a new or changed page can say *Not Found*. Close the two app "
+            "windows and start the app again, or run `update_ifrs9_code.bat`, which "
+            "now restarts it.")
+
+
 def header_badge(user: str, engine: str, backend: str) -> None:
     """The acting user (IFRS9_USER, else the OS user) and the engine version,
     at the right of the header -- the name every form records."""
@@ -1381,18 +1403,16 @@ def grid(data, *, key: str | None = None, height: int | None = None,
                             filterParams={"buttons": ["reset"],
                                           "defaultOption": "greaterThan"},
                             valueFormatter=_fmt_js(dec, pct_, exact, group, scale))
-    for c, lab in labels.items():
-        gb.configure_column(c, headerName=lab)
     for c in pin_left:                # stays in view when scrolling sideways
         if c in df.columns:
-            gb.configure_column(c, pinned="left")
+            gb.configure_columns([c], pinned="left")
     for c in severity:
         if c in df.columns:
             rules = " ".join(
                 f"if(t==='{tone}')return {{backgroundColor:'{bg}',color:'{fg}',"
                 f"fontWeight:600}};" for tone, (bg, fg) in _TONE_CSS.items())
             tones = {k: v for k, v in _TONE.items()}
-            gb.configure_column(c, cellStyle=JsCode(
+            gb.configure_columns([c], cellStyle=JsCode(
                 "function(p){var m=" + str(tones).replace("'", '"') + ";"
                 "var u=String(p.value||'').trim().toUpperCase();var t=m[u];"
                 "if(!t){if(u.indexOf('REJECT')>=0)t='err';"
@@ -1400,6 +1420,8 @@ def grid(data, *, key: str | None = None, height: int | None = None,
                 "else if(u.indexOf('UNOFFICIAL')>=0)t='info';"
                 "else if(u.indexOf('APPROVED')>=0)t='ok';}" + rules
                 + "return null;}"))
+    for c, lab in labels.items():     # last: configure_column resets the header
+        gb.configure_columns([c], headerName=lab)
     sel = on_select not in ("ignore", None, False)
     if sel:
         gb.configure_selection("multiple" if "multi" in str(selection_mode) else "single")
