@@ -161,6 +161,12 @@ if (nav.title in NEEDS_RUN | COMPARES) and not ids:
     ui.no_runs(nav.title, runs, pages["Runs"][0])
     st.stop()
 
+# A code update that adds a package (a pull without an install) would leave
+# the app running without it: say so above every page, with an Install button.
+_missing = ui.missing_packages()
+if _missing:
+    ui.packages_banner(_missing)
+
 # a page that draws other views inside itself (Parameter stress) marks them
 # embedded while they run; every run starts unmarked
 S["_embedded"] = False

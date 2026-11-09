@@ -29,7 +29,9 @@ pip install -e ".[dev]"              # this
 
 On Windows, double-click `start_ifrs9.bat`: it gets the code, sets up Python
 and the requirements the first time, and from then on updates and restarts the
-app (run.md). By hand:
+app (run.md). When the code is updated some other way (a `git pull`) and the
+new code needs a package the Python running the app does not have, every page
+says so at the top with an **Install now** button. By hand:
 
 ```bash
 # 1. backend -- the project folder holds config, versions, runs and the log

@@ -85,7 +85,7 @@ if not exist "%STAMP%" mkdir "%STAMP%"
 fc /b "%STAMP%\folder_now.txt" "%STAMP%\folder.txt" >nul 2>&1 || set "NEED=1"
 fc /b "%BASE%\%ENGINE%\pyproject.toml" "%STAMP%\engine.toml" >nul 2>&1 || set "NEED=1"
 fc /b "%BASE%\%APP%\pyproject.toml" "%STAMP%\app.toml" >nul 2>&1 || set "NEED=1"
-"%VPY%" -c "import ifrs9qdb, streamlit, fastapi, uvicorn, openpyxl, scipy" >nul 2>&1 || set "NEED=1"
+"%VPY%" -c "import ifrs9qdb, streamlit, fastapi, uvicorn, openpyxl, scipy, st_aggrid" >nul 2>&1 || set "NEED=1"
 if "%NEED%"=="0" goto requirements_ok
 echo  Installing the requirements (a few minutes the first time)...
 "%VPY%" -m pip install --upgrade pip > "%LOGS%\install.log" 2>&1

@@ -58,7 +58,18 @@ def _report(run_id: str) -> pd.DataFrame:
     path = report_path(run_id)
     if path is None or not path.is_file():
         raise HTTPException(404, f"No ECL report for run {run_id!r}")
-    return normalise(pd.read_csv(path, low_memory=False))
+    d = normalise(pd.read_csv(path, low_memory=False))
+    # a run older than engine 0.48 has no customer names: from the other runs
+    try:
+        from ifrs9qdb.names import customer_names, fill_names
+        book = customer_names(RUNS_DIR / run_id)
+        if book and len(d):
+            d["customer_name"] = fill_names(
+                d["customer"], d["customer_name"] if "customer_name" in d.columns
+                else None, book).to_numpy()
+    except Exception:                                   # noqa: BLE001 -- names are optional
+        pass
+    return d
 
 
 @router.get("/analytics/{run_id}/source")
@@ -554,7 +565,22 @@ def calculator_customers(run_id: str) -> dict:
     run = RUNS_DIR / run_id
     if not run.is_dir() or ".." in run_id or "/" in run_id:
         raise HTTPException(404, f"No run named {run_id!r}")
-    return {"customers": _records(run_customers(run))}
+    d = run_customers(run)
+    # with what the report says of each: rating, stage, ECL
+    try:
+        cv = customer_view(_report(run_id))
+    except HTTPException:
+        cv = None
+    if cv is not None and len(cv) and len(d):
+        keep = ["customer", "customer_name", "contracts", "portfolios", "rating",
+                "stage", "exposure", "ecl", "coverage"]
+        cv = cv[[c for c in keep if c in cv.columns]].rename(
+            columns={"customer": "customer_id", "customer_name": "report_name"})
+        d = d.merge(cv, on="customer_id", how="left")
+        d["customer_name"] = d["customer_name"].where(
+            d["customer_name"].fillna("").astype(str).str.strip() != "",
+            d.pop("report_name").fillna(""))
+    return {"customers": _records(d)}
 
 
 @router.get("/analytics/{run_id}/calculator/contracts")
@@ -566,7 +592,25 @@ def calculator_contracts(run_id: str) -> dict:
     run = RUNS_DIR / run_id
     if not run.is_dir() or ".." in run_id or "/" in run_id:
         raise HTTPException(404, f"No run named {run_id!r}")
-    return {"contracts": _records(run_contracts(run))}
+    d = run_contracts(run)
+    # with what the report says of each: portfolio, rating, stage, ECL
+    try:
+        rep = _report(run_id)
+    except HTTPException:
+        rep = None
+    if rep is not None and len(rep) and len(d):
+        keep = ["contract", "customer_name", "portfolio", "rating", "stage",
+                "exposure", "ecl", "coverage", "pd", "lgd"]
+        r = (rep[[c for c in keep if c in rep.columns]]
+             .drop_duplicates("contract")
+             .rename(columns={"contract": "contract_id", "customer_name": "report_name"}))
+        r["contract_id"] = r["contract_id"].astype(str)
+        d = d.merge(r, on="contract_id", how="left")
+        d["customer_name"] = d["customer_name"].where(
+            d["customer_name"].fillna("").astype(str).str.strip() != "",
+            d.pop("report_name").fillna(""))
+        d["coverage"] = 100 * d["coverage"]          # a percentage, as elsewhere
+    return {"contracts": _records(d)}
 
 
 @router.get("/analytics/{run_id}/calculator")

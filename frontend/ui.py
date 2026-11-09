@@ -463,6 +463,96 @@ def page_setup(title: str, subtitle: str | None = None) -> None:
         slot.success(msg, icon="✅")
 
 
+_REQ_CACHE: dict = {}
+
+
+def missing_packages(root: Path | None = None) -> list[str]:
+    """What this app and the engine beside it need that the Python running
+    the app does not have (or has too old), as pip requirements. Read from
+    the two pyproject.toml files, so a package a code update adds is found
+    even when the update only pulled the code."""
+    try:
+        import tomllib
+        from importlib import metadata
+
+        from packaging.requirements import Requirement
+    except ImportError:
+        return []
+    root = Path(root) if root else Path(__file__).resolve().parent.parent
+    files = [(root / "pyproject.toml", ()),
+             (root.parent / "ifrs9qdb_py" / "pyproject.toml", ("excel",))]
+    stamp = tuple((str(f), f.stat().st_mtime_ns) for f, _ in files if f.is_file())
+    if _REQ_CACHE.get("stamp") == stamp:
+        return _REQ_CACHE["missing"]
+    out: list[str] = []
+    for f, extras in files:
+        if not f.is_file():
+            continue
+        try:
+            proj = tomllib.loads(f.read_text(encoding="utf-8")).get("project", {})
+        except Exception:                        # noqa: BLE001
+            continue
+        reqs = list(proj.get("dependencies", []))
+        for e in extras:
+            reqs += (proj.get("optional-dependencies") or {}).get(e, [])
+        for r in reqs:
+            try:
+                req = Requirement(r)
+            except Exception:                    # noqa: BLE001
+                continue
+            if req.name.lower().replace("_", "-") == "ifrs9qdb":
+                continue                         # the engine itself: from its folder
+            if req.marker is not None and not req.marker.evaluate():
+                continue
+            try:
+                have = metadata.version(req.name)
+            except metadata.PackageNotFoundError:
+                have = None
+            if have is None or (req.specifier and not req.specifier.contains(
+                    have, prereleases=True)):
+                spec = f"{req.name}{req.specifier}"
+                if spec not in out:
+                    out.append(spec)
+    _REQ_CACHE.update(stamp=stamp, missing=out)
+    return out
+
+
+def packages_banner(missing: list[str]) -> None:
+    """Say which packages are missing and install them on request, into the
+    Python running the app. Nothing to restart: the next page load uses them."""
+    import subprocess
+    import sys
+    names = ", ".join(m.split(">")[0].split("=")[0].split("<")[0] for m in missing)
+    with st.container(border=True):
+        c1, c2 = st.columns([5, 1], vertical_alignment="center")
+        c1.markdown(
+            f"**This version needs {len(missing)} package"
+            f"{'s' if len(missing) != 1 else ''} not installed yet:** {names}. "
+            "Until then tables have no column menu (sort, filter).")
+        if c2.button("Install now", type="primary", key="_pkg_install",
+                     use_container_width=True):
+            with st.spinner("Installing… (a minute or two)"):
+                try:
+                    r = subprocess.run(
+                        [sys.executable, "-m", "pip", "install",
+                         "--disable-pip-version-check", *missing],
+                        capture_output=True, text=True, timeout=1200)
+                    ok, log = r.returncode == 0, (r.stdout or "") + (r.stderr or "")
+                except Exception as exc:         # noqa: BLE001
+                    ok, log = False, str(exc)
+            if ok:
+                import importlib
+                importlib.invalidate_caches()
+                _REQ_CACHE.clear()
+                _GRID_ERR.clear()
+                flash("Installed: " + names + ".")
+                st.rerun()
+            st.error("The installation did not finish. Behind a proxy, set PROXY at "
+                     "the top of start_ifrs9.bat and run it; or send this text.")
+            st.code(log[-3000:], language=None)
+        caption(f"Installs into `{sys.executable}`.")
+
+
 def header_badge(user: str, engine: str, backend: str) -> None:
     """The acting user (IFRS9_USER, else the OS user) and the engine version,
     at the right of the header -- the name every form records."""
@@ -865,18 +955,186 @@ def _exact(fn):
 
 
 # ------------------------------------------------------------------ tables --
-# Every table is a grid with a filter in each column's header (the funnel)
-# and sorting by clicking the header. A number stays a number -- a column of
+# Every table is a grid: click a column's name to sort; hover it for the ⋮
+# menu -- sort, filter, autosize, pin. A number stays a number -- a column of
 # formatted amounts ("1,234,567") or percentages is read back to numbers and
 # shown with the same format -- so it sorts as a number. Ids and codes stay
 # text. A table coloured by a Styler other than the severity one, or using a
 # column type the grid does not draw (progress bars, links, charts), keeps
-# Streamlit's own table.
+# Streamlit's own table, with the numbers read back the same way.
 _NUM_TXT = re.compile(r"^[+-]?(\d{1,3}(,\d{3})+|\d+)(\.\d+)?%?$")
 _BLANK = {"", "—", "-", "–", "nan", "None", "NaN"}
 _GRID_N: dict = {}
+_GRID_ERR: dict = {}                 # why the grid could not draw, the first time
 _TONE_CSS = {"err": ("#fef3f2", "#b42318"), "warn": ("#fffaeb", "#b54708"),
              "info": ("#eff8ff", "#175cd3"), "ok": ("#ecfdf3", "#067647")}
+
+# The column header: the name (click to sort), the sort arrow, a funnel when
+# the column is filtered, and the ⋮ menu on hover. The grid sits in a frame
+# its own height; a menu or a filter that does not fit makes the frame taller
+# while it is open.
+_HEADER_JS = r"""(function () {
+class QHeader {
+  init(p) {
+    this.p = p;
+    QHeader.setup();
+    const e = document.createElement('div');
+    e.className = 'q-h' + (QHeader.isNum(p.column) ? ' q-num' : '');
+    e.innerHTML = '<span class="q-l"></span><span class="q-s"></span>'
+      + '<span class="q-f" title="Filtered">' + QHeader.FUNNEL + '</span>'
+      + '<span class="q-m" title="Sort, filter and more" role="button">'
+      + QHeader.DOTS + '</span>';
+    this.e = e;
+    this.l = e.querySelector('.q-l');
+    this.s = e.querySelector('.q-s');
+    this.f = e.querySelector('.q-f');
+    this.m = e.querySelector('.q-m');
+    this.l.textContent = p.displayName;
+    this.l.title = p.displayName;
+    this.onClick = (ev) => {
+      if (ev.target.closest('.q-m')) return;
+      if (this.p.enableSorting) this.p.progressSort(ev.shiftKey);
+    };
+    this.onMenu = (ev) => { ev.stopPropagation(); QHeader.menu(this.p, this.m); };
+    this.onUpd = () => this.upd();
+    e.addEventListener('click', this.onClick);
+    this.m.addEventListener('click', this.onMenu);
+    p.column.addEventListener('sortChanged', this.onUpd);
+    p.column.addEventListener('filterChanged', this.onUpd);
+    this.upd();
+  }
+  upd() {
+    const s = this.p.column.getSort();
+    this.s.textContent = s === 'asc' ? '↑' : (s === 'desc' ? '↓' : '');
+    this.f.style.display = this.p.column.isFilterActive() ? 'inline-flex' : 'none';
+    this.e.classList.toggle('q-on', !!s || this.p.column.isFilterActive());
+  }
+  getGui() { return this.e; }
+  refresh(p) { this.p = p; this.l.textContent = p.displayName; this.upd(); return true; }
+  destroy() {
+    this.p.column.removeEventListener('sortChanged', this.onUpd);
+    this.p.column.removeEventListener('filterChanged', this.onUpd);
+  }
+  static isNum(col) {
+    const t = col.getColDef().type;
+    return Array.isArray(t) ? t.indexOf('numericColumn') >= 0 : t === 'numericColumn';
+  }
+  static setup() {
+    if (document.getElementById('q-css')) return;
+    const st = document.createElement('style');
+    st.id = 'q-css';
+    st.textContent = `
+      html, body { min-height: 100vh; }
+      .q-h { display:flex; align-items:center; gap:4px; width:100%; height:100%;
+             cursor:pointer; overflow:hidden; }
+      .q-l { flex:1 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+             font-weight:600; }
+      .q-num .q-l { text-align:right; }
+      .q-s { flex:0 0 auto; font-weight:700; }
+      .q-f { flex:0 0 auto; display:none; align-items:center; color:#5b1f6e; }
+      .q-m { flex:0 0 auto; display:inline-flex; align-items:center; justify-content:center;
+             width:20px; height:22px; border-radius:4px; opacity:0; color:#475467; }
+      .ag-header-cell:hover .q-m, .q-m.q-open { opacity:1; }
+      .q-m:hover, .q-m.q-open { background:rgba(91,31,110,.10); color:#5b1f6e; }
+      .q-menu { position:absolute; z-index:10000; min-width:190px; background:#fff;
+                border:1px solid #e4e7ec; border-radius:8px; padding:4px 0;
+                box-shadow:0 8px 24px rgba(16,24,40,.14); font:13px/1.2 "Source Sans Pro",
+                "Source Sans 3", system-ui, sans-serif; color:#1f2430; }
+      .q-menu div.q-i { padding:7px 14px; cursor:pointer; white-space:nowrap; }
+      .q-menu div.q-i:hover { background:#f3ecf7; }
+      .q-menu div.q-sep { height:1px; background:#eef0f3; margin:4px 0; }`;
+    document.head.appendChild(st);
+  }
+  static post(h) {
+    window.parent.postMessage({isStreamlitMessage: true,
+      type: 'streamlit:setFrameHeight', height: Math.ceil(h)}, '*');
+  }
+  static grow(need) {
+    const q = QHeader;
+    if (q.base === undefined || q.base === null) q.base = window.innerHeight;
+    if (need > window.innerHeight) { q.post(need); q.grown = true; }
+    if (!q.timer) q.timer = setInterval(() => {
+      if (document.querySelector('.q-menu, .ag-popup-child, .ag-filter')) return;
+      clearInterval(q.timer); q.timer = null;
+      if (q.grown) q.post(q.base);
+      q.grown = false; q.base = null;
+    }, 400);
+  }
+  static close() {
+    document.querySelectorAll('.q-menu').forEach(x => x.remove());
+    document.querySelectorAll('.q-m.q-open').forEach(x => x.classList.remove('q-open'));
+  }
+  static menu(p, anchor) {
+    const q = QHeader, col = p.column, api = p.api, id = col.getColId();
+    const was = anchor.classList.contains('q-open');
+    q.close();
+    if (was) return;
+    const items = [];
+    if (p.enableSorting) {
+      items.push(['Sort ascending', () => p.setSort('asc', false)]);
+      items.push(['Sort descending', () => p.setSort('desc', false)]);
+      if (col.getSort()) items.push(['Clear sort', () => p.setSort(null, false)]);
+      items.push(null);
+    }
+    if (col.isFilterAllowed()) {
+      items.push(['Filter…', () => {
+        const r = anchor.getBoundingClientRect();
+        q.grow(r.bottom + 330);
+        setTimeout(() => p.showFilter(anchor), 60);
+      }]);
+      if (col.isFilterActive()) items.push(['Clear filter', () => {
+        Promise.resolve(api.setColumnFilterModel(id, null)).then(() => api.onFilterChanged());
+      }]);
+      const fm = api.getFilterModel() || {};
+      if (Object.keys(fm).length > 1) items.push(['Clear all filters', () => api.setFilterModel(null)]);
+      items.push(null);
+    }
+    items.push(['Autosize column', () => api.autoSizeColumns([id])]);
+    items.push([col.getPinned() ? 'Unpin column' : 'Pin column',
+                () => api.setColumnsPinned([id], col.getPinned() ? null : 'left')]);
+    const m = document.createElement('div');
+    m.className = 'q-menu';
+    items.forEach(it => {
+      const d = document.createElement('div');
+      if (!it) { d.className = 'q-sep'; m.appendChild(d); return; }
+      d.className = 'q-i'; d.textContent = it[0];
+      d.addEventListener('mousedown', ev => ev.stopPropagation());
+      d.addEventListener('click', ev => { ev.stopPropagation(); q.close(); it[1](); });
+      m.appendChild(d);
+    });
+    while (m.lastChild && m.lastChild.className === 'q-sep') m.removeChild(m.lastChild);
+    document.body.appendChild(m);
+    anchor.classList.add('q-open');
+    const r = anchor.getBoundingClientRect();
+    const w = m.offsetWidth, h = m.offsetHeight;
+    let left = r.right - w;
+    if (left < 4) left = Math.min(r.left, Math.max(4, window.innerWidth - w - 4));
+    m.style.left = (left + window.scrollX) + 'px';
+    m.style.top = (r.bottom + 2 + window.scrollY) + 'px';
+    q.grow(r.bottom + h + 10);
+    const off = (ev) => {
+      if (ev.type === 'keydown' && ev.key !== 'Escape') return;
+      if (ev.type === 'mousedown' && m.contains(ev.target)) return;
+      q.close();
+      document.removeEventListener('mousedown', off, true);
+      document.removeEventListener('keydown', off, true);
+    };
+    setTimeout(() => {
+      document.addEventListener('mousedown', off, true);
+      document.addEventListener('keydown', off, true);
+    }, 0);
+  }
+}
+QHeader.DOTS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">'
+  + '<circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/>'
+  + '<circle cx="12" cy="19" r="2"/></svg>';
+QHeader.FUNNEL = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">'
+  + '<path d="M3 4h18l-7 8.5V19l-4 2v-8.5z"/></svg>';
+return QHeader;
+})()
+"""
+_READY_JS = ("function(e){try{e.api.setGridOption('popupParent',document.body);}"
+             "catch(x){}}")
 
 
 def _is_id(col) -> bool:
@@ -918,6 +1176,27 @@ def _printf(fmt: str):
     return (dec, "%" in m.group(5), bool(m.group(2)), 1.0, False)
 
 
+def _text_number(name, s: pd.Series):
+    """A text column of formatted numbers ("1,234,567", "12.50%") as
+    (numbers, decimals, percent); None when it is not one -- an id, a code, a
+    column of plain digits, or any text that is not a number."""
+    if _is_id(name) or not (s.dtype == object or pd.api.types.is_string_dtype(s)):
+        return None                           # (pandas 3 keeps text as "str")
+    t = s.map(lambda v: "" if v is None or (isinstance(v, float) and pd.isna(v))
+              else str(v).strip())
+    filled = t[~t.isin(_BLANK)]
+    if not len(filled) or not filled.map(lambda v: bool(_NUM_TXT.match(v))).all():
+        return None
+    if not filled.str.contains(r"[,.%]").any():
+        return None                           # plain digits: may be an id
+    pct_ = bool(filled.str.endswith("%").all())
+    dec = int(filled.map(lambda v: len(v.rstrip("%").split(".")[1])
+                         if "." in v else 0).max())
+    num = pd.to_numeric(t.where(~t.isin(_BLANK)).str.replace(",", "", regex=False)
+                        .str.rstrip("%"), errors="coerce")
+    return num, dec, pct_
+
+
 def _grid_frame(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     """Formatted numbers back to numbers; {column: formatter spec}."""
     out, spec = df.copy(), {}
@@ -933,22 +1212,38 @@ def _grid_frame(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
             else:
                 spec[c] = (None, False, True, 1.0, True)
             continue
-        if _is_id(c) or s.dtype != object:
+        got = _text_number(c, s)
+        if got is None:
             continue
-        t = s.map(lambda v: "" if v is None or (isinstance(v, float) and pd.isna(v))
-                  else str(v).strip())
-        filled = t[~t.isin(_BLANK)]
-        if not len(filled) or not filled.map(lambda v: bool(_NUM_TXT.match(v))).all():
-            continue
-        if not filled.str.contains(r"[,.%]").any():
-            continue                          # plain digits: may be an id
-        pct_ = bool(filled.str.endswith("%").all())
-        dec = int(filled.map(lambda v: len(v.rstrip("%").split(".")[1])
-                             if "." in v else 0).max())
-        out[c] = pd.to_numeric(t.where(~t.isin(_BLANK)).str.replace(",", "", regex=False)
-                               .str.rstrip("%"), errors="coerce")
+        out[c], dec, pct_ = got
         spec[c] = (dec, pct_, True, 1.0, False)
     return out, spec
+
+
+def _native_numbers(data, column_config):
+    """For Streamlit's own table: formatted numbers back to numbers, each
+    shown as it was ("%,.0f", "%.2f%%"), so it sorts as a number."""
+    if not isinstance(data, pd.DataFrame) or not len(data):
+        return data, column_config
+    cfg, out = dict(column_config or {}), None
+    for c in data.columns:
+        if c in cfg or str(c) in cfg:
+            continue
+        got = _text_number(c, data[c])
+        if got is None:
+            continue
+        num, dec, pct_ = got
+        if out is None:
+            out = data.copy()
+        out[c] = num
+        cfg[c] = st.column_config.NumberColumn(
+            format=f"%,.{dec}f" + ("%%" if pct_ else ""))
+    return (data, column_config) if out is None else (out, cfg)
+
+
+def grid_problem() -> str | None:
+    """Why tables are drawn without the column menu, if they are."""
+    return _GRID_ERR.get("reason")
 
 
 def grid(data, *, key: str | None = None, height: int | None = None,
@@ -989,8 +1284,11 @@ def grid(data, *, key: str | None = None, height: int | None = None,
                 spec[c] = f
     df.insert(0, "__pos", range(len(df)))
     gb = GridOptionsBuilder.from_dataframe(df)
-    gb.configure_default_column(filter=True, sortable=True, resizable=True,
-                                suppressHeaderMenuButton=True, minWidth=96)
+    gb.configure_default_column(filter="agTextColumnFilter", sortable=True,
+                                resizable=True, suppressHeaderMenuButton=True,
+                                suppressHeaderFilterButton=True, minWidth=96,
+                                headerComponent=JsCode(_HEADER_JS),
+                                filterParams={"buttons": ["reset"]})
     gb.configure_column("__pos", hide=True)
     for c in hidden:
         gb.configure_column(c, hide=True)
@@ -999,6 +1297,8 @@ def grid(data, *, key: str | None = None, height: int | None = None,
             continue
         dec, pct_, group, scale, exact = f
         gb.configure_column(c, type=["numericColumn"], filter="agNumberColumnFilter",
+                            filterParams={"buttons": ["reset"],
+                                          "defaultOption": "greaterThan"},
                             valueFormatter=_fmt_js(dec, pct_, exact, group, scale))
     for c, lab in labels.items():
         gb.configure_column(c, headerName=lab)
@@ -1034,6 +1334,7 @@ def grid(data, *, key: str | None = None, height: int | None = None,
             gb.configure_column(c, width=int(min(max(8.2 * chars + 30, 90), 380)))
         else:
             gb.configure_column(c, flex=max(1, min(chars, 40)), minWidth=90)
+    gb.configure_grid_options(onGridReady=JsCode(_READY_JS))
     go = gb.build()
     if wide:                          # the widths above, with a scroll bar
         go.pop("autoSizeStrategy", None)
@@ -1083,8 +1384,14 @@ def _table(native):
                             hide_index=hide_index, column_order=column_order,
                             on_select=on_select, selection_mode=selection_mode,
                             severity=sev)
-            except Exception:                    # noqa: BLE001 -- the plain table
-                pass
+            except Exception as exc:             # noqa: BLE001 -- the plain table
+                if "reason" not in _GRID_ERR:
+                    import sys
+                    _GRID_ERR["reason"] = f"{type(exc).__name__}: {exc}"
+                    print(f"[tables] basic table shown: {_GRID_ERR['reason']}",
+                          file=sys.stderr)
+        if type(data).__name__ != "Styler":
+            data, column_config = _native_numbers(data, column_config)
         kw = dict(width=width, height=height, hide_index=hide_index,
                   column_order=column_order, column_config=column_config, key=key,
                   on_select=on_select, selection_mode=selection_mode,
