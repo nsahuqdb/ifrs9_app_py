@@ -42,13 +42,16 @@ if r.button("Refresh", key="aq_refresh", icon=":material/refresh:", width="stret
     st.rerun()
 
 S.setdefault("aq_who", S.get("_user") or "")
+# one name for the whole page: a run, a config version and an overlay can be
+# open at once, each in its tab, and each decision records this name
+st.text_input("Your name", key="aq_who", width=320,
+              help="Recorded with every approval or rejection on this page.")
 
 
 def _decide(key: str, approve, reject, can: bool = True, why_not: str = "") -> None:
-    """Your name, a reason, and Approve / Reject."""
-    c1, c2 = st.columns([1, 2])
-    who = c1.text_input("Your name", key="aq_who")
-    reason = c2.text_input("Reason (required)", key=f"aq_reason_{key}")
+    """A reason, and Approve / Reject, under the page's name."""
+    who = S.get("aq_who") or ""
+    reason = st.text_input("Reason (required)", key=f"aq_reason_{key}")
     b1, b2, _ = st.columns([1, 1, 4])
     go_a = b1.button("Approve", type="primary", disabled=not can, key=f"aq_a_{key}",
                      width="stretch")
