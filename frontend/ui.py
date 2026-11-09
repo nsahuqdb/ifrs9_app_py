@@ -1024,7 +1024,9 @@ class QHeader {
     const st = document.createElement('style');
     st.id = 'q-css';
     st.textContent = `
-      html, body { min-height: 100vh; }
+      /* the frame's width, not the width Streamlit gave when the table was
+         first drawn: 0 inside a closed expander or tab, which left it blank */
+      #gridContainer { width: 100% !important; }
       .q-h { display:flex; align-items:center; gap:4px; width:100%; height:100%;
              cursor:pointer; overflow:hidden; }
       .q-l { flex:1 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
@@ -1044,20 +1046,37 @@ class QHeader {
       .q-menu div.q-i:hover { background:#f3ecf7; }
       .q-menu div.q-sep { height:1px; background:#eef0f3; margin:4px 0; }`;
     document.head.appendChild(st);
+    // a click outside the table's frame never reaches it: the frame loses
+    // focus instead, so close the menu and any open filter then
+    window.addEventListener('blur', () => {
+      QHeader.close();
+      try { document.body.dispatchEvent(new MouseEvent('mousedown', {bubbles: true})); }
+      catch (x) { /* nothing open */ }
+    });
   }
   static post(h) {
     window.parent.postMessage({isStreamlitMessage: true,
       type: 'streamlit:setFrameHeight', height: Math.ceil(h)}, '*');
   }
   static grow(need) {
+    // the page below the table makes room while a menu or filter is open;
+    // the body is stretched too, so the filter can be placed in that room
     const q = QHeader;
-    if (q.base === undefined || q.base === null) q.base = window.innerHeight;
-    if (need > window.innerHeight) { q.post(need); q.grown = true; }
+    if (need > window.innerHeight) {
+      document.documentElement.style.minHeight = need + 'px';
+      document.body.style.minHeight = need + 'px';
+      q.post(need); q.grown = true;
+    }
     if (!q.timer) q.timer = setInterval(() => {
       if (document.querySelector('.q-menu, .ag-popup-child, .ag-filter')) return;
       clearInterval(q.timer); q.timer = null;
-      if (q.grown) q.post(q.base);
-      q.grown = false; q.base = null;
+      if (q.grown) {
+        document.documentElement.style.minHeight = '';
+        document.body.style.minHeight = '';
+        const r = document.getElementById('root') || document.body;
+        q.post(r.getBoundingClientRect().height);
+      }
+      q.grown = false;
     }, 400);
   }
   static close() {
@@ -1135,6 +1154,60 @@ return QHeader;
 """
 _READY_JS = ("function(e){try{e.api.setGridOption('popupParent',document.body);}"
              "catch(x){}}")
+_ROW_H, _HEAD_H = 30, 34
+# Column widths from the content (headers included), a long text capped; when
+# the columns need less than the table's width they are stretched to fill it,
+# so a small table needs no scrolling. Run when the rows are first drawn and
+# whenever the table's size changes (a window resize, an expander opened).
+_FIT_JS = r"""function (e) {
+  var api = e.api;
+  setTimeout(function () {
+    var root = document.querySelector('.ag-root-wrapper');
+    if (!root || !root.clientWidth) return;
+    var cols = api.getAllDisplayedColumns();
+    if (!cols.length) return;
+    api.autoSizeAllColumns(false);
+    var total = 0, fix = [];
+    cols.forEach(function (c) {
+      var w = c.getActualWidth();
+      if (w > 420) { fix.push({key: c.getColId(), newWidth: 420}); w = 420; }
+      total += w;
+    });
+    if (fix.length) api.setColumnWidths(fix);
+    if (total < root.clientWidth - 4) api.sizeColumnsToFit();
+    // the frame as tall as the table: a scroll bar the first draw needed
+    // may be gone now that the columns fit
+    setTimeout(function () {
+      if (document.querySelector('.q-menu, .ag-popup-child, .ag-filter')) return;
+      var r = document.getElementById('root');
+      if (!r) return;
+      var h = Math.ceil(r.getBoundingClientRect().height);
+      if (h > 0 && Math.abs(h - window.innerHeight) > 1)
+        window.parent.postMessage({isStreamlitMessage: true,
+          type: 'streamlit:setFrameHeight', height: h}, '*');
+    }, 80);
+  }, 0);
+}"""
+_PINNED_JS = ("function(p){if(p.node.rowPinned)return {fontWeight:700,"
+              "background:'#f6f1f9'};return null;}")
+
+
+def _group_columns(defs: list, groups: dict) -> list:
+    """Column definitions with a header over each group's columns, in the
+    order the columns come."""
+    where = {c: g for g, cols in groups.items() for c in cols}
+    out, done = [], set()
+    for d in defs:
+        g = where.get(d.get("field"))
+        if g is None:
+            out.append(d)
+            continue
+        if g in done:
+            continue
+        done.add(g)
+        kids = [x for x in defs if where.get(x.get("field")) == g]
+        out.append({"headerName": g, "marryChildren": True, "children": kids})
+    return out
 
 
 def _is_id(col) -> bool:
@@ -1177,9 +1250,10 @@ def _printf(fmt: str):
 
 
 def _text_number(name, s: pd.Series):
-    """A text column of formatted numbers ("1,234,567", "12.50%") as
-    (numbers, decimals, percent); None when it is not one -- an id, a code, a
-    column of plain digits, or any text that is not a number."""
+    """A text column of formatted numbers ("1,234,567", "12.50%", or small
+    counts like "25") as (numbers, decimals, percent, grouped); None when it
+    is not one -- an id, a code, large plain digits (may be ids), or any text
+    that is not a number."""
     if _is_id(name) or not (s.dtype == object or pd.api.types.is_string_dtype(s)):
         return None                           # (pandas 3 keeps text as "str")
     t = s.map(lambda v: "" if v is None or (isinstance(v, float) and pd.isna(v))
@@ -1187,14 +1261,16 @@ def _text_number(name, s: pd.Series):
     filled = t[~t.isin(_BLANK)]
     if not len(filled) or not filled.map(lambda v: bool(_NUM_TXT.match(v))).all():
         return None
+    num = pd.to_numeric(t.where(~t.isin(_BLANK)).str.replace(",", "", regex=False)
+                        .str.rstrip("%"), errors="coerce")
+    grouped = bool(filled.str.contains(",").any())
     if not filled.str.contains(r"[,.%]").any():
-        return None                           # plain digits: may be an id
+        if num.abs().max() >= 10000:
+            return None                       # large plain digits: may be ids
     pct_ = bool(filled.str.endswith("%").all())
     dec = int(filled.map(lambda v: len(v.rstrip("%").split(".")[1])
                          if "." in v else 0).max())
-    num = pd.to_numeric(t.where(~t.isin(_BLANK)).str.replace(",", "", regex=False)
-                        .str.rstrip("%"), errors="coerce")
-    return num, dec, pct_
+    return num, dec, pct_, grouped or num.abs().max() >= 10000
 
 
 def _grid_frame(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
@@ -1215,8 +1291,8 @@ def _grid_frame(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         got = _text_number(c, s)
         if got is None:
             continue
-        out[c], dec, pct_ = got
-        spec[c] = (dec, pct_, True, 1.0, False)
+        out[c], dec, pct_, grp = got
+        spec[c] = (dec, pct_, grp, 1.0, False)
     return out, spec
 
 
@@ -1232,12 +1308,12 @@ def _native_numbers(data, column_config):
         got = _text_number(c, data[c])
         if got is None:
             continue
-        num, dec, pct_ = got
+        num, dec, pct_, grp = got
         if out is None:
             out = data.copy()
         out[c] = num
         cfg[c] = st.column_config.NumberColumn(
-            format=f"%,.{dec}f" + ("%%" if pct_ else ""))
+            format=f"%{',' if grp else ''}.{dec}f" + ("%%" if pct_ else ""))
     return (data, column_config) if out is None else (out, cfg)
 
 
@@ -1249,10 +1325,15 @@ def grid_problem() -> str | None:
 def grid(data, *, key: str | None = None, height: int | None = None,
          column_config: dict | None = None, hide_index: bool | None = None,
          column_order=None, on_select="ignore", selection_mode="single-row",
-         severity: tuple = ()):
-    """A table with a filter in every column header and header-click sorting.
-    With ``on_select`` it returns Streamlit's shape: ``.selection.rows``, the
-    positions of the selected rows in ``data``."""
+         severity: tuple = (), groups: dict | None = None,
+         pinned_bottom: list | None = None, max_rows: int = 12,
+         pin_left: tuple = ()):
+    """A table with the column menu (sort, filter, autosize, pin) and
+    header-click sorting. Up to ``max_rows`` rows it is as tall as its rows;
+    longer, it scrolls. ``groups`` puts a header over sets of columns
+    ({"Exposure": [...], "ECL": [...]}); ``pinned_bottom`` rows (a total)
+    stay at the bottom. With ``on_select`` it returns Streamlit's shape:
+    ``.selection.rows``, the positions of the selected rows in ``data``."""
     from types import SimpleNamespace
 
     from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
@@ -1286,7 +1367,7 @@ def grid(data, *, key: str | None = None, height: int | None = None,
     gb = GridOptionsBuilder.from_dataframe(df)
     gb.configure_default_column(filter="agTextColumnFilter", sortable=True,
                                 resizable=True, suppressHeaderMenuButton=True,
-                                suppressHeaderFilterButton=True, minWidth=96,
+                                suppressHeaderFilterButton=True, minWidth=70,
                                 headerComponent=JsCode(_HEADER_JS),
                                 filterParams={"buttons": ["reset"]})
     gb.configure_column("__pos", hide=True)
@@ -1302,6 +1383,9 @@ def grid(data, *, key: str | None = None, height: int | None = None,
                             valueFormatter=_fmt_js(dec, pct_, exact, group, scale))
     for c, lab in labels.items():
         gb.configure_column(c, headerName=lab)
+    for c in pin_left:                # stays in view when scrolling sideways
+        if c in df.columns:
+            gb.configure_column(c, pinned="left")
     for c in severity:
         if c in df.columns:
             rules = " ".join(
@@ -1319,28 +1403,25 @@ def grid(data, *, key: str | None = None, height: int | None = None,
     sel = on_select not in ("ignore", None, False)
     if sel:
         gb.configure_selection("multiple" if "multi" in str(selection_mode) else "single")
-    # widths from the text: the header and the longest value (a sample)
-    vis = [c for c in df.columns if c != "__pos" and c not in hidden]
-    wide = len(vis) > 7
-    head = df.head(300)
-    for c in vis:
-        hdr = labels.get(c, c)
-        if c in spec:
-            txt = head[c].map(lambda v: f"{v:,.2f}" if pd.notna(v) else "").str.len()
-        else:
-            txt = head[c].astype(str).str.len()
-        chars = max(len(str(hdr)) + 3, int(txt.max()) if len(txt) else 0)
-        if wide:
-            gb.configure_column(c, width=int(min(max(8.2 * chars + 30, 90), 380)))
-        else:
-            gb.configure_column(c, flex=max(1, min(chars, 40)), minWidth=90)
-    gb.configure_grid_options(onGridReady=JsCode(_READY_JS))
+    gb.configure_grid_options(onGridReady=JsCode(_READY_JS),
+                              onFirstDataRendered=JsCode(_FIT_JS),
+                              onGridSizeChanged=JsCode(_FIT_JS),
+                              suppressColumnVirtualisation=True,
+                              rowHeight=_ROW_H, headerHeight=_HEAD_H,
+                              getRowStyle=JsCode(_PINNED_JS))
     go = gb.build()
-    if wide:                          # the widths above, with a scroll bar
-        go.pop("autoSizeStrategy", None)
+    go.pop("autoSizeStrategy", None)  # widths: _FIT_JS, from the content
+    if groups:
+        go["columnDefs"] = _group_columns(go["columnDefs"], groups)
+    if pinned_bottom:
+        go["pinnedBottomRowData"] = pinned_bottom
     n = len(df)
-    if height is None:                # the rows, up to 12, without a scroll
-        height = 44 + 31 * max(min(n, 12), 1) + (14 if wide else 0)
+    if n <= max_rows:                 # every row, nothing below them
+        go["domLayout"] = "autoHeight"
+        height = _HEAD_H * (2 if groups else 1) + _ROW_H * (max(n, 1) + len(
+            pinned_bottom or [])) + 20
+    elif height is None:
+        height = _HEAD_H * (2 if groups else 1) + _ROW_H * max_rows + 20
     if key is None:
         import sys
         f = sys._getframe(2)
@@ -1360,6 +1441,43 @@ def grid(data, *, key: str | None = None, height: int | None = None,
 
 
 _NATIVE_TYPES = {"number", "text", None}
+_CUSTOMER_COLS = {"customer", "customer id", "customerid", "cust id", "customer no",
+                  "customer number", "customer_b", "customer_a"}
+
+
+def _id_text(v) -> str:
+    s = "" if v is None or (isinstance(v, float) and pd.isna(v)) else str(v).strip()
+    return s[:-2] if s.endswith(".0") and s[:-2].isdigit() else s
+
+
+def with_names(df: pd.DataFrame, hide_index=None) -> pd.DataFrame:
+    """A table with a customer id column gets "Customer name" beside it, from
+    the runs (api.customer_names), unless it already has a name column."""
+    if not isinstance(df, pd.DataFrame) or not len(df):
+        return df
+    if (df.index.name and str(df.index.name).strip().lower() in _CUSTOMER_COLS
+            and hide_index is not True):
+        df = df.reset_index()
+    cols = list(df.columns)
+    if any("name" in str(c).lower() for c in cols):
+        return df
+    hit = next((c for c in cols if str(c).strip().lower().replace("_", " ")
+                in _CUSTOMER_COLS or str(c).strip().lower() in _CUSTOMER_COLS), None)
+    if hit is None:
+        return df
+    try:
+        import api
+        book = api.customer_names()
+    except Exception:                            # noqa: BLE001 -- names are optional
+        return df
+    if not book:
+        return df
+    names = df[hit].map(lambda v: book.get(_id_text(v), ""))
+    if not (names != "").any():
+        return df
+    out = df.copy()
+    out.insert(cols.index(hit) + 1, "Customer name", names)
+    return out
 
 
 def _table(native):
@@ -1369,6 +1487,17 @@ def _table(native):
                 on_select="ignore", selection_mode="single-row", row_height=None,
                 **kwargs):
         sev = ()
+        if isinstance(data, pd.DataFrame):
+            had = "Customer name" in data.columns
+            data = with_names(data, hide_index)
+            if column_order is not None and not had and "Customer name" in data.columns:
+                co = list(column_order)
+                i = next((k for k, c in enumerate(co)
+                          if str(c).strip().lower().replace("_", " ") in _CUSTOMER_COLS
+                          or str(c).strip().lower() in _CUSTOMER_COLS), None)
+                if i is not None:
+                    co.insert(i + 1, "Customer name")
+                    column_order = co
         frame = data
         if type(data).__name__ == "Styler":
             sev = getattr(data, "_grid_severity", ())

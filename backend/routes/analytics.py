@@ -72,6 +72,51 @@ def _report(run_id: str) -> pd.DataFrame:
     return d
 
 
+@router.get("/analytics/names")
+def names() -> dict:
+    """{customer id: name} across every run, the newest run first: what the
+    interface shows beside a customer id."""
+    from ifrs9qdb.names import name_book
+    return {"names": name_book(RUNS_DIR)}
+
+
+@router.get("/analytics/{run_id}/portfolio-view")
+def portfolio_view(run_id: str, exposure: str = "total") -> dict:
+    """One row per customer: id, name, rating, stage, and its exposure and
+    ECL in each portfolio (Al Dhameen, Banks and FIs, Business Finance,
+    Investments, Off BS, Tasdeer, ...), with the totals. Stage 1 first, then
+    2 and 3; the largest exposure first within a stage. ``exposure``: total
+    (on plus off balance) or on (on balance only)."""
+    d = _report(run_id)
+    if len(d) == 0:
+        return {"portfolios": [], "rows": []}
+    d = d.copy()
+    d["portfolio"] = d["portfolio"].fillna("(unassigned)").astype(str)
+    off = d["exposure_off"].fillna(0.0) if "exposure_off" in d.columns else 0.0
+    d["_exp"] = d["exposure"] + (off if exposure == "total" else 0.0)
+    ports = sorted(d["portfolio"].unique(), key=str.lower)
+    e = d.pivot_table(index="customer", columns="portfolio", values="_exp",
+                      aggfunc="sum", fill_value=0.0).reindex(columns=ports, fill_value=0.0)
+    c = d.pivot_table(index="customer", columns="portfolio", values="ecl",
+                      aggfunc="sum", fill_value=0.0).reindex(columns=ports, fill_value=0.0)
+    cv = customer_view(d).set_index("customer")
+    out = pd.DataFrame({
+        "customer": e.index,
+        "customer_name": cv["customer_name"].reindex(e.index).fillna("").to_numpy(),
+        "rating": cv["rating"].reindex(e.index).astype(object).to_numpy(),
+        "stage": pd.to_numeric(cv["stage"].reindex(e.index), errors="coerce").to_numpy(),
+    })
+    for p in ports:
+        out[f"exp|{p}"] = e[p].to_numpy()
+    out["exp|Total"] = e.sum(axis=1).to_numpy()
+    for p in ports:
+        out[f"ecl|{p}"] = c[p].to_numpy()
+    out["ecl|Total"] = c.sum(axis=1).to_numpy()
+    out = out.sort_values(["stage", "exp|Total"], ascending=[True, False],
+                          na_position="last").reset_index(drop=True)
+    return {"portfolios": ports, "rows": _records(out)}
+
+
 @router.get("/analytics/{run_id}/source")
 def report_source(run_id: str) -> dict:
     """Which report file the analytics pages are reading for this run."""

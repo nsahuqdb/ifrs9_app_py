@@ -57,7 +57,20 @@ fmt = "{:,.2f}%" if value == "coverage" else "{:,.0f}"
 # Formatted, not colour-scaled: a gradient here would pull matplotlib into an
 # app that draws everything else with plotly, for a cue the numbers already
 # give.
-st.dataframe(piv.style.format(fmt, na_rep="—"), use_container_width=True)
+def _stage_label(v):
+    try:
+        return f"Stage {int(float(v))}"
+    except (TypeError, ValueError):
+        return str(v)
+
+
+if cols == "stage":
+    piv.columns = [_stage_label(c) for c in piv.columns]
+if rows == "stage":
+    piv.index = [_stage_label(r) for r in piv.index]
+piv.index.name = rows
+st.dataframe(piv.map(lambda v: "—" if pd.isna(v) else fmt.format(v)),
+             use_container_width=True, hide_index=False)
 
 bar(cells.assign(cell=[f"{r} · {c}" for r, c in zip(cells["row"], cells["col"])])
     .nlargest(15, "value"), "cell", "value",
@@ -65,5 +78,8 @@ bar(cells.assign(cell=[f"{r} · {c}" for r, c in zip(cells["row"], cells["col"])
     dp=2 if value == "coverage" else 0)
 
 with st.expander("Every cell, with its exposure and contract count"):
-    st.dataframe(fmt_table(cells, money_cols=("exposure", "ecl", "contracts")),
+    st.dataframe(fmt_table(cells.rename(columns={"row": rows, "col": cols}),
+                           money_cols=("exposure", "ecl", "contracts")
+                           + (() if value == "coverage" else ("value",)),
+                           pct_cols=("value",) if value == "coverage" else ()),
                  use_container_width=True, hide_index=True)

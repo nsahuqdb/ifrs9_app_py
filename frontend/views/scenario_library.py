@@ -47,8 +47,10 @@ st.markdown("""
 .st-key-libnav .stButton > button p {text-align: left; font-size: .87rem;}
 .st-key-libnav .stButton > button:hover {background: var(--plum-50); color: var(--plum);
   border-color: transparent;}
-.st-key-libnav [class*="st-key-libsel_"] .stButton > button {background: var(--plum-100);
-  color: var(--plum); font-weight: 650; border-color: var(--plum-200);}
+.st-key-libnav [class*="st-key-libsel_"] .stButton > button,
+.st-key-libnav [class*="st-key-libsel_"] .stButton > button:hover {background: #d6c0e3;
+  color: #3d1150; font-weight: 700; border-color: #b08cc4;
+  box-shadow: inset 4px 0 0 var(--plum);}
 .st-key-libnav .stMarkdown, .st-key-libnav [data-testid="stMarkdownContainer"] {
   margin: 0 !important;}
 .nav-h {font-size: .7rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
@@ -107,6 +109,8 @@ def nav() -> None:
     st.button("New scenario", icon=":material/add:", use_container_width=True, key="lib_new",
               help="Start a blank scenario: its basis and narrative, then its shocks.",
               on_click=lambda: _start(None, "new"))
+    if ALL and S.get("lib_sel") not in ALL:      # the one shown, marked from the start
+        S["lib_sel"] = next(iter(ALL))
     cur = S.get("lib_sel") if MODE == "browse" else None
     with st.container(height=700, border=False, key="libnav"):
         for g, title in su_.GROUPS.items():

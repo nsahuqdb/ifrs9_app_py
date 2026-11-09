@@ -80,6 +80,8 @@ pages = {
         # the same whether or not runs exist.
         st.Page(P + "overview.py", title="Overview", icon=":material/dashboard:",
                 default=True),
+        st.Page(P + "portfolio_view.py", title="Portfolio view",
+                icon=":material/table_view:"),
         st.Page(P + "staging.py", title="Staging", icon=":material/layers:"),
         st.Page(P + "risk.py", title="Risk parameters", icon=":material/monitoring:"),
         st.Page(P + "concentration.py", title="Concentration",
@@ -135,7 +137,7 @@ pages = {
 # Which pages read a run, and which compare two. The picker is drawn in the
 # page's title row (ui.page_setup); a page that needs a run is not opened
 # without one.
-NEEDS_RUN = {"Overview", "Staging", "Concentration", "Segments",
+NEEDS_RUN = {"Overview", "Portfolio view", "Staging", "Concentration", "Segments",
              "Risk parameters", "Scenarios", "Data quality", "Validation",
              "Parameter stress", "Scenario stress",
              "Model assumptions", "ECL calculator"}

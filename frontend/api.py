@@ -458,6 +458,19 @@ def quality_detail(run_id: str, n: int = 200) -> dict:
     return get(f"/analytics/{run_id}/quality-detail", n=n)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def customer_names() -> dict:
+    """{customer id: name} across the runs, the newest run first -- what the
+    tables add beside a customer id."""
+    return get("/analytics/names").get("names") or {}
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def portfolio_view(run_id: str, exposure: str = "total") -> dict:
+    """Every customer with its exposure and ECL per portfolio."""
+    return get(f"/analytics/{run_id}/portfolio-view", exposure=exposure)
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def customers(run_id: str, ids: str, spaces: bool = True) -> dict:
     return get(f"/analytics/{run_id}/customers", ids=ids,
