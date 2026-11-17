@@ -34,12 +34,14 @@ label = ({key[f"exp|{p}"]: p for p in ports} | {key[f"ecl|{p}"]: p for p in port
 show = d.rename(columns=key)[["customer", "customer_name", "rating", "stage",
                               *key.values()]]
 show["stage"] = pd.to_numeric(show["stage"], errors="coerce").astype("Int64")
+# an investment's customer id is the counterparty name (the extract has no
+# other id): the name is not repeated beside it
+same = show["customer_name"].astype(str).str.strip() == show["customer"].astype(str).str.strip()
+show.loc[same, "customer_name"] = ""
 
 cfg = {"customer": "Customer", "customer_name": "Customer name", "rating": "Rating",
        "stage": "Stage"}
 cfg |= {k: st.column_config.NumberColumn(label[k], format="%,.0f") for k in key.values()}
-total = {"customer": "Total", "customer_name": "", "rating": "", "stage": None}
-total |= {key[c]: float(d[c].sum()) for c in exp_cols + ecl_cols}
 
 
 def _excel() -> bytes:
@@ -65,12 +67,14 @@ def _excel() -> bytes:
             cell.alignment = Alignment(horizontal="center", wrap_text=True)
     for _, r in d.iterrows():
         s = r["stage"]
-        ws.append([r["customer"], r["customer_name"] or "", r["rating"] or "",
+        nm = r["customer_name"] or ""
+        ws.append([r["customer"], "" if str(nm).strip() == str(r["customer"]).strip() else nm,
+                   r["rating"] or "",
                    None if pd.isna(s) else int(s)]
                   + [float(r[c]) for c in exp_cols + ecl_cols])
     last = ws.max_row
     ws.append(["Total", "", "", ""] + [
-        f"=SUM({get_column_letter(n_i + 1 + i)}3:{get_column_letter(n_i + 1 + i)}{last})"
+        f"=SUBTOTAL(109,{get_column_letter(n_i + 1 + i)}3:{get_column_letter(n_i + 1 + i)}{last})"
         for i in range(n_e + n_c)])
     for col in range(1, n_i + n_e + n_c + 1):
         ws.cell(last + 1, col).font = Font(bold=True)
@@ -91,6 +95,7 @@ st.download_button("Download (.xlsx)", _excel(), icon=":material/download:",
                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 grid(show, key=f"pv_{run_id}", column_config=cfg, hide_index=True,
      groups={"Exposure": [key[c] for c in exp_cols], "ECL": [key[c] for c in ecl_cols]},
-     pinned_bottom=[total], height=640, pin_left=("customer", "customer_name"))
+     total={"label": ("customer", "Total"), "sum": [key[c] for c in exp_cols + ecl_cols]},
+     height=640, pin_left=("customer", "customer_name"))
 caption(f"{len(d):,} customers. Exposure is the report's on-balance exposure. Stage "
         "and rating are the customer's.")

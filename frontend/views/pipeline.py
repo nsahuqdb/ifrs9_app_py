@@ -458,7 +458,7 @@ def _paused_page(run_id: str) -> None:
         st.rerun()
 
     kpis([("Customers", money(ps["customers"]), "plum", ""),
-          ("Investments", money(ps["investments"]), "plum", ""),
+          ("Investment book", money(ps["investments"]), "plum", "banks and investments"),
           ("Findings so far", money(ps["findings"]),
            "warn" if ps["findings"] else "ok", "recorded on the run"),
           ("Run type", str(ps["run_type"]).capitalize(),

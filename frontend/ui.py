@@ -1349,12 +1349,14 @@ def grid(data, *, key: str | None = None, height: int | None = None,
          column_order=None, on_select="ignore", selection_mode="single-row",
          severity: tuple = (), groups: dict | None = None,
          pinned_bottom: list | None = None, max_rows: int = 12,
-         pin_left: tuple = ()):
+         pin_left: tuple = (), total: dict | None = None):
     """A table with the column menu (sort, filter, autosize, pin) and
     header-click sorting. Up to ``max_rows`` rows it is as tall as its rows;
     longer, it scrolls. ``groups`` puts a header over sets of columns
     ({"Exposure": [...], "ECL": [...]}); ``pinned_bottom`` rows (a total)
-    stay at the bottom. With ``on_select`` it returns Streamlit's shape:
+    stay at the bottom. ``total`` makes that bottom row follow the filters:
+    {"label": ("customer", "Total"), "sum": [columns]} sums the rows left
+    after filtering. With ``on_select`` it returns Streamlit's shape:
     ``.selection.rows``, the positions of the selected rows in ``data``."""
     from types import SimpleNamespace
 
@@ -1431,6 +1433,21 @@ def grid(data, *, key: str | None = None, height: int | None = None,
                               suppressColumnVirtualisation=True,
                               rowHeight=_ROW_H, headerHeight=_HEAD_H,
                               getRowStyle=JsCode(_PINNED_JS))
+    if total:
+        import json
+        lab_col, lab = total.get("label", ("", "Total"))
+        sums = [str(c) for c in total.get("sum", []) if str(c) in df.columns]
+        js = ("function(e){var api=e.api;var cols=" + json.dumps(sums) + ";var t={};"
+              "t[" + json.dumps(str(lab_col)) + "]=" + json.dumps(lab) + ";"
+              "cols.forEach(function(c){t[c]=0;});"
+              "api.forEachNodeAfterFilter(function(n){if(!n.data)return;"
+              "cols.forEach(function(c){var v=Number(n.data[c]);if(!isNaN(v))t[c]+=v;});});"
+              "if(api.setGridOption)api.setGridOption('pinnedBottomRowData',[t]);"
+              "else api.setPinnedBottomRowData([t]);}")
+        gb.configure_grid_options(onFilterChanged=JsCode(js))
+        if not pinned_bottom:
+            pinned_bottom = [{str(lab_col): lab} | {c: float(pd.to_numeric(
+                df[c], errors="coerce").sum()) for c in sums}]
     go = gb.build()
     go.pop("autoSizeStrategy", None)  # widths: _FIT_JS, from the content
     if groups:
@@ -1494,7 +1511,9 @@ def with_names(df: pd.DataFrame, hide_index=None) -> pd.DataFrame:
         return df
     if not book:
         return df
-    names = df[hit].map(lambda v: book.get(_id_text(v), ""))
+    # an investment's customer id IS the counterparty name: no second copy
+    names = df[hit].map(lambda v: "" if book.get(_id_text(v), "") == _id_text(v)
+                        else book.get(_id_text(v), ""))
     if not (names != "").any():
         return df
     out = df.copy()

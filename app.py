@@ -112,11 +112,11 @@ pages = {
     # where scenarios are read and built, Macro data where their data live.
     "Stress testing": [
         st.Page(P + "parameter_stress.py", title="Parameter stress", icon=":material/tune:"),
+        st.Page(P + "macro_data.py", title="Macro data", icon=":material/database:"),
         st.Page(P + "scenario_library.py", title="Scenario library",
                 icon=":material/menu_book:"),
         st.Page(P + "scenario_stress.py", title="Scenario stress",
                 icon=":material/thunderstorm:"),
-        st.Page(P + "macro_data.py", title="Macro data", icon=":material/database:"),
     ],
     "Governance": [
         st.Page(P + "snapshots.py", title="Config versions",
