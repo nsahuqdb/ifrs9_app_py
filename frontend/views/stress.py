@@ -217,7 +217,7 @@ for sp in specs:
         results.append(api.apply_stress(run_id, sp))
 
 
-def _detail(r: dict) -> None:
+def _detail(r: dict, i: int = 0) -> None:
     metric_row([
         ("Provision now", money(r["before"])),
         ("Under this stress", money(r["after"])),
@@ -234,7 +234,7 @@ def _detail(r: dict) -> None:
     with c1:
         st.markdown("**By portfolio**")
         bp = pd.DataFrame(r["by_portfolio"])
-        bar(bp, "portfolio", "change", diverging=True)
+        bar(bp, "portfolio", "change", diverging=True, key=f"ps_detail_bar_{i}")
         mig = pd.DataFrame(r.get("migration") or [])
         if len(mig):
             st.markdown("**Stage moves**")
@@ -282,6 +282,6 @@ else:
                                              "contracts in scope", "re-staged"),
                            pct_cols=("pct",)),
                  use_container_width=True, hide_index=True)
-    for r in results:
+    for i, r in enumerate(results):
         with st.expander(f"{r['name']} — {signed(r['delta'])}"):
-            _detail(r)
+            _detail(r, i)

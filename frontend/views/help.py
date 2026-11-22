@@ -7,6 +7,12 @@ from ui import caption, page_setup
 page_setup("Help",
            "What this tool does, in the order you would use it.")
 
+st.info("The full reference is under **Help**: the **User manual** (every page, "
+        "step by step, with screenshots and the values each field accepts), the "
+        "**ECL methodology** (every component and its formula) and the **Stress "
+        "testing methodology**. Each can be read here or downloaded as Word.",
+        icon=":material/menu_book:")
+
 st.markdown("""
 ## The shape of a quarter
 

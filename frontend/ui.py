@@ -1582,7 +1582,8 @@ if not getattr(st.dataframe, "_grid", False):
 
 # ------------------------------------------------------------------ charts --
 def bar(df: pd.DataFrame, x: str, y: str, *, horizontal=True, diverging=False,
-        title=None, height=None, fmt="%{x:,.0f}", dp: int = 0):
+        title=None, height=None, fmt="%{x:,.0f}", dp: int = 0,
+        key: str | None = None):
     """A bar chart with the app's palette.
 
     Diverging colours increases red and decreases green, which is the reading
@@ -1623,7 +1624,9 @@ def bar(df: pd.DataFrame, x: str, y: str, *, horizontal=True, diverging=False,
         yaxis=dict(showgrid=False, tickfont=dict(size=11.5)),
         showlegend=False, font=dict(size=12, color="#4a5162"), bargap=0.28,
     )
-    st.plotly_chart(fig, use_container_width=True)
+    # Two identical charts on one page (two packages that change nothing)
+    # would get the same automatic id and stop the page: a key keeps them apart.
+    st.plotly_chart(fig, use_container_width=True, key=key)
 
 
 def waterfall(steps: pd.DataFrame, title: str | None = None, zoom: bool = False):

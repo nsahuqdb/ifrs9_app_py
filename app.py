@@ -134,6 +134,10 @@ pages = {
     ],
     "Help": [
         st.Page(P + "assistant.py", title="Assistant", icon=":material/forum:"),
+        st.Page(P + "help_manual.py", title="User manual", icon=":material/menu_book:"),
+        st.Page(P + "help_ecl.py", title="ECL methodology", icon=":material/functions:"),
+        st.Page(P + "help_stress.py", title="Stress testing methodology",
+                icon=":material/thunderstorm:"),
         st.Page(P + "help.py", title="How this works", icon=":material/help:"),
     ],
 }

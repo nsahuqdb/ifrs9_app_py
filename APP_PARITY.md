@@ -102,6 +102,12 @@ Like the R app, the pages read the **overlaid** report when an overlay has been
 applied to a run, and so does the assistant in both apps (grounded on the
 runs, read-only tools), saying so. The help page is present.
 
+Help also carries three documents the R app does not: the **User manual**,
+the **ECL methodology** and the **Stress testing methodology**, read from
+`docs/*.md` (chapter picker, search, pictures) with a Word copy built by
+`docs/build_docs.py`. They describe both apps' calculation; the screens
+shown are this app's.
+
 | R app | Here | Checked |
 |---|---|---|
 | **Single run** (simplified in both apps): the run as booked -- Overview; Staging read on the run's own frozen Stage 2 DPD threshold, with no threshold input; PD with the PD term structure; LGD & collateral with the collateral composition; Exposure & maturity with the run-off of the supplied EAD curves; Concentration; Scenarios, the five scenario provisions (was What-if & scenarios -> Scenario comparison); Data quality. A different threshold or weighting is under Stress testing (Sensitivity -> Staging threshold, Macro & scenarios) | **Portfolio**: Overview; Staging, the same; Risk parameters (PD with the term structure, LGD & collateral, Exposure); Concentration, with the concentration curve; Segments; Scenarios, the five scenario provisions; Data quality. The threshold is Stress testing -> Sensitivity (Staging threshold), the weighting Stress testing -> **Macro & scenarios**; Validation is under Runs | browser, both apps |

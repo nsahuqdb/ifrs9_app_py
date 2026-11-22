@@ -38,6 +38,7 @@ RUN pip install --no-cache-dir ${PIP_ARGS} --find-links=/wheels "${ENGINE_SPEC}"
 COPY pyproject.toml README.md ./
 COPY backend/ ./backend/
 COPY frontend/ ./frontend/
+COPY docs/ ./docs/
 COPY app.py config.yml ./
 COPY config/ ./config/
 COPY data-raw/ ./data-raw/
