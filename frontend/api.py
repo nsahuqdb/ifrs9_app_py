@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 
 import requests
+from urllib.parse import quote
 import streamlit as st
 
 BACKEND = os.environ.get("IFRS9_BACKEND", "http://127.0.0.1:8000")
@@ -711,8 +712,9 @@ def wf_customers(run_id: str, q: str | None = None, stage: str | None = None,
     return get(f"/workflow/paused/{run_id}/customers", **params)
 
 
-def wf_customer(run_id: str, customer_id: str) -> dict:
-    return get(f"/workflow/paused/{run_id}/customer/{customer_id}")
+def wf_customer(run_id: str, customer_id: str, book: str = "Lending") -> dict:
+    return get(f"/workflow/paused/{run_id}/customer/{quote(str(customer_id), safe='')}",
+               book=book)
 
 
 def wf_add_override(run_id: str, payload: dict) -> dict:
@@ -723,8 +725,10 @@ def wf_overrides(run_id: str) -> dict:
     return get(f"/workflow/paused/{run_id}/overrides")
 
 
-def wf_drop_override(run_id: str, kind: str, customer_id: str) -> dict:
-    return request("DELETE", f"/workflow/paused/{run_id}/overrides/{kind}/{customer_id}")
+def wf_drop_override(run_id: str, kind: str, customer_id: str,
+                     book: str = "Lending") -> dict:
+    return request("DELETE", f"/workflow/paused/{run_id}/overrides/{kind}/"
+                             f"{quote(str(customer_id), safe='')}?book={quote(book)}")
 
 
 def wf_continue(run_id: str) -> dict:

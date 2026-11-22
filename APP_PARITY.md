@@ -102,6 +102,11 @@ Like the R app, the pages read the **overlaid** report when an overlay has been
 applied to a run, and so does the assistant in both apps (grounded on the
 runs, read-only tools), saying so. The help page is present.
 
+The override review covers the investment book too (counterparty rating on
+the external scale, stage and restructuring through `CustomerStagingFlag_2`),
+which the R app does not: with no investment override the files are
+identical to R's. Each override row carries its book.
+
 Help also carries three documents the R app does not: the **User manual**,
 the **ECL methodology** and the **Stress testing methodology**, read from
 `docs/*.md` (chapter picker, search, pictures) with a Word copy built by

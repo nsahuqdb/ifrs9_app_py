@@ -2,7 +2,7 @@
 title: "IFRS 9 ECL tool — user manual"
 subtitle: "Where to go, what to press, and how to read what comes back"
 author: "QDB Financial Risk Management"
-date: "November 2026 · app 0.50 · engine 0.52"
+date: "November 2026 · app 0.51 · engine 0.53"
 ---
 
 # 1. About this manual
@@ -490,16 +490,20 @@ checker sees it on the Approval queue.
 
 1. In **Customers**, type in **Find a customer** (id or name), or narrow the
    list with **Portfolio** (one or more of Business Finance, Off BS, Al
-   Dhameen, Tasdeer — a customer with contracts in two books shows under
-   both) and **Stage**. The list is ordered largest exposure first, 50 a page.
-   It shows each customer's **Portfolio** (every book its contracts sit in,
-   e.g. *Business Finance, Off BS*), rating, stage, restructuring, watchlist,
+   Dhameen, Tasdeer, Investments, Banks and Fis — a customer with contracts in
+   two portfolios shows under both) and **Stage**. The list holds the lending
+   customers and the investment counterparties, ordered largest exposure
+   first, 50 a page. It shows each customer's **Book** (*Lending* or
+   *Investments*), **Portfolio** (every portfolio its contracts sit in, e.g.
+   *Business Finance, Off BS*), rating, stage, restructuring, watchlist,
    exposure and worst DPD. Click the row.
 
    ![The list filtered to Off BS customers.](images/pipe_review_portfolio.png)
 
-2. The card **Override customer …** shows the calculated rating, stage and
-   restructuring. Set any of **Override rating**, **Override stage**,
+   ![An investment counterparty selected for override.](images/pipe_review_investment.png)
+
+2. The card **Override customer …** (or **Override counterparty …** for an
+   investment) shows the calculated rating, stage and restructuring. Set any of **Override rating**, **Override stage**,
    **Override restructuring** (leave the others at *(no change)*).
 3. Type a **Reason (required)** — e.g. *Credit committee decision CC-2026-114,
    restructured September 2026* — and **Your name**.
@@ -510,15 +514,19 @@ checker sees it on the Approval queue.
 
 Rules the engine enforces:
 
-- **lending customers only**: the investment books (Investments, Banks and
-  Fis) are rated on the external scale from the extract and are not offered
-  for override; a correction there goes into the extract. The tile
-  *Investment book* shows how many holdings that is;
+- both books can be overridden. An **investment counterparty** (Investments,
+  Banks and Fis — the extract's CUSTOMERID, which is its name) takes a rating
+  on the **external scale** (Aaa … C), applied to all its holdings; its stage
+  and restructuring overrides go into the investment staging file. Every
+  override records its book, so a counterparty is never mistaken for a
+  lending customer;
 - a stage override can only **worsen** the stage (Stage 1 → 2 or 3, Stage 2
   → 3); a customer in **Stage 3 cannot be overridden** — an override cannot
   cure a default;
-- a rating override is a grade on the internal scale; a restructuring
-  override flips what the model calculated;
+- a lending rating override is a grade on the internal scale (QDB 1+ …);
+  a restructuring override flips what the model calculated;
+- an earlier (archived) calculator version cannot take investment overrides:
+  the run refuses to continue until they are removed;
 - a stage or rating override applies to all of the customer's facilities,
   because both are decided per customer.
 

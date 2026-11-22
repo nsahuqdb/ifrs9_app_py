@@ -668,10 +668,10 @@ def paused_customers(run_id: str, q: str | None = None, stage: str | None = None
                      offset: int = 0, limit: int = Query(50, le=1000)) -> dict:
     """The customer view for review: customer id, name, the portfolios its
     contracts sit in, calculated rating, stage, restructuring, watchlist,
-    exposure and worst DPD. Lending customers only: the investment books are
-    rated externally and take no overrides (as in R). ``portfolio`` keeps the
+    exposure and worst DPD -- the lending customers and the investment
+    counterparties, each row marked with its ``book``. ``portfolio`` keeps the
     customers with a contract in any of the portfolios named."""
-    cv = _paused(run_id)["state"].customer_view()
+    cv = _review(_paused(run_id)["state"])
     if "portfolios" not in cv.columns:
         cv["portfolios"] = ""
     books = sorted({p for s_ in cv["portfolios"].astype(str)
@@ -693,13 +693,30 @@ def paused_customers(run_id: str, q: str | None = None, stage: str | None = None
             "rows": _records(cv.iloc[offset: offset + limit])}
 
 
-def _rating_choices(state) -> list[str]:
+def _review(state) -> pd.DataFrame:
+    """Both books' customers (an engine without the investment view: lending)."""
+    cv = state.review_view() if hasattr(state, "review_view") else state.customer_view()
+    if "book" not in cv.columns:
+        cv["book"] = "Lending"
+    return cv
+
+
+def _rating_choices(state, book: str = "Lending") -> list[str]:
+    """The internal scale for a lending customer; the external (agency) scale
+    for an investment counterparty -- the scale its PD curves are keyed on.
+    Each grade once, best first."""
     ms = (state.static or {}).get("master_rating_scale")
     if ms is None or len(ms) == 0:
         return []
-    internal = ms[ms["rating_type"].astype(str) == "Internal"].copy()
-    internal["hierarchy"] = pd.to_numeric(internal["hierarchy"], errors="coerce")
-    return internal.sort_values("hierarchy")["rating"].astype(str).tolist()
+    kind = "External" if book == "Investments" else "Internal"
+    sc = ms[ms["rating_type"].astype(str) == kind].copy()
+    sc["hierarchy"] = pd.to_numeric(sc["hierarchy"], errors="coerce")
+    if kind == "External" and "external_equivalent" in sc.columns:
+        # the scale also lists S&P labels (AA+ ...) that map onto Moody's;
+        # offer the grade the curves carry
+        sc = sc[sc["rating"].astype(str) == sc["external_equivalent"].astype(str)]
+    out = sc.sort_values("hierarchy", kind="stable")["rating"].astype(str)
+    return list(dict.fromkeys(out))
 
 
 def _stage_choices(current: str) -> list[str]:
@@ -713,21 +730,23 @@ def _restr_choices(current: str) -> list[str]:
 
 
 @router.get("/workflow/paused/{run_id}/customer/{customer_id}")
-def paused_customer(run_id: str, customer_id: str) -> dict:
+def paused_customer(run_id: str, customer_id: str, book: str = "Lending") -> dict:
     st = _paused(run_id)["state"]
-    cv = st.customer_view()
-    hit = cv[cv["customer_id"].astype(str) == str(customer_id)]
+    cv = _review(st)
+    hit = cv[(cv["customer_id"].astype(str) == str(customer_id))
+             & (cv["book"].astype(str) == book)]
     if hit.empty:
-        raise HTTPException(404, f"No customer {customer_id!r} in this run")
+        raise HTTPException(404, f"No {book.lower()} customer {customer_id!r} in this run")
     row = _records(hit)[0]
     return {"customer": row,
-            "choices": {"rating": _rating_choices(st),
+            "choices": {"rating": _rating_choices(st, book),
                         "stage": _stage_choices(row.get("stage_final")),
                         "restructuring": _restr_choices(row.get("restructuring_final"))}}
 
 
 class OverrideIn(BaseModel):
     customer_id: str
+    book: str = "Lending"
     rating: str | None = None
     stage: str | None = None
     restructuring: str | None = None
@@ -749,10 +768,14 @@ def add_override(run_id: str, body: OverrideIn) -> dict:
             for k in ("rating", "stage", "restructuring")}
     if not any(vals.values()):
         raise HTTPException(400, "Pick at least one value to override.")
-    info = paused_customer(run_id, body.customer_id)
+    book = (body.book or "Lending").strip().capitalize()
+    if book not in ("Lending", "Investments"):
+        raise HTTPException(400, "The book is Lending or Investments.")
+    info = paused_customer(run_id, body.customer_id, book)
     row, ch = info["customer"], info["choices"]
     if vals["rating"] and vals["rating"] not in ch["rating"]:
-        raise HTTPException(400, f"{vals['rating']!r} is not on the internal rating scale.")
+        scale = "external" if book == "Investments" else "internal"
+        raise HTTPException(400, f"{vals['rating']!r} is not on the {scale} rating scale.")
     if vals["stage"] and vals["stage"] not in ch["stage"]:
         raise HTTPException(400, f"A {row.get('stage_final')} customer cannot be "
                                  f"moved to {vals['stage']}: only a worsening stage "
@@ -769,8 +792,11 @@ def add_override(run_id: str, body: OverrideIn) -> dict:
             if not v:
                 continue
             buf = p["overrides"][kind]
-            buf[:] = [o for o in buf if o["customer_id"] != str(body.customer_id)]
-            buf.append({"customer_id": str(body.customer_id), "value": v,
+            buf[:] = [o for o in buf
+                      if (o["customer_id"], o.get("book", "Lending"))
+                      != (str(body.customer_id), book)]
+            buf.append({"customer_id": str(body.customer_id), "book": book,
+                        "value": v,
                         "prior_value": prior[kind] or "", "reason": reason,
                         "created_by": who, "created_at": now})
     return pending_overrides(run_id)
@@ -784,13 +810,15 @@ def pending_overrides(run_id: str) -> dict:
 
 
 @router.delete("/workflow/paused/{run_id}/overrides/{kind}/{customer_id}")
-def drop_override(run_id: str, kind: str, customer_id: str) -> dict:
+def drop_override(run_id: str, kind: str, customer_id: str,
+                  book: str = "Lending") -> dict:
     p = _paused(run_id)
     if kind not in p["overrides"]:
         raise HTTPException(404, f"No override kind {kind!r}")
     with _LOCK:
         p["overrides"][kind] = [o for o in p["overrides"][kind]
-                                if o["customer_id"] != str(customer_id)]
+                                if (o["customer_id"], o.get("book", "Lending"))
+                                != (str(customer_id), book)]
     return pending_overrides(run_id)
 
 
@@ -861,9 +889,18 @@ def continue_run(run_id: str) -> dict:
                                               compute_code_fingerprint)
     from ifrs9qdb.etl.pipeline import run_etl_phase2
     from ifrs9qdb.runs import archived_code_for, augment_manifest_run_metadata
+    from ifrs9qdb.runs import archived_code_for as _archived
     p = _paused(run_id)
     st = p["state"]
     overrides = {k: list(v) for k, v in p["overrides"].items()}
+    n_inv = sum(o.get("book") == "Investments" for v in overrides.values() for o in v)
+    if n_inv and _archived(st.calculator_version, settings.PROJECT_ROOT) is not None:
+        # an older calculator reads every override as a lending customer id,
+        # so an investment one would be dropped without a word
+        raise HTTPException(400, f"Calculator {st.calculator_version} predates "
+                                 "investment overrides: remove the "
+                                 f"{n_inv} investment override(s), or run on this "
+                                 "engine.")
 
     def work(progress):
         st.progress = progress

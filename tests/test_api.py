@@ -388,8 +388,9 @@ class TestFredKey:
 
 
 def test_review_list_names_and_filters_by_portfolio(tmp_path):
-    """The paused run's customer list carries each customer's portfolios and
-    filters on them; the investment books are not in it."""
+    """The paused run's customer list carries both books with each customer's
+    portfolios and filters on them; an investment counterparty takes an
+    override on the external scale, kept apart from lending ids."""
     from backend.routes import workflow
     from ifrs9qdb.demo import write_demo_inputs
     from ifrs9qdb.etl.pipeline import run_etl_phase1
@@ -399,15 +400,36 @@ def test_review_list_names_and_filters_by_portfolio(tmp_path):
                                      "version": "__LIVE__", "calculator_version": "",
                                      "overrides": {"rating": [], "stage": [],
                                                    "restructuring": []}}
+    base = "/api/workflow/paused/run_00042"
     try:
-        all_ = client.get("/api/workflow/paused/run_00042/customers",
-                          params={"limit": 1000}).json()
-        assert "Off BS" in all_["portfolios"]
-        assert not {"Investments", "Banks and Fis"} & set(all_["portfolios"])
+        all_ = client.get(f"{base}/customers", params={"limit": 1000}).json()
+        assert {"Off BS", "Investments", "Banks and Fis"} <= set(all_["portfolios"])
+        assert {r["book"] for r in all_["rows"]} == {"Lending", "Investments"}
         assert all(r["portfolios"] for r in all_["rows"])
-        off = client.get("/api/workflow/paused/run_00042/customers",
+        off = client.get(f"{base}/customers",
                          params={"portfolio": ["Off BS"], "limit": 1000}).json()
         assert 0 < off["total"] < all_["total"]
         assert all("Off BS" in r["portfolios"].split(", ") for r in off["rows"])
+
+        inv = client.get(f"{base}/customers",
+                         params={"portfolio": ["Investments", "Banks and Fis"],
+                                 "limit": 1000}).json()["rows"]
+        cp = inv[0]["customer_id"]
+        info = client.get(f"{base}/customer/{cp}", params={"book": "Investments"}).json()
+        assert info["choices"]["rating"][0] == "Aaa" and "QDB 5" not in info["choices"]["rating"]
+        assert client.get(f"{base}/customer/{cp}").status_code == 404   # not a lending id
+        bad = client.post(f"{base}/overrides", json={
+            "customer_id": cp, "book": "Investments", "rating": "QDB 5", "reason": "x"})
+        assert bad.status_code == 400 and "external" in bad.json()["detail"]
+        ok = client.post(f"{base}/overrides", json={
+            "customer_id": cp, "book": "Investments", "rating": "B2",
+            "stage": "Stage 2", "reason": "downgraded after the extract"})
+        assert ok.status_code == 200
+        pend = ok.json()["overrides"]
+        assert pend["rating"][0]["book"] == "Investments"
+        assert pend["stage"][0]["prior_value"] == "Stage 1"
+        gone = client.delete(f"{base}/overrides/stage/{cp}",
+                             params={"book": "Investments"}).json()
+        assert gone["counts"]["stage"] == 0 and gone["counts"]["rating"] == 1
     finally:
         workflow._PAUSED.pop("run_00042", None)

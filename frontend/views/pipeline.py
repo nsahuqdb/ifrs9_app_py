@@ -499,15 +499,15 @@ def _paused_page(run_id: str) -> None:
             st.rerun()
         df = pd.DataFrame(cv["rows"])
         if "portfolios" in df.columns:
-            df = df[["customer_id", "customer_name", "portfolios"]
-                    + [c for c in df.columns
-                       if c not in ("customer_id", "customer_name", "portfolios")]]
+            lead = [c for c in ("customer_id", "customer_name", "book", "portfolios")
+                    if c in df.columns]
+            df = df[lead + [c for c in df.columns if c not in lead]]
         ev = st.dataframe(
             df, hide_index=True, width="stretch", height=420, on_select="rerun",
             selection_mode="single-row", key="cv_tbl",
             column_config={
                 "customer_id": "Customer", "customer_name": "Name",
-                "portfolios": "Portfolio",
+                "portfolios": "Portfolio", "book": "Book",
                 "rating_final": "Rating", "stage_final": "Stage",
                 "restructuring_final": "Restructuring",
                 "watchlist_status": "Watchlist",
@@ -517,13 +517,9 @@ def _paused_page(run_id: str) -> None:
                                                             format="%d")})
         caption(f"{cv['total']:,} customers match · page {page} of "
                 f"{max(1, -(-cv['total'] // 50))} · largest exposure first")
-        n_inv = ps.get("investments") or 0
-        caption("Lending customers only. "
-                + (f"The {n_inv:,} investment holdings (Investments, Banks and "
-                   "Fis) " if n_inv else "The investment books (Investments, "
-                   "Banks and Fis) ")
-                + "are rated on the external scale from the extract and take no "
-                  "overrides here; a correction there goes into the extract.")
+        caption("Lending customers and investment counterparties (Book). An "
+                "investment counterparty is rated on the external scale, so its "
+                "rating override is an agency grade; its holdings all take it.")
 
     with right:
         with st.container(border=True):
@@ -535,18 +531,23 @@ def _paused_page(run_id: str) -> None:
                             "stage or restructuring.")
             else:
                 cid = str(df.iloc[rows[0]]["customer_id"])
+                book = str(df.iloc[rows[0]].get("book") or "Lending")
                 with guard():
-                    info = api.wf_customer(run_id, cid)
+                    info = api.wf_customer(run_id, cid, book)
                 c, ch = info["customer"], info["choices"]
-                card_header(f"Override customer {cid}", None,
+                card_header(("Override counterparty " if book == "Investments"
+                             else "Override customer ") + cid, None,
                             right=pill(c.get("stage_final") or "—", "plum"))
+                if book == "Investments":
+                    caption(f"Investment book · {c.get('portfolios') or ''} · "
+                            "rating on the external scale")
                 caption(f"**{c.get('customer_name') or ''}** · calculated rating "
                         f"**{c.get('rating_final') or '—'}**, "
                         f"**{c.get('stage_final') or '—'}**, "
                         f"{c.get('restructuring_final') or 'Not Restructured'}")
                 # A fresh form after each override; one that is refused keeps
                 # what was typed, so a missing value costs no retyped reason.
-                with st.form(f"ov_{cid}_{S.get('ov_n', 0)}", border=False):
+                with st.form(f"ov_{book}_{cid}_{S.get('ov_n', 0)}", border=False):
                     a, b, d = st.columns(3)
                     r_val = a.selectbox("Override rating", ["(no change)"] + ch["rating"])
                     s_val = b.selectbox("Override stage", ["(no change)"] + ch["stage"])
@@ -561,7 +562,8 @@ def _paused_page(run_id: str) -> None:
                     who = st.text_input("Your name", value=S.get("_user") or "")
                     if st.form_submit_button("Add override", type="primary",
                                              icon=":material/add:"):
-                        payload = {"customer_id": cid, "reason": reason, "by": who,
+                        payload = {"customer_id": cid, "book": book,
+                                   "reason": reason, "by": who,
                                    "rating": None if r_val.startswith("(") else r_val,
                                    "stage": None if s_val.startswith("(") else s_val,
                                    "restructuring": None if x_val.startswith("(")
@@ -587,21 +589,26 @@ def _paused_page(run_id: str) -> None:
                 if not items:
                     continue
                 st.markdown(f"**{label}**")
-                st.dataframe(pd.DataFrame(items)[["customer_id", "prior_value",
-                                                  "value", "reason", "created_by"]],
+                it = pd.DataFrame(items)
+                if "book" not in it.columns:
+                    it["book"] = "Lending"
+                it["book"] = it["book"].fillna("Lending")
+                st.dataframe(it[["customer_id", "book", "prior_value",
+                                 "value", "reason", "created_by"]],
                              hide_index=True, width="stretch",
-                             column_config={"customer_id": "Customer",
+                             column_config={"customer_id": "Customer", "book": "Book",
                                             "prior_value": "Calculated",
                                             "value": "Override", "reason": "Reason",
                                             "created_by": "By"})
                 d1, d2 = st.columns([3, 2], vertical_alignment="bottom")
+                keys = {f"{i['customer_id']} ({i.get('book') or 'Lending'})":
+                        (i["customer_id"], i.get("book") or "Lending") for i in items}
                 drop = d1.selectbox(f"Remove a {kind} override",
-                                    ["(keep all)"] + [i["customer_id"] for i in items],
-                                    key=f"drop_{kind}")
+                                    ["(keep all)"] + list(keys), key=f"drop_{kind}")
                 if d2.button("Remove", key=f"db_{kind}", disabled=drop.startswith("("),
                              icon=":material/delete:", width="stretch"):
                     with guard():
-                        api.wf_drop_override(run_id, kind, drop)
+                        api.wf_drop_override(run_id, kind, *keys[drop])
                     st.rerun()
 
 

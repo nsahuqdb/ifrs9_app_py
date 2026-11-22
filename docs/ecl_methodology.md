@@ -2,7 +2,7 @@
 title: "IFRS 9 ECL methodology"
 subtitle: "How the IFRS 9 ECL tool calculates the expected credit loss"
 author: "QDB Financial Risk Management"
-date: "November 2026 · engine 0.51"
+date: "November 2026 · engine 0.53"
 ---
 
 # 1. Purpose and scope
@@ -185,7 +185,7 @@ contracts. A customer rated on the external scale therefore comes out on the
 internal ladder (Aa2, position 3, becomes QDB 1-).
 
 A **rating override** entered during the run (with a reason) replaces the
-customer's grade on every contract.
+customer's grade on every contract (section 11.1).
 
 ## 5.2 Investments
 
@@ -235,8 +235,9 @@ Staging is at contract level, on customer-level inputs:
 
 Then:
 
-- **Manual stage override** (entered during the run, with a reason) sets the
-  stage, except that Stage 3 always stays Stage 3.
+- **Manual stage override** (entered during the run, with a reason, for a
+  lending customer or an investment counterparty) can only worsen the stage;
+  Stage 3 always stays Stage 3.
 - **Contagion:** if any contract of a customer is Stage 2 or worse, its Stage 1
   contracts move to Stage 2 (Tasdeer excluded).
 
@@ -544,14 +545,19 @@ remaining life.
 ## 11.1 Overrides during the run
 
 The run pauses after the customer view is built. Three overrides can be
-recorded, each with a reason and the user's name; they are saved with the run
-(`overrides/` folder) and counted on the approval queue:
+recorded, each with a reason and the user's name, for a lending customer or an
+investment counterparty; they are saved with the run (`overrides/` folder,
+each row marked with its book) and counted on the approval queue:
 
-| Override | Effect |
-|---|---|
-| Rating | the customer's grade on all its contracts |
-| Stage | Stage 1, 2 or 3 for the customer (Stage 3 cannot be lowered) |
-| Restructuring | sets or clears local flag 1 (restructured → Stage 2) |
+| Override | Lending customer | Investment counterparty |
+|---|---|---|
+| Rating | a grade on the internal scale, on all its contracts | a grade on the external (agency) scale, on all its holdings |
+| Stage | worse only: Stage 1 → 2 or 3, Stage 2 → 3 (written as local flag 3 / the default flag) | the same, in the investment staging file |
+| Restructuring | sets or clears local flag 1 (restructured → Stage 2) | the same |
+
+An override names its book, so a counterparty can never be taken for a lending
+customer with the same id. Stage 3 cannot be overridden: an override cannot
+cure a default.
 
 ## 11.2 Management overlays
 
