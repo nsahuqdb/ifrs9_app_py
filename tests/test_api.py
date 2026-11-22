@@ -385,3 +385,29 @@ class TestFredKey:
         settings.save_fred_key("file-key")
         monkeypatch.setenv("FRED_API_KEY", "env-key")
         assert settings.fred_key()[0] == "env-key"
+
+
+def test_review_list_names_and_filters_by_portfolio(tmp_path):
+    """The paused run's customer list carries each customer's portfolios and
+    filters on them; the investment books are not in it."""
+    from backend.routes import workflow
+    from ifrs9qdb.demo import write_demo_inputs
+    from ifrs9qdb.etl.pipeline import run_etl_phase1
+    folder = write_demo_inputs(tmp_path / "in", dates=("2026-06-30",))[0]
+    st = run_etl_phase1(folder, tmp_path / "runs", run_id="run_00042")
+    workflow._PAUSED["run_00042"] = {"state": st, "started": "", "user": "t",
+                                     "version": "__LIVE__", "calculator_version": "",
+                                     "overrides": {"rating": [], "stage": [],
+                                                   "restructuring": []}}
+    try:
+        all_ = client.get("/api/workflow/paused/run_00042/customers",
+                          params={"limit": 1000}).json()
+        assert "Off BS" in all_["portfolios"]
+        assert not {"Investments", "Banks and Fis"} & set(all_["portfolios"])
+        assert all(r["portfolios"] for r in all_["rows"])
+        off = client.get("/api/workflow/paused/run_00042/customers",
+                         params={"portfolio": ["Off BS"], "limit": 1000}).json()
+        assert 0 < off["total"] < all_["total"]
+        assert all("Off BS" in r["portfolios"].split(", ") for r in off["rows"])
+    finally:
+        workflow._PAUSED.pop("run_00042", None)

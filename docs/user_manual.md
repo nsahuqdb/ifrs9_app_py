@@ -250,7 +250,7 @@ on disk is not changed and the message gives the line and column.
 | Rating scale `master_rating_scale.csv` | `rating`, `rating_type` (Internal / External), `external_equivalent`, `hierarchy` 1–21 | a grade is identified by type and grade together |
 | Scenario severities `scenario_severity.csv` | `scenario`, `severity_z`, `description` | the five names must stay as they are; z as a number (−1.2816) |
 | Portfolio register `portfolios.csv` (Mappings) | `portfolio_code`, `description`, `rating_type` | 1 = internal scale, 2 = external |
-| Product → portfolio `product_portfolio_mapping.csv` | `product_type` (the ACCOUNTTYPE), `portfolio`, `source` | an unmapped product gets **no PD curve** and no ECL |
+| Product → portfolio `product_portfolio_mapping.csv` | `product_type` (the ACCOUNTTYPE), `portfolio`, `source` | an unmapped product falls into **Business Finance** (the general book) and is flagged on Pricing readiness — check it belongs there |
 | Off-balance product codes `off_balance_products.csv` | `product_code`, `lic_input_code` | |
 | Industry → sector `industry_sector_mapping.csv` | `industry_code` (ISIC), `industry_description`, `sector` | unmapped codes drop out of sector analysis |
 | Fallback ratings `segment_fallback_ratings.csv` | `segment`, `fallback_rating` | grades on the scale (QDB 5, QDB 6, Baa3) |
@@ -454,7 +454,7 @@ reports:
   suppression, Section 8.2). Each row gives the check, how many rows it hits,
   and an example.
 - **Pricing readiness** — the exposure that would get **no ECL or a blank**
-  (e.g. a product with no portfolio mapping, a contract with no PD curve),
+  (a contract with no PD curve for its portfolio and grade, or no EIR),
   and the exposure priced on incomplete inputs. The headline says *every
   one* when nothing is lost.
 - **Contracts with a gap** — the contracts behind those numbers, one row each
@@ -479,7 +479,7 @@ After **Start official run** / **Start unofficial run** the engine prices the bo
 the demonstration book; a progress bar shows the step). The run then pauses
 at **Review** so that overrides can be added before the outputs are written.
 
-![Review: the run paused for overrides.](images/pipe_q3_04_review.png)
+![Review: the run paused for overrides; each customer's portfolios are listed.](images/pipe_q3_04_review.png)
 
 A blue box says *Run run_0000N is paused for your review.* An **override**
 changes one customer's rating, stage or restructuring status for this run,
@@ -488,10 +488,16 @@ checker sees it on the Approval queue.
 
 ![Adding a stage override.](images/pipe_q3_05_override_form.png)
 
-1. In **Customers**, type in **Find a customer** (id or name) or filter by
-   **Stage**; the list is ordered largest exposure first, 50 a page. It shows
-   each customer's rating, stage, restructuring, watchlist, exposure and
-   worst DPD. Click the row.
+1. In **Customers**, type in **Find a customer** (id or name), or narrow the
+   list with **Portfolio** (one or more of Business Finance, Off BS, Al
+   Dhameen, Tasdeer — a customer with contracts in two books shows under
+   both) and **Stage**. The list is ordered largest exposure first, 50 a page.
+   It shows each customer's **Portfolio** (every book its contracts sit in,
+   e.g. *Business Finance, Off BS*), rating, stage, restructuring, watchlist,
+   exposure and worst DPD. Click the row.
+
+   ![The list filtered to Off BS customers.](images/pipe_review_portfolio.png)
+
 2. The card **Override customer …** shows the calculated rating, stage and
    restructuring. Set any of **Override rating**, **Override stage**,
    **Override restructuring** (leave the others at *(no change)*).
@@ -504,11 +510,17 @@ checker sees it on the Approval queue.
 
 Rules the engine enforces:
 
-- a customer in **Stage 3 cannot be overridden** — it is already the worst
-  stage, and an override cannot cure a default;
-- a stage override applies to all of the customer's facilities, because
-  staging is decided per customer;
-- a rating override is a grade on the customer's scale.
+- **lending customers only**: the investment books (Investments, Banks and
+  Fis) are rated on the external scale from the extract and are not offered
+  for override; a correction there goes into the extract. The tile
+  *Investment book* shows how many holdings that is;
+- a stage override can only **worsen** the stage (Stage 1 → 2 or 3, Stage 2
+  → 3); a customer in **Stage 3 cannot be overridden** — an override cannot
+  cure a default;
+- a rating override is a grade on the internal scale; a restructuring
+  override flips what the model calculated;
+- a stage or rating override applies to all of the customer's facilities,
+  because both are decided per customer.
 
 ## 7.5 Finish
 
@@ -1447,7 +1459,8 @@ number?" without opening a file.
 | *Start is locked* with blocking findings | an input error | fix at source and validate again; for a known one-off issue, *Accept for this run…* with a reason |
 | A file is "missing" though it is in the folder | its name does not match the expected stem (e.g. `Account_Master.xls`) | rename to the expected name (Section 4.1) |
 | Dates read as blank | mixed formats in one column, or text like `31.09.2026` | export the column in one of the accepted formats |
-| Exposure with **no ECL** on Pricing readiness | a product with no portfolio mapping, or a contract with no PD curve | add the product to `product_portfolio_mapping.csv` in a new config version |
+| Exposure with **no ECL** on Pricing readiness | a contract with no PD curve (a grade not in `ttc_pd_table.csv`, or a portfolio whose curve is not built) or no EIR | add the grade or fix the rating at source; supply the EIR |
+| A product priced in Business Finance by mistake | the product is not in `product_portfolio_mapping.csv` | add it in a new config version |
 | An off-balance product shows zero ECL | ONBALANCE is zero and the exposure was put in OFFBALANCE only | supply the credit-equivalent exposure in ONBALANCE (Section 4.2) |
 | Collateral has no effect | the collateral type is not in `collateral_types.csv` (counts for nothing), or the LGD is already at the floor | map the type; check *Risk parameters → LGD & collateral* |
 | A property-price or credit-growth stress returns zero | those variables carry zero weight in the PD model | expected; see *Live configuration* |

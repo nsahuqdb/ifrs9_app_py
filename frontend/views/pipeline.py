@@ -475,22 +475,39 @@ def _paused_page(run_id: str) -> None:
     with left, st.container(border=True):
         card_header("Customers", None,
                     right=pill("select one to override", "plum"))
-        c1, c2, c3 = st.columns([3, 1.3, 1])
+        c1, c2, c3, c4 = st.columns([2.4, 2.4, 1.3, 0.9])
         q = c1.text_input("Find a customer", key="cv_q",
                           placeholder="customer id or name")
-        stage = c2.selectbox("Stage", ["(all)", "Stage 1", "Stage 2", "Stage 3"],
+        books = S.get("cv_books") or []
+        pf = c2.multiselect("Portfolio", books, key="cv_pf",
+                            placeholder="every portfolio",
+                            help="Customers with a contract in any portfolio picked. "
+                                 "A customer in two books (a loan and a guarantee) "
+                                 "shows under both.")
+        stage = c3.selectbox("Stage", ["(all)", "Stage 1", "Stage 2", "Stage 3"],
                              key="cv_stage")
-        page = c3.number_input("Page", min_value=1, value=1, key="cv_page")
+        page = c4.number_input("Page", min_value=1, value=1, key="cv_page")
         with guard():
             cv = api.wf_customers(run_id, q=q or None,
                                   stage=None if stage.startswith("(") else stage,
-                                  offset=(page - 1) * 50, limit=50)
+                                  offset=(page - 1) * 50, limit=50,
+                                  portfolios=pf or None)
+        if cv.get("portfolios") and cv["portfolios"] != books:
+            # the list comes with the first answer; the picker is drawn
+            # before it, so it is handed to the next rerun
+            S["cv_books"] = cv["portfolios"]
+            st.rerun()
         df = pd.DataFrame(cv["rows"])
+        if "portfolios" in df.columns:
+            df = df[["customer_id", "customer_name", "portfolios"]
+                    + [c for c in df.columns
+                       if c not in ("customer_id", "customer_name", "portfolios")]]
         ev = st.dataframe(
             df, hide_index=True, width="stretch", height=420, on_select="rerun",
             selection_mode="single-row", key="cv_tbl",
             column_config={
                 "customer_id": "Customer", "customer_name": "Name",
+                "portfolios": "Portfolio",
                 "rating_final": "Rating", "stage_final": "Stage",
                 "restructuring_final": "Restructuring",
                 "watchlist_status": "Watchlist",
@@ -500,6 +517,13 @@ def _paused_page(run_id: str) -> None:
                                                             format="%d")})
         caption(f"{cv['total']:,} customers match · page {page} of "
                 f"{max(1, -(-cv['total'] // 50))} · largest exposure first")
+        n_inv = ps.get("investments") or 0
+        caption("Lending customers only. "
+                + (f"The {n_inv:,} investment holdings (Investments, Banks and "
+                   "Fis) " if n_inv else "The investment books (Investments, "
+                   "Banks and Fis) ")
+                + "are rated on the external scale from the extract and take no "
+                  "overrides here; a correction there goes into the extract.")
 
     with right:
         with st.container(border=True):

@@ -699,12 +699,15 @@ def wf_paused_run(run_id: str) -> dict:
 
 
 def wf_customers(run_id: str, q: str | None = None, stage: str | None = None,
-                 offset: int = 0, limit: int = 50) -> dict:
+                 offset: int = 0, limit: int = 50,
+                 portfolios: list[str] | None = None) -> dict:
     params = {"offset": offset, "limit": limit}
     if q:
         params["q"] = q
     if stage:
         params["stage"] = stage
+    if portfolios:
+        params["portfolio"] = list(portfolios)
     return get(f"/workflow/paused/{run_id}/customers", **params)
 
 

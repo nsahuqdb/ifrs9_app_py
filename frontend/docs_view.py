@@ -17,7 +17,7 @@ import streamlit as st
 from ui import caption, page_setup
 
 DOCS = Path(__file__).resolve().parents[1] / "docs"
-IMG = re.compile(r"^!\[(?P<alt>[^\]]*)\]\((?P<src>[^)\s]+)\)\s*$")
+IMG = re.compile(r"^\s*!\[(?P<alt>[^\]]*)\]\((?P<src>[^)\s]+)\)\s*$")
 FENCE = re.compile(r"^\s*(```|~~~)")
 
 

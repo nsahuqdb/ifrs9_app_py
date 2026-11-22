@@ -664,10 +664,22 @@ def paused_run(run_id: str) -> dict:
 
 @router.get("/workflow/paused/{run_id}/customers")
 def paused_customers(run_id: str, q: str | None = None, stage: str | None = None,
+                     portfolio: list[str] | None = Query(None),
                      offset: int = 0, limit: int = Query(50, le=1000)) -> dict:
-    """The customer view for review: customer id, name, calculated rating,
-    stage, restructuring, watchlist, exposure and worst DPD."""
+    """The customer view for review: customer id, name, the portfolios its
+    contracts sit in, calculated rating, stage, restructuring, watchlist,
+    exposure and worst DPD. Lending customers only: the investment books are
+    rated externally and take no overrides (as in R). ``portfolio`` keeps the
+    customers with a contract in any of the portfolios named."""
     cv = _paused(run_id)["state"].customer_view()
+    if "portfolios" not in cv.columns:
+        cv["portfolios"] = ""
+    books = sorted({p for s_ in cv["portfolios"].astype(str)
+                    for p in s_.split(", ") if p})
+    if portfolio:
+        want = set(portfolio)
+        cv = cv[cv["portfolios"].astype(str).map(
+            lambda s_: bool(want & set(s_.split(", "))))]
     if q:
         ql = q.strip().lower()
         m = cv["customer_id"].astype(str).str.lower().str.contains(ql, regex=False)
@@ -677,7 +689,7 @@ def paused_customers(run_id: str, q: str | None = None, stage: str | None = None
     if stage:
         cv = cv[cv["stage_final"] == stage]
     cv = cv.sort_values("exposure_total", ascending=False)
-    return {"total": int(len(cv)), "offset": offset,
+    return {"total": int(len(cv)), "offset": offset, "portfolios": books,
             "rows": _records(cv.iloc[offset: offset + limit])}
 
 
