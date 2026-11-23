@@ -20,6 +20,7 @@ import json
 import re
 
 from .client import AssistantError, chat
+from .ground import Facts, remove, strip_tables, unsupported
 from .config import AssistantConfig, load_config
 from .semantic import CATALOGUE, TOOLS as SEMANTIC, resolve_run
 from .tools import execute_tool as raw_tool
@@ -134,29 +135,43 @@ thousands separators; say "mln" for millions when rounding.
 6. Charts: set "chart" when a picture helps (splits, comparisons, trends, PD curves, movement). Otherwise null.
 7. You are read-only: you cannot run, edit or approve. Say which page does it (e.g. Runs → Run the \
 pipeline, Governance → Management overlay, Runs → Approval queue).
-8. Glossary: ECL = provision (Cla Amount Onbal); coverage = ECL ÷ exposure; Stage 3 is provisioned at 100% \
+8. NEVER type a table, a list of customers with amounts, or rows of figures in "answer". The app draws \
+the table from the lookup itself; you name it in "show". Mention at most the one or two key figures, copied \
+exactly as the observation shows them. Every answer is checked: a figure or customer that is in no \
+observation is removed before the user sees it.
+9. If a lookup failed or returned nothing, say so plainly. Do not fill the gap.
+10. If the user says a figure is wrong, do the lookup again and show its table. Do not apologise at length, \
+and never claim to report, escalate, halt or contact anyone: you cannot.
+11. Glossary: ECL = provision (Cla Amount Onbal); coverage = ECL ÷ exposure; Stage 3 is provisioned at 100% \
 of the balance; booked ECL uses probability-weighted PDs; overlay = management adjustment added after the model.
 
 EXAMPLES
 User: show the stage split by portfolio
 {{"action":"tool","tool":"breakdown","args":{{"by":["portfolio","stage"],"measure":"ecl"}}}}
 OBSERVATION t1 …
-{{"action":"final","answer":"Business Finance carries most of the provision (… of …). Stage 3 is … of the total.","show":["t1"],"chart":"t1","cite":[],"followups":["Which customers drive Stage 3?","How did this change since the previous run?"]}}
+{{"action":"final","answer":"<portfolio from t1> carries most of the provision (… of …). Stage 3 is … of the total.","show":["t1"],"chart":"t1","cite":[],"followups":["Which customers drive Stage 3?","How did this change since the previous run?"]}}
 
 User: which portfolio moved most between the two runs?
 {{"action":"tool","tool":"movement","args":{{"run_a":"previous","level":"portfolio"}}}}
 OBSERVATION t1 …
-{{"action":"final","answer":"**Al Dhameen** moved most: ECL fell by … (…%), mainly derecognised contracts (…).","show":["t1"],"chart":"t1","cite":[],"followups":["Show the movement for Al Dhameen step by step"]}}
+{{"action":"final","answer":"**<portfolio from t1>** moved most: ECL fell by … (…%), mainly … (…).","show":["t1"],"chart":"t1","cite":[],"followups":["Show that portfolio's movement step by step"]}}
 
 User: how is LGD calculated?
 {{"action":"tool","tool":"search_docs","args":{{"query":"LGD calculation collateral haircut floor","scope":"docs"}}}}
 OBSERVATION t1 …
 {{"action":"final","answer":"LGD = 45% × the unsecured share of the balance, with a floor of 50% of 45% (22.5%) … [k7]","show":[],"chart":null,"cite":["k7"],"followups":["What haircut does commercial property get?"]}}
 
-User: what is the ECL of Ahmed?
-{{"action":"tool","tool":"customer","args":{{"query":"Ahmed"}}}}
-OBSERVATION t1 … 3 customers match …
-{{"action":"ask","question":"Three customers match \\"Ahmed\\". Which one?","options":["20111 · Ahmed Trading","20412 · Ahmed Steel","30987 · Ahmed Foods"]}}
+User: what is the ECL of <a name>?
+{{"action":"tool","tool":"customer","args":{{"query":"<the name>"}}}}
+OBSERVATION t1 … several customers match …
+{{"action":"ask","question":"Several customers match. Which one?","options":["<id · name exactly as t1 lists it>","<id · name exactly as t1 lists it>"]}}
+
+User: top 5 customers in stage 2
+{{"action":"tool","tool":"top","args":{{"by":"customer","measure":"ecl","n":5,"filters":{{"stage":2}}}}}}
+OBSERVATION t1 …
+{{"action":"final","answer":"The five largest Stage 2 customers are in the table; together they hold … of Stage 2 ECL (figure from t1).","show":["t1"],"chart":"t1","cite":[],"followups":["Why are they in Stage 2?"]}}
+(The "…" above stand for figures you copy from the observation. Never use names, ids or figures from \
+these examples: they are placeholders.)
 
 CONTEXT
 {seed}"""
@@ -282,6 +297,57 @@ def answer(question: str, history: list[dict] | None = None,
         except AssistantError as exc:
             raise _Stop(str(exc))
 
+    checked = {"repaired": False}
+
+    def facts() -> Facts:
+        texts = [_system_prompt(seed, run_id).split("EXAMPLES")[0], seed, question]
+        rows: list[dict] = []
+        for r in results.values():
+            texts.append(r.get("summary") or "")
+            for t in [r.get("table")] + list(r.get("extra_tables") or []):
+                if t:
+                    rows += [dict(zip(t.get("columns") or [], row)) if isinstance(row, list) else row
+                             for row in (t.get("rows") or [])]
+                    texts.append(" ".join(map(str, t.get("columns") or [])))
+                    texts += [" ".join(map(str, row if isinstance(row, list) else row.values()))
+                              for row in (t.get("rows") or [])]
+            if r.get("chart"):
+                rows += list(r["chart"].get("rows") or [])
+        return Facts(texts, rows)
+
+    def finish(text: str, parsed: dict, raw: str) -> dict | None:
+        """The answer, checked: no table typed by the model, and no figure or
+        customer that a lookup did not give. One chance to correct itself;
+        then whatever is unsupported is cut out. None = asked to correct."""
+        text, typed_table = strip_tables(text)
+        f = facts()
+        opts = [str(o) for o in _as_list(parsed.get("options"))]
+        bad = unsupported(text, f) + [b for o in opts for b in unsupported(o, f)]
+        if bad and not checked["repaired"]:
+            checked["repaired"] = True
+            convo.extend([{"role": "assistant", "content": raw},
+                          {"role": "user", "content":
+                           "CHECK FAILED. These figures or customers are in no OBSERVATION or CONTEXT: "
+                           + "; ".join(bad[:12]) + ". Do not invent or estimate. If you need data, call a "
+                           "tool; otherwise answer again using only figures exactly as the observations "
+                           "show them, and refer to the table in \"show\" instead of retyping it."}])
+            return None
+        removed = len(bad)
+        if bad:
+            text = remove(text, bad)
+            if parsed.get("action") == "ask":
+                parsed["options"] = [o for o in opts if not unsupported(o, f)]
+        if parsed.get("action") == "ask":
+            parsed["question"] = text
+        if not text.strip():
+            have = any(r.get("ok") and r.get("table") for r in results.values())
+            text = ("Here is what the lookup returned." if have else
+                    "I could not find that in the run data. Try asking it another way, "
+                    "or open the page that shows it.")
+        out = _result(text, results, steps, parsed, question)
+        out["check"] = {"removed": removed, "typed_table": typed_table}
+        return out
+
     try:
         while True:
             raw = ask_model()
@@ -289,8 +355,10 @@ def answer(question: str, history: list[dict] | None = None,
             if parsed is None:
                 # Prose: often a perfectly good answer that skipped the format.
                 if steps or repairs or len(raw or "") > 0 and "{" not in raw:
-                    return _result(raw or "The model returned nothing.", results, steps,
-                                   {"action": "final"}, question)
+                    done = finish(raw or "The model returned nothing.", {"action": "final"}, raw or "")
+                    if done is None:
+                        continue
+                    return done
                 repairs += 1
                 convo += [{"role": "assistant", "content": raw},
                           {"role": "user", "content": "Reply with one JSON object as in the protocol."}]
@@ -300,13 +368,17 @@ def answer(question: str, history: list[dict] | None = None,
                                               "tool" if "tool" in parsed else
                                               "ask" if "question" in parsed else "")
             parsed["action"] = action
-            if action == "final":
-                return _result(parsed.get("answer") or "(empty answer)", results, steps, parsed, question)
-            if action == "ask":
-                return _result(parsed.get("question") or "Could you say a bit more?",
-                               results, steps, parsed, question)
-            if action != "tool":
-                return _result(raw, results, steps, {"action": "final"}, question)
+            if action in ("final", "ask") or action != "tool":
+                if action == "final":
+                    text = parsed.get("answer") or "(empty answer)"
+                elif action == "ask":
+                    text = parsed.get("question") or "Could you say a bit more?"
+                else:
+                    text, parsed = raw, {"action": "final"}
+                done = finish(text, parsed, raw)
+                if done is None:
+                    continue
+                return done
 
             name = str(parsed.get("tool") or "")
             args = parsed.get("args") if isinstance(parsed.get("args"), dict) else {}
@@ -328,7 +400,8 @@ def answer(question: str, history: list[dict] | None = None,
             results[tid] = res
             steps.append({"id": tid, "tool": name, "args": args, "ok": bool(res.get("ok"))})
             convo += [{"role": "assistant", "content": raw},
-                      {"role": "user", "content": f"OBSERVATION {tid} ({name}):\n"
+                      {"role": "user", "content": f"OBSERVATION {tid} ({name})"
+                                                  f"{'' if res.get('ok') else ' FAILED -- state no figures from it'}:\n"
                                                   f"{_trim(res.get('summary', '(no result)'), 5000)}"}]
             # keep the prompt small: older observations shrink once read
             obs = [i for i, m in enumerate(convo) if m["role"] == "user"
@@ -341,7 +414,8 @@ def answer(question: str, history: list[dict] | None = None,
         raw = ask_model()
         parsed = extract_json(raw) or {"action": "final", "answer": raw}
         parsed.setdefault("action", "final")
-        return _result(parsed.get("answer") or raw, results, steps, parsed, question)
+        checked["repaired"] = True            # no lookups left to correct with
+        return finish(parsed.get("answer") or raw, parsed, raw)
     except _Stop as stop:
         return _result(str(stop), results, steps, None, question, ok=False)
 

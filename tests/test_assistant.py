@@ -364,3 +364,98 @@ class TestAnswers:
 
     def test_a_reply_with_literal_newlines_is_still_read(self):
         assert extract_json('{"action":"final","answer":"line 1\nline 2"}')["answer"] == "line 1\nline 2"
+
+
+class TestNoInventedFigures:
+    """What happened on 23 Nov 2026: the lookup returned the real Stage 2
+    customers, and the model typed its own table of invented ids, names and
+    amounts. Nothing the lookups did not give may reach the user."""
+
+    FAKE = ("Here are the top 5 customers in Stage 2 by ECL:\n\n"
+            "| Customer | ECL (QAR) |\n|---|---|\n"
+            "| 20111 · Ahmed Trading | 177,923,847 |\n"
+            "| 20412 · Ahmed Steel | 123,456,789 |\n\n"
+            "The largest is 20111 · Ahmed Trading with 177.9 mln.")
+
+    @staticmethod
+    def cfg():
+        return AssistantConfig(enabled=True, endpoint="http://stub", model="stub", max_tool_calls=4)
+
+    def _ask(self, monkeypatch, replies):
+        import json as _json
+        import backend.assistant.agent as agent
+        stub = _Stub(replies)
+        monkeypatch.setattr(agent, "chat", stub)
+        return agent.answer("now stage 2 customer top 5", run_id=RUN, cfg=self.cfg()), stub
+
+    @needs_run
+    def test_invented_rows_never_reach_the_user(self, monkeypatch):
+        import json as _json
+        call = '{"action":"tool","tool":"top","args":{"by":"customer","n":5,"filters":{"stage":2}}}'
+        bad = _json.dumps({"action": "final", "answer": self.FAKE, "show": ["t1"]})
+        r, stub = self._ask(monkeypatch, [call, bad, bad])
+        for s in ("Ahmed", "177,923,847", "123,456,789", "20111", "177.9"):
+            assert s not in r["text"], s
+        assert r["tables"] and r["tables"][0]["rows"], "the real table is still shown"
+        assert r["check"]["removed"] and r["check"]["typed_table"]
+
+    @needs_run
+    def test_the_model_is_told_which_figures_failed_and_can_correct(self, monkeypatch):
+        import json as _json
+        call = '{"action":"tool","tool":"top","args":{"by":"customer","n":5,"filters":{"stage":2}}}'
+        bad = _json.dumps({"action": "final", "answer": self.FAKE, "show": ["t1"]})
+        good = _json.dumps({"action": "final", "answer": "The five largest Stage 2 customers are in the table.",
+                            "show": ["t1"]})
+        r, stub = self._ask(monkeypatch, [call, bad, good])
+        assert r["text"] == "The five largest Stage 2 customers are in the table."
+        assert r["check"]["removed"] == 0
+
+    @needs_run
+    def test_true_figures_and_names_pass(self, monkeypatch):
+        import json as _json
+        from backend.assistant.agent import execute
+        t = execute("top", {"by": "customer", "n": 5, "filters": {"stage": 2}}, RUN)
+        row = t["table"]["rows"][0]
+        ecl = row["ecl"]
+        cust = row["customer"]
+        text = f"The largest is {cust} with ECL of {ecl:,.0f} ({ecl / 1e6:,.1f} mln)."
+        call = '{"action":"tool","tool":"top","args":{"by":"customer","n":5,"filters":{"stage":2}}}'
+        r, _ = self._ask(monkeypatch, [call, _json.dumps({"action": "final", "answer": text})])
+        assert r["text"] == text and r["check"]["removed"] == 0
+
+    def test_without_any_lookup_an_amount_is_not_stated(self, monkeypatch):
+        r, _ = self._ask(monkeypatch, ['{"action":"final","answer":"Stage 2 ECL is 482,113,200."}',
+                                       '{"action":"final","answer":"Stage 2 ECL is 482,113,200."}'])
+        assert "482" not in r["text"]
+
+    def test_an_option_naming_a_customer_no_lookup_gave_is_dropped(self, monkeypatch):
+        import json as _json
+        ask = _json.dumps({"action": "ask", "question": "Which one?",
+                           "options": ["20111 · Ahmed Trading", "20412 · Ahmed Steel"]})
+        r, _ = self._ask(monkeypatch, [ask, ask])
+        assert not (r["ask"] or {}).get("options")
+
+
+class TestGround:
+    def test_dates_runs_versions_and_counts_are_not_figures(self):
+        from backend.assistant.ground import Facts, unsupported
+        f = Facts(["nothing"])
+        txt = ("Run run_00023 of 2026-09-30 (30/9/2026, Sep 2026) on engine 0.53.0 has 3 portfolios, "
+               "Stage 2 and QDB 4+; see [k12] and the top 5.")
+        assert unsupported(txt, f) == []
+
+    def test_rounding_and_units(self):
+        from backend.assistant.ground import Facts, unsupported
+        f = Facts(["ECL 2,944,304 coverage 20.57%"], [{"share": 0.4859}])
+        assert unsupported("ECL 2,944,304, about 2.9 mln, 2.94 mln; coverage 20.6%; share 48.6%", f) == []
+        assert unsupported("ECL 3.4 mln", f) == ["3.4 mln"]
+
+    def test_a_difference_or_share_of_two_figures_is_allowed(self):
+        from backend.assistant.ground import Facts, unsupported
+        f = Facts(["previous 1,943,114,303 current 2,250,116,279"])
+        assert unsupported("up 307,001,976 (15.8%)", f) == []
+
+    def test_a_typed_table_is_cut(self):
+        from backend.assistant.ground import strip_tables
+        out, cut = strip_tables("Top five:\n| a | b |\n|---|---|\n| 1 | 2 |\nDone.")
+        assert cut and out == "Top five:\nDone."

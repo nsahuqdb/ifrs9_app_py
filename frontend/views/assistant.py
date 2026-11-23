@@ -187,6 +187,10 @@ def chart(ch: dict, key: str) -> None:
 
 def render(turn: dict, i: int, live: bool = False) -> None:
     st.markdown(turn["content"])
+    chk = turn.get("check") or {}
+    if chk.get("removed"):
+        st.caption(":material/fact_check: Some figures or customers in the reply were not in the "
+                   "data the lookup returned and were removed. The table below is the run's own data.")
     if turn.get("chart"):
         chart(turn["chart"], key=f"as_chart_{i}")
     tables = turn.get("tables") or []
@@ -277,5 +281,6 @@ if question:
     history.append({"role": "assistant", "content": r.get("text") or "", "question": question,
                     "tables": r.get("tables") or [], "chart": r.get("chart"),
                     "cites": r.get("cites") or [], "ask": r.get("ask"),
-                    "followups": r.get("followups") or [], "steps": r.get("steps") or []})
+                    "followups": r.get("followups") or [], "steps": r.get("steps") or [],
+                    "check": r.get("check") or {}})
     st.rerun()

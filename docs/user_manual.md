@@ -1448,6 +1448,13 @@ edit or approve anything, and says which page does.
 - **How this was looked up** — every lookup with its arguments, so any figure
   can be traced.
 
+**Every figure is checked.** Before a reply is shown, each amount,
+percentage and customer id in it is compared with what the lookups returned.
+The model is not allowed to type tables (the app draws them from the run's
+data), and a figure or customer the lookups did not give is removed — the
+reply then says so under the text. If the chat model gets it wrong, the table
+under the reply is still the run's own data.
+
 **When it is not sure** it asks back, with options to click — for example
 which of several customers matching a name you mean, or which runs to
 compare. Without a run named it uses the run chosen at the top; a comparison
