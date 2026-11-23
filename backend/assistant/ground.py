@@ -183,3 +183,31 @@ def remove(text: str, bad: list[str]) -> str:
             out_lines.append(" ".join(kept))
     out = "\n".join(out_lines)
     return re.sub(r"\n{3,}", "\n\n", out).strip()
+
+
+_TOOL_NAMES = ("overview", "breakdown", "compare", "movement", "migration", "top", "customer",
+               "staging", "scenarios", "pd_curve", "concentration", "validation", "run_info",
+               "search_docs", "read_code", "config_file", "aggregate", "filter_rows")
+_TOOL_TALK = re.compile(r"(\btools?[\"'`”]? page|\bnavigat\w* to the [\"'`“]?tools?|the [\"'`“]?(?:" + "|".join(_TOOL_NAMES) + r")[\"'`”]? tool|"
+                        r"\w+\s+parameter|use the tool|call the tool|run the tool)\b", re.I)
+
+
+def tool_talk(text: str) -> list[str]:
+    """Sentences telling the user to use a lookup tool: the tools are the
+    assistant's, and the app has no page for them."""
+    out = []
+    for ln in (text or "").splitlines():
+        for s in _SENT.split(ln):
+            if _TOOL_TALK.search(s):
+                out.append(s.strip())
+    return out
+
+
+_NOT_HAVE = re.compile(r"\b(do not|don't|cannot|can't|unable to|no access)\b[^.]*\b(have|find|access|provide|see|show)\b",
+                       re.I)
+
+
+def denies(text: str) -> list[str]:
+    """Sentences saying the data is not available, for a reply that has the
+    lookup's table under it."""
+    return [s.strip() for ln in (text or "").splitlines() for s in _SENT.split(ln) if _NOT_HAVE.search(s)]

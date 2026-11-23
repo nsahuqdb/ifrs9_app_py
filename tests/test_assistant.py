@@ -459,3 +459,81 @@ class TestGround:
         from backend.assistant.ground import strip_tables
         out, cut = strip_tables("Top five:\n| a | b |\n|---|---|\n| 1 | 2 |\nDone.")
         assert cut and out == "Top five:\nDone."
+
+
+class TestLookupsComeFirst:
+    """23 Nov 2026: "where is stage 2 list?" got "I do not have the list ...
+    use the top tool on the Tools page" with no lookup made."""
+
+    BAD = ('I do not have the list of Stage 2 customers. To obtain this list, you would need to use the '
+           '"top" tool with the filter set to Stage 2. You can do this by navigating to the "Tools" page '
+           'and selecting the "top" tool, then specifying "customer" as the "by" parameter.')
+
+    @staticmethod
+    def cfg():
+        return AssistantConfig(enabled=True, endpoint="http://stub", model="stub", max_tool_calls=4)
+
+    @needs_run
+    def test_the_list_is_looked_up_and_shown_whatever_the_model_says(self, monkeypatch):
+        import json as _json
+        import backend.assistant.agent as agent
+        bad = _json.dumps({"action": "final", "answer": self.BAD})
+        monkeypatch.setattr(agent, "chat", _Stub([bad, bad, bad]))
+        hist = [{"role": "user", "content": "now stage 2 custometr top 5"},
+                {"role": "assistant", "content": "..."}]
+        r = agent.answer("where is stage 2 list?", history=hist, run_id=RUN, cfg=self.cfg())
+        assert r["steps"] and r["steps"][0]["tool"] == "top"
+        assert r["steps"][0]["args"]["filters"] == {"stage": 2}
+        assert r["tables"] and r["tables"][0]["rows"]
+        assert all(row["stage"] == "Stage 2" for row in r["tables"][0]["rows"])
+        assert "tool" not in r["text"].lower() and "parameter" not in r["text"]
+
+    @needs_run
+    def test_a_good_model_answer_on_the_lookup_passes(self, monkeypatch):
+        import json as _json
+        import backend.assistant.agent as agent
+        ok = _json.dumps({"action": "final", "answer": "The Stage 2 customers are listed below.",
+                          "show": ["t1"]})
+        stub = _Stub([ok])
+        monkeypatch.setattr(agent, "chat", stub)
+        r = agent.answer("list the stage 2 customers", run_id=RUN, cfg=self.cfg())
+        assert r["text"] == "The Stage 2 customers are listed below."
+        assert "OBSERVATION t1 (top)" in str(stub.seen[0])
+
+
+class TestRouter:
+    P = ["Business Finance", "Al Dhameen", "Tasdeer", "Off BS"]
+
+    @pytest.mark.parametrize("q,tool,args", [
+        ("where is stage 2 list?", "top", {"filters": {"stage": 2}}),
+        ("now stage 2 custometr top 5", "top", {"n": 5, "filters": {"stage": 2}}),
+        ("Top 10 customers by ECL", "top", {"n": 10, "by": "customer"}),
+        ("top 20 Off BS contracts by exposure", "top",
+         {"by": "contract", "measure": "exposure", "filters": {"portfolio": "Off BS"}}),
+        ("show the stage split by portfolio", "breakdown", {"by": ["portfolio", "stage"]}),
+        ("which portfolio moved most between the two runs?", "movement", {"level": "portfolio"}),
+        ("Why did the ECL change since the previous run?", "movement", {"level": "book"}),
+        ("what are the MEV coefficients?", "model", {}),
+        ("which validation checks failed?", "validation", {"only_failures": True}),
+        ("Plot the PD curves for QDB 3, QDB 5 and QDB 7", "pd_curve", {"ratings": ["QDB 3", "QDB 5", "QDB 7"]}),
+        ("How is LGD calculated?", "search_docs", {}),
+        ("what is the total provision?", "overview", {}),
+        ("how much is stage 3 ECL in Tasdeer", "breakdown", {"filters": {"stage": 3, "portfolio": "Tasdeer"}}),
+        ("how many customers in stage 3", "breakdown", {"measure": "customers"}),
+    ])
+    def test_the_usual_questions(self, q, tool, args):
+        from backend.assistant.router import plan
+        got = plan(q, None, self.P)
+        assert got and got[0][0] == tool
+        for k, v in args.items():
+            assert got[0][1].get(k) == v, (q, got)
+
+    def test_a_follow_up_borrows_the_previous_question(self):
+        from backend.assistant.router import plan
+        h = [{"role": "user", "content": "top 5 customers in stage 2"}]
+        assert plan("and stage 3?", h, self.P) == [("top", {"by": "customer", "measure": "ecl", "n": 5,
+                                                            "filters": {"stage": 3}})]
+
+    def test_small_talk_is_left_to_the_model(self):
+        from backend.assistant.router import plan
+        assert plan("hello", None, self.P) == []

@@ -1452,7 +1452,7 @@ edit or approve anything, and says which page does.
 percentage and customer id in it is compared with what the lookups returned.
 The model is not allowed to type tables (the app draws them from the run's
 data), and a figure or customer the lookups did not give is removed — the
-reply then says so under the text. If the chat model gets it wrong, the table
+reply then says so under the text. The usual questions (a list of customers, a split, the movement, failed checks, the macro model, PD curves, how something works) are looked up before the model writes anything, so the table is there even if its sentence is poor. If the chat model gets it wrong, the table
 under the reply is still the run's own data.
 
 **When it is not sure** it asks back, with options to click — for example

@@ -20,7 +20,8 @@ import json
 import re
 
 from .client import AssistantError, chat
-from .ground import Facts, remove, strip_tables, unsupported
+from .ground import Facts, denies, remove, strip_tables, tool_talk, unsupported
+from .router import looks_like_data, plan as route
 from .config import AssistantConfig, load_config
 from .semantic import CATALOGUE, TOOLS as SEMANTIC, resolve_run
 from .tools import execute_tool as raw_tool
@@ -85,6 +86,19 @@ def execute(name: str, args: dict | None, focus: str | None) -> dict:
         return raw_tool(name, args)
     return {"ok": False, "summary": f"There is no tool called {name!r}. Use one of: "
                                     + ", ".join(list(SEMANTIC) + list(RAW)) + "."}
+
+
+def _portfolios(run_id: str | None) -> list[str]:
+    """The focus run's portfolio names, so a question naming one is filtered."""
+    try:
+        from .semantic import _report
+        rid, _ = resolve_run(None, run_id)
+        if not rid:
+            return []
+        d = _report(rid)
+        return sorted({str(p) for p in d["portfolio"].dropna().unique()}) if "portfolio" in d else []
+    except Exception:
+        return []
 
 
 def seed_context(run_id: str | None = None, max_chars: int = 6000) -> str:
@@ -297,7 +311,7 @@ def answer(question: str, history: list[dict] | None = None,
         except AssistantError as exc:
             raise _Stop(str(exc))
 
-    checked = {"repaired": False}
+    checked = {"repaired": False, "nudged": False}
 
     def facts() -> Facts:
         texts = [_system_prompt(seed, run_id).split("EXAMPLES")[0], seed, question]
@@ -320,9 +334,22 @@ def answer(question: str, history: list[dict] | None = None,
         customer that a lookup did not give. One chance to correct itself;
         then whatever is unsupported is cut out. None = asked to correct."""
         text, typed_table = strip_tables(text)
+        # no lookup for a question about the run's figures: make one, never
+        # send the user off to "use a tool"
+        if not results and looks_like_data(question) and not checked["nudged"] \
+                and parsed.get("action") != "ask":
+            checked["nudged"] = True
+            convo.extend([{"role": "assistant", "content": raw},
+                          {"role": "user", "content":
+                           "You have not looked anything up. The tools are yours, not the user's: call "
+                           "the tool that answers this question now (JSON action \"tool\")."}])
+            return None
         f = facts()
         opts = [str(o) for o in _as_list(parsed.get("options"))]
         bad = unsupported(text, f) + [b for o in opts for b in unsupported(o, f)]
+        bad += tool_talk(text)
+        if any(r.get("ok") and r.get("table") for r in results.values()):
+            bad += denies(text)
         if bad and not checked["repaired"]:
             checked["repaired"] = True
             convo.extend([{"role": "assistant", "content": raw},
@@ -340,13 +367,40 @@ def answer(question: str, history: list[dict] | None = None,
         if parsed.get("action") == "ask":
             parsed["question"] = text
         if not text.strip():
-            have = any(r.get("ok") and r.get("table") for r in results.values())
-            text = ("Here is what the lookup returned." if have else
+            have = [r["table"] for r in results.values() if r.get("ok") and r.get("table")]
+            text = (f"Here is what the lookup returned: **{have[-1].get('title') or 'the table below'}**."
+                    if have else
                     "I could not find that in the run data. Try asking it another way, "
                     "or open the page that shows it.")
         out = _result(text, results, steps, parsed, question)
         out["check"] = {"removed": removed, "typed_table": typed_table}
         return out
+
+    def lookup(name: str, args: dict, raw: str) -> str:
+        nonlocal calls
+        calls += 1
+        tid = f"t{calls}"
+        seen_calls[json.dumps([name, args], sort_keys=True, default=str)] = tid
+        res = execute(name, args, run_id)
+        results[tid] = res
+        steps.append({"id": tid, "tool": name, "args": args, "ok": bool(res.get("ok"))})
+        convo.extend([{"role": "assistant", "content": raw},
+                      {"role": "user", "content": f"OBSERVATION {tid} ({name})"
+                                                  f"{'' if res.get('ok') else ' FAILED -- state no figures from it'}:\n"
+                                                  f"{_trim(res.get('summary', '(no result)'), 5000)}"}])
+        return tid
+
+    # the lookups the question plainly needs, before the model is asked
+    try:
+        portfolios = _portfolios(run_id)
+        for name, args in route(question, history, portfolios)[:2]:
+            lookup(name, args, json.dumps({"action": "tool", "tool": name, "args": args}))
+        if results:
+            convo.append({"role": "user", "content":
+                          "The lookup above answers this question. Reply with action \"final\": one or "
+                          "two sentences, list it in \"show\", and do not retype its rows."})
+    except Exception:
+        pass
 
     try:
         while True:
@@ -393,16 +447,7 @@ def answer(question: str, history: list[dict] | None = None,
                 continue
             if calls >= cfg.max_tool_calls:
                 break
-            calls += 1
-            tid = f"t{calls}"
-            seen_calls[key] = tid
-            res = execute(name, args, run_id)
-            results[tid] = res
-            steps.append({"id": tid, "tool": name, "args": args, "ok": bool(res.get("ok"))})
-            convo += [{"role": "assistant", "content": raw},
-                      {"role": "user", "content": f"OBSERVATION {tid} ({name})"
-                                                  f"{'' if res.get('ok') else ' FAILED -- state no figures from it'}:\n"
-                                                  f"{_trim(res.get('summary', '(no result)'), 5000)}"}]
+            lookup(name, args, raw)
             # keep the prompt small: older observations shrink once read
             obs = [i for i, m in enumerate(convo) if m["role"] == "user"
                    and m["content"].startswith("OBSERVATION")]
