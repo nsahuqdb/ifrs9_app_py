@@ -9,7 +9,8 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from ..assistant import TOOL_CATALOGUE, answer, load_config
+from ..assistant import TOOLS, answer, load_config
+from ..assistant.agent import RAW
 
 router = APIRouter(tags=["assistant"])
 
@@ -26,7 +27,7 @@ def status() -> dict:
         "api_key_env": cfg.api_key_env,
         "max_tool_calls": cfg.max_tool_calls,
         "config_source": cfg.source,
-        "tools": [line.split("(")[0] for line in TOOL_CATALOGUE.splitlines()],
+        "tools": list(TOOLS) + list(RAW),
     }
 
 

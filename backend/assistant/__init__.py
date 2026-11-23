@@ -11,3 +11,4 @@ configured the feature reports itself unavailable rather than half-working.
 from .agent import answer, seed_context  # noqa: F401
 from .config import AssistantConfig, load_config  # noqa: F401
 from .tools import TOOL_CATALOGUE, execute_tool  # noqa: F401
+from .semantic import CATALOGUE, TOOLS  # noqa: F401

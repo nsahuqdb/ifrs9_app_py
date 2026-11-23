@@ -2,7 +2,7 @@
 title: "IFRS 9 ECL tool — user manual"
 subtitle: "Where to go, what to press, and how to read what comes back"
 author: "QDB Financial Risk Management"
-date: "November 2026 · app 0.51 · engine 0.53"
+date: "November 2026 · app 0.52 · engine 0.53"
 ---
 
 # 1. About this manual
@@ -1411,18 +1411,63 @@ number?" without opening a file.
 
 # 15. Help
 
-- **Assistant** — ask questions in plain language about the runs ("which
-  customers moved to Stage 3?", "why did Business Finance coverage rise?").
-  It answers only from ten read-only lookups on the run outputs (listed
-  under *What it would be able to look at*), so every claim is grounded in
-  the data; it changes nothing. It focuses on the run chosen at the top.
-  It needs a chat endpoint configured by IT (an `assistant:` block in
-  `config.yml` and the key in an environment variable); until then the page
-  says how to switch it on.
-- **How this works** — this manual, the ECL methodology and the Stress
-  testing methodology, each readable on screen and downloadable as Word.
+## 15.1 Assistant
 
-![Assistant.](images/assistant.png)
+*Help → Assistant*
+
+Ask questions in plain language about the runs, the model, the configuration
+and how the tool works. It answers from the same figures as the pages, the
+documents under Help and the engine's code. It is read-only: it cannot run,
+edit or approve anything, and says which page does.
+
+![The assistant: answer, chart, table with an Excel download, follow-up questions.](images/assistant.png)
+
+**What it can do**
+
+| Ask about | Examples |
+|---|---|
+| A run's figures | *What is the ECL by stage?* · *Show the stage split by portfolio* · *Coverage by rating for Stage 2* · *Exposure by remaining maturity* |
+| Comparing runs | *Which portfolio moved most between the two runs?* · *Why did the ECL change since the previous run?* · *How many customers moved to Stage 2?* |
+| Customers and contracts | *Top 10 customers by ECL* · *Show customer 20235* · *Largest contracts by exposure in Off BS* |
+| Staging, scenarios, PD | *Why are contracts in Stage 2?* · *ECL under each scenario* · *Plot the PD curves for QDB 3, QDB 5 and QDB 7* |
+| Model and configuration | *What are the MEV coefficients?* · *What haircut does commercial property get?* · *What scenario weights did this run use?* |
+| Governance | *Which validation checks failed?* · *Who approved this run?* · *Which overlays are approved?* · *List the config versions* |
+| How the tool and method work | *How is LGD calculated?* · *How do I approve an overlay?* · *How does the code compute the ECL?* |
+
+**What an answer contains**
+
+- **The answer** in a few sentences, with the key figures.
+- **A chart** when it helps (splits, comparisons, movement as a waterfall,
+  PD curves). It is drawn from the lookup's own numbers.
+- **Tables** of the figures behind the answer, exactly as computed, with
+  **Download as Excel** (one sheet per table, numbers as numbers).
+- **Sources** — the document sections or code it relied on, e.g. *IFRS 9 ECL
+  methodology › 9. Loss given default (Help → ECL methodology)* or
+  *ifrs9qdb/calc_book.py:860 `_lgd`*. Open the Help page named to read more.
+- **Ask next** — two or three follow-up questions; click one to ask it.
+- **How this was looked up** — every lookup with its arguments, so any figure
+  can be traced.
+
+**When it is not sure** it asks back, with options to click — for example
+which of several customers matching a name you mean, or which runs to
+compare. Without a run named it uses the run chosen at the top; a comparison
+is previous run → that run; "biggest" means by ECL. You can name runs as
+*run 1*, *latest*, *previous* or by date (*Sep 2026*, *Q2 2026*).
+
+**Good to know**
+
+- Each answer can build on the previous one (*now show it by stage*). Press
+  **New chat** to start over.
+- Sector is not in the ECL report; ask by portfolio or account type.
+- It needs the bank's chat model configured by IT (an `assistant:` block in
+  `config.yml`, and the key, if any, in an environment variable). Until then
+  the page says how to switch it on.
+
+## 15.2 The documents
+
+**User manual**, **ECL methodology** and **Stress testing methodology** can
+each be read on screen (chapter picker, search) and downloaded as Word.
+**How this works** is a one-page summary of the tool.
 
 # 16. Quick reference: accepted values
 

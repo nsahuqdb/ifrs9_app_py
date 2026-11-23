@@ -1,13 +1,18 @@
-"""The loop: ask, look something up, ask again, answer.
+"""The loop: understand, look up, answer -- or ask.
 
-The model never sees a database. It sees a system prompt, and a protocol in
-which its only two moves are "call a tool" and "answer". Everything factual it
-can say therefore came back from a tool in this conversation, which is what
-makes the grounding rule enforceable instead of aspirational.
+The model never sees a database. It sees a system prompt, the runs and the
+focus run's headline, and a protocol with three moves:
 
-Charts are referenced, not retyped. When the model wants to show one it names
-the tool observation to plot, and the app draws that tool's own numbers -- so
-a chart cannot disagree with the table above it.
+* ``tool``  -- call one of the tools and read its OBSERVATION;
+* ``ask``   -- ask the user a short clarifying question, with options;
+* ``final`` -- answer in markdown, naming which tool results to show as
+  tables and which one to chart, and which passages it cites.
+
+Tables and charts are referenced, never retyped: the app draws the tool's own
+rows, so a chart cannot disagree with the table above it, and every table can
+be downloaded to Excel exactly as computed. The prompt is short and carries
+worked examples, because the deployment's model is a 12B model that follows
+examples better than long rules.
 """
 from __future__ import annotations
 
@@ -16,7 +21,8 @@ import re
 
 from .client import AssistantError, chat
 from .config import AssistantConfig, load_config
-from .tools import TOOL_CATALOGUE, execute_tool
+from .semantic import CATALOGUE, TOOLS as SEMANTIC, resolve_run
+from .tools import execute_tool as raw_tool
 
 
 def _trim(text: str, n: int) -> str:
@@ -24,78 +30,147 @@ def _trim(text: str, n: int) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
-def seed_context(run_id: str | None = None,
-                 max_chars: int = 6000) -> str:
-    """What the assistant knows before it asks anything.
+# Raw output-file tools stay available for anything the semantic tools miss.
+RAW = ("list_files", "describe_file", "aggregate", "filter_rows", "column_stats", "diff_files")
+CATALOGUE_ALL = CATALOGUE + """
+RAW OUTPUT FILES (only when nothing above fits)
+- list_files(run) · describe_file(run, file) · aggregate(run, file, group_by, measure, fn) · filter_rows(run, file, where, columns, limit)"""
 
-    Enough to answer "which runs are there" without a round trip, and enough
-    to name a default run. Everything else it has to fetch.
-    """
-    parts = [execute_tool("list_runs").get("summary", "")]
-    if run_id:
-        parts.append(execute_tool("list_files", {"run_id": run_id})
-                     .get("summary", ""))
-    return _trim("\n\n".join(p for p in parts if p), max_chars)
+
+def execute(name: str, args: dict | None, focus: str | None) -> dict:
+    """One tool by name. Semantic tools get the focus run; a failure is a
+    result the model can read, never an exception."""
+    args = dict(args or {})
+    name = str(name or "").strip()
+    # a small model names tools loosely: map the usual slips
+    alias = {"summary": "overview", "headline": "overview", "stage_split": "breakdown",
+             "group_by": "breakdown", "split": "breakdown", "search": "search_docs",
+             "docs": "search_docs", "search_code": "search_docs", "code": "read_code",
+             "list_runs": "runs", "model_spec": "model", "validation_results": "validation",
+             "bridge": "movement", "waterfall": "movement", "customers": "top",
+             "top_customers": "top", "pd_curves": "pd_curve", "config": "config_file"}
+    if name in alias and not (name in ("list_runs", "model_spec", "validation_results")
+                              and "file" in args):
+        if name == "search_code":
+            args.setdefault("scope", "code")
+        if name == "stage_split":
+            args.setdefault("by", "stage")
+        name = alias[name]
+    if name == "compare_runs" and "file" not in args:
+        name = "compare"
+    if name in SEMANTIC:
+        # the model sometimes says run_id, sometimes run: take either
+        for k in ("run", "run_id_b"):
+            if k in args and "run_id" not in args and name not in ("compare", "movement", "migration"):
+                args["run_id"] = args.pop(k)
+        if name in ("compare", "movement", "migration"):
+            args.setdefault("run_a", args.pop("run_id_a", None) or args.pop("from", None) or "previous")
+            if "run_id_b" in args or "to" in args:
+                args["run_b"] = args.pop("run_id_b", None) or args.pop("to", None)
+        try:
+            return SEMANTIC[name](focus=focus, **args)
+        except TypeError as exc:
+            return {"ok": False, "summary": f"{name} does not take these arguments: {exc}"}
+        except Exception as exc:
+            return {"ok": False, "summary": f"{name} failed: {getattr(exc, 'detail', exc)}"}
+    if name in RAW or name in ("list_runs", "model_spec", "validation_results", "compare_runs"):
+        if "run" in args and "run_id" not in args:
+            args["run_id"] = args.pop("run")
+        if "run_id" in args:
+            rid, _ = resolve_run(args.get("run_id"), focus)
+            args["run_id"] = rid or args["run_id"]
+        elif name not in ("list_runs", "compare_runs", "diff_files"):
+            args["run_id"] = focus
+        return raw_tool(name, args)
+    return {"ok": False, "summary": f"There is no tool called {name!r}. Use one of: "
+                                    + ", ".join(list(SEMANTIC) + list(RAW)) + "."}
+
+
+def seed_context(run_id: str | None = None, max_chars: int = 6000) -> str:
+    """What the assistant knows before it asks anything: the runs, and the
+    focus run's headline -- enough to answer the commonest questions with no
+    lookup at all, and to name runs correctly in every other."""
+    parts = []
+    r = SEMANTIC["runs"](focus=run_id)
+    if r.get("ok"):
+        parts.append("RUNS\n" + r["summary"])
+    rid, _ = resolve_run(run_id, run_id)
+    if rid:
+        o = SEMANTIC["overview"](run_id=rid, focus=rid)
+        if o.get("ok"):
+            parts.append(f"FOCUS RUN {rid}\n" + o["summary"])
+    return _trim("\n\n".join(parts), max_chars)
 
 
 SYSTEM = """\
-You are the IFRS 9 ECL assistant, embedded in Qatar Development Bank's
-provisioning app. You answer questions about runs, configuration, governance,
-the credit-risk methodology, and the run outputs — stages, ratings, exposures,
-PD term structures, collateral, provisions — including comparing one run with
-another.
+You are the assistant of Qatar Development Bank's IFRS 9 ECL tool. You help risk and finance staff with \
+the runs (provision, stages, ratings, exposure, PD, LGD, collateral, scenarios, movement between runs), \
+the model and configuration, governance (approvals, overrides, overlays, versions, audit), and how the \
+tool and the methodology work.
 
-You call TOOLS to fetch real data. The tools are:
+Reply with ONE JSON object and nothing else. Three moves:
+  {{"action":"tool","tool":"<name>","args":{{...}}}}
+  {{"action":"ask","question":"<short question>","options":["<option>", "..."]}}
+  {{"action":"final","answer":"<markdown>","show":["t1"],"chart":"t1","cite":["k12"],"followups":["<question>", "..."]}}
+After a tool call you receive OBSERVATION tN. "show" lists the observations to display as tables (the app \
+draws them, with an Excel download); "chart" is the observation to plot, or null; "cite" lists passage ids \
+(k…) from search_docs or read_code that support the answer; "followups" are 2–3 short next questions.
+
+TOOLS
 {tools}
 
-PROTOCOL. Every message you send is a single JSON object and nothing else: no
-prose around it, no markdown fences.
-  To call a tool:  {{"action":"tool","tool":"<name>","args":{{...}}}}
-  To answer:       {{"action":"final","answer":"<markdown>","chart_ref":"<tool_id or null>"}}
-After each tool call you get an OBSERVATION with the result and a tool_id such
-as t1. Chain as many calls as you need, then answer. To show a chart, set
-chart_ref to the tool_id of the observation you want plotted — the app draws
-it from that tool's own numbers, so never retype numbers into a chart. Use
-null when no chart helps.
-
-Emit strict JSON. Do not backslash-escape underscores: write
-VAR_NON_OIL_GDP_GROWTH, never VAR\\_NON_OIL_GDP_GROWTH. Only \\n, \\" and \\\\
-are legal escapes. Put markdown inside the answer string, not around the JSON.
-
 RULES
-1. Ground every factual claim in a tool observation or the context below.
-   Never invent a run id, a number, a name, a date or an approval. If
-   something is missing, say so and name the page or file that would have it.
-2. Configuration is not in a run's outputs. For anything about the model —
-   coefficients, intercepts, weights, MEVs, the anchor PD, horizons — call
-   model_spec, which reads the run's frozen config and needs no aggregation.
-   Never claim a coefficient is unavailable without calling it first.
-3. For validation, call validation_results.
-4. Put data in compact markdown tables. Lead with the direct answer, then the
-   detail behind it.
-5. Default to {focus} when a question needs a run and names none. For a
-   comparison, pick the two runs from the run list.
-6. This engine computes the provision itself: Cla Amount Onbal in
-   FinalEclReport.csv is the ECL per contract. Stage 3 is booked at the full
-   outstanding balance, which is QDB's basis and deliberately differs from
-   LIC's zero, and the provision is capped at the on-balance exposure. Say so
-   when a reconciliation against a LIC extract comes up.
-7. You are read-only. You cannot start a run, edit config, or approve
-   anything. If asked to, name the page that does it.
+1. Every number, name, date or approval you state comes from CONTEXT or an OBSERVATION. Never guess. \
+If something is not available, say so and name the page that has it.
+2. Use the CONTEXT first: it already has the runs and the focus run's totals by stage and portfolio.
+3. Ask instead of guessing when the question is ambiguous in a way that changes the answer: which run(s), \
+which customer of several matches, which measure ("biggest" by ECL or exposure?). Do not ask when a \
+sensible default exists: focus run = {focus}; comparisons = previous run → focus run; measure = ECL.
+4. For how / why / where questions about the method or the tool, call search_docs and cite the passages. \
+For "how does the code do X", search_docs with scope "code" or read_code.
+5. Keep the answer short: the direct answer first (one or two sentences with the key figures), then at \
+most a few bullets. Do not retype a table that you list in "show"; refer to it. Amounts in QAR with \
+thousands separators; say "mln" for millions when rounding.
+6. Charts: set "chart" when a picture helps (splits, comparisons, trends, PD curves, movement). Otherwise null.
+7. You are read-only: you cannot run, edit or approve. Say which page does it (e.g. Runs → Run the \
+pipeline, Governance → Management overlay, Runs → Approval queue).
+8. Glossary: ECL = provision (Cla Amount Onbal); coverage = ECL ÷ exposure; Stage 3 is provisioned at 100% \
+of the balance; booked ECL uses probability-weighted PDs; overlay = management adjustment added after the model.
+
+EXAMPLES
+User: show the stage split by portfolio
+{{"action":"tool","tool":"breakdown","args":{{"by":["portfolio","stage"],"measure":"ecl"}}}}
+OBSERVATION t1 …
+{{"action":"final","answer":"Business Finance carries most of the provision (… of …). Stage 3 is … of the total.","show":["t1"],"chart":"t1","cite":[],"followups":["Which customers drive Stage 3?","How did this change since the previous run?"]}}
+
+User: which portfolio moved most between the two runs?
+{{"action":"tool","tool":"movement","args":{{"run_a":"previous","level":"portfolio"}}}}
+OBSERVATION t1 …
+{{"action":"final","answer":"**Al Dhameen** moved most: ECL fell by … (…%), mainly derecognised contracts (…).","show":["t1"],"chart":"t1","cite":[],"followups":["Show the movement for Al Dhameen step by step"]}}
+
+User: how is LGD calculated?
+{{"action":"tool","tool":"search_docs","args":{{"query":"LGD calculation collateral haircut floor","scope":"docs"}}}}
+OBSERVATION t1 …
+{{"action":"final","answer":"LGD = 45% × the unsecured share of the balance, with a floor of 50% of 45% (22.5%) … [k7]","show":[],"chart":null,"cite":["k7"],"followups":["What haircut does commercial property get?"]}}
+
+User: what is the ECL of Ahmed?
+{{"action":"tool","tool":"customer","args":{{"query":"Ahmed"}}}}
+OBSERVATION t1 … 3 customers match …
+{{"action":"ask","question":"Three customers match \\"Ahmed\\". Which one?","options":["20111 · Ahmed Trading","20412 · Ahmed Steel","30987 · Ahmed Foods"]}}
 
 CONTEXT
 {seed}"""
 
 
 def _system_prompt(seed: str, run_id: str | None) -> str:
-    focus = f"run '{run_id}'" if run_id else "the most recent run"
-    return SYSTEM.format(tools=TOOL_CATALOGUE, focus=focus, seed=seed)
+    focus = run_id or "the most recent run"
+    return SYSTEM.format(tools=CATALOGUE_ALL, focus=focus, seed=seed)
 
 
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.S)
 # A markdown-trained model writes \_ inside JSON strings, which is not a legal
-# escape and makes the whole object unparseable. Repairing it is the difference
-# between an answer and a shrug.
+# escape and makes the whole object unparseable. Repairing it is the
+# difference between an answer and a shrug.
 _BAD_ESCAPE = re.compile(r'\\(?!["\\/bfnrtu])')
 
 
@@ -109,7 +184,9 @@ def extract_json(text: str) -> dict | None:
         candidates.append(text[start:])
     for raw in candidates:
         raw = raw.strip()
-        for attempt in (raw, _BAD_ESCAPE.sub("", raw)):
+        for attempt in (raw, _BAD_ESCAPE.sub("", raw),
+                        # literal newlines inside strings: common, and illegal
+                        re.sub(r'(?<!\\)\n', r'\\n', _BAD_ESCAPE.sub("", raw))):
             for end in range(len(attempt), max(len(attempt) - 4000, 0), -1):
                 if attempt[end - 1: end] != "}":
                     continue
@@ -122,91 +199,152 @@ def extract_json(text: str) -> dict | None:
     return None
 
 
+_DATA_WORDS = re.compile(r"\b(chart|plot|graph|visual|trend|curve)\b", re.I)
+
+
+def _as_list(v) -> list:
+    if v is None or v == "" or v is False:
+        return []
+    return v if isinstance(v, list) else [v]
+
+
+def _result(text: str, results: dict, steps: list, parsed: dict | None,
+            question: str, ok: bool = True) -> dict:
+    """The answer the app shows: the text, and the tool results it named --
+    tables and a chart drawn from the tools' own rows -- with the sources."""
+    parsed = parsed or {}
+    data_ids = [k for k, r in results.items() if r.get("ok") and r.get("table")]
+    show = [str(x) for x in _as_list(parsed.get("show")) if str(x) in results]
+    chart_ref = parsed.get("chart") if "chart" in parsed else parsed.get("chart_ref")
+    if isinstance(chart_ref, dict):
+        chart_ref = chart_ref.get("ref")
+    if not show and data_ids and parsed.get("action", "final") == "final":
+        show = [data_ids[-1]]
+    tables = []
+    for k in show:
+        r = results[k]
+        if r.get("table"):
+            tables.append(r["table"])
+        tables += r.get("extra_tables", [])[:2] if k == show[-1] else []
+    chart = None
+    if chart_ref and str(chart_ref) in results:
+        chart = results[str(chart_ref)].get("chart")
+    if chart is None and _DATA_WORDS.search(question or ""):
+        for k in reversed(list(results)):
+            if results[k].get("chart"):
+                chart = results[k]["chart"]
+                break
+    cites_all = {c["id"]: c for r in results.values() for c in (r.get("cites") or [])}
+    cites = [cites_all[c] for c in map(str, _as_list(parsed.get("cite"))) if c in cites_all]
+    if not cites and cites_all:
+        # it searched but did not say which passage: show what it read
+        cites = list(cites_all.values())[:3]
+    ask = None
+    if parsed.get("action") == "ask":
+        ask = {"question": parsed.get("question") or text,
+               "options": [str(o) for o in _as_list(parsed.get("options"))][:6]}
+    followups = [str(f) for f in _as_list(parsed.get("followups"))][:3]
+    return {"ok": ok, "text": text, "tables": tables, "chart": chart, "cites": cites,
+            "ask": ask, "followups": followups, "steps": steps}
+
+
 def answer(question: str, history: list[dict] | None = None,
            run_id: str | None = None,
            cfg: AssistantConfig | None = None) -> dict:
-    """One question, answered. Returns ``{ok, text, chart, steps}``.
+    """One question, answered (or a clarifying question back).
 
-    ``steps`` is the tool trail: which tool, with which arguments, and whether
-    it succeeded. It is shown in the app, because an assistant over regulatory
-    numbers should be auditable — a user who cannot see where a figure came
-    from has to take it on faith, and that is exactly what a provision cannot
-    be taken on.
+    Returns ``{ok, text, tables, chart, cites, ask, followups, steps}``.
+    ``steps`` is the lookup trail -- which tool, which arguments, whether it
+    worked -- shown under the answer, because a figure nobody can trace is
+    one nobody should rely on.
     """
     cfg = cfg or load_config()
     reason = cfg.unavailable_reason()
     if reason:
-        return {"ok": False, "text": reason, "chart": None, "steps": []}
+        return _result(reason, {}, [], None, question, ok=False)
 
     history = list(history or [])
     if len(history) > cfg.max_history_turns * 2:
         history = history[-cfg.max_history_turns * 2:]
 
-    seed = seed_context(run_id, max_chars=cfg.max_context_chars // 4)
+    seed = seed_context(run_id, max_chars=cfg.max_context_chars // 3)
     convo = ([{"role": "system", "content": _system_prompt(seed, run_id)}]
              + history + [{"role": "user", "content": question}])
 
-    charts: dict[str, dict] = {}
+    results: dict[str, dict] = {}
     steps: list[dict] = []
-    calls = 0
+    seen_calls: dict[str, str] = {}
+    calls = repairs = 0
 
-    def finish(parsed: dict, fallback: str) -> dict:
-        ref = parsed.get("chart_ref") if parsed else None
-        return {"ok": True,
-                "text": (parsed or {}).get("answer") or fallback,
-                "chart": charts.get(str(ref)) if ref else None,
-                "steps": steps}
-
-    while True:
+    def ask_model() -> str | None:
         try:
-            raw = chat(convo, cfg)
+            return chat(convo, cfg)
         except AssistantError as exc:
-            return {"ok": False, "text": str(exc), "chart": None, "steps": steps}
+            raise _Stop(str(exc))
 
-        parsed = extract_json(raw)
-        if parsed is None:
-            # Not JSON: take it as the answer rather than arguing about format.
-            return {"ok": True, "text": raw, "chart": None, "steps": steps}
+    try:
+        while True:
+            raw = ask_model()
+            parsed = extract_json(raw)
+            if parsed is None:
+                # Prose: often a perfectly good answer that skipped the format.
+                if steps or repairs or len(raw or "") > 0 and "{" not in raw:
+                    return _result(raw or "The model returned nothing.", results, steps,
+                                   {"action": "final"}, question)
+                repairs += 1
+                convo += [{"role": "assistant", "content": raw},
+                          {"role": "user", "content": "Reply with one JSON object as in the protocol."}]
+                continue
 
-        action = parsed.get("action") or (
-            "final" if "answer" in parsed else "tool" if "tool" in parsed else "")
+            action = parsed.get("action") or ("final" if "answer" in parsed else
+                                              "tool" if "tool" in parsed else
+                                              "ask" if "question" in parsed else "")
+            parsed["action"] = action
+            if action == "final":
+                return _result(parsed.get("answer") or "(empty answer)", results, steps, parsed, question)
+            if action == "ask":
+                return _result(parsed.get("question") or "Could you say a bit more?",
+                               results, steps, parsed, question)
+            if action != "tool":
+                return _result(raw, results, steps, {"action": "final"}, question)
 
-        if action == "final":
-            return finish(parsed, "The assistant returned an empty answer.")
+            name = str(parsed.get("tool") or "")
+            args = parsed.get("args") if isinstance(parsed.get("args"), dict) else {}
+            key = json.dumps([name, args], sort_keys=True, default=str)
+            if key in seen_calls:
+                convo += [{"role": "assistant", "content": raw},
+                          {"role": "user", "content": f"You already have that result as {seen_calls[key]}. "
+                                                      'Answer now with action "final".'}]
+                calls += 1
+                if calls > cfg.max_tool_calls:
+                    break
+                continue
+            if calls >= cfg.max_tool_calls:
+                break
+            calls += 1
+            tid = f"t{calls}"
+            seen_calls[key] = tid
+            res = execute(name, args, run_id)
+            results[tid] = res
+            steps.append({"id": tid, "tool": name, "args": args, "ok": bool(res.get("ok"))})
+            convo += [{"role": "assistant", "content": raw},
+                      {"role": "user", "content": f"OBSERVATION {tid} ({name}):\n"
+                                                  f"{_trim(res.get('summary', '(no result)'), 5000)}"}]
+            # keep the prompt small: older observations shrink once read
+            obs = [i for i, m in enumerate(convo) if m["role"] == "user"
+                   and m["content"].startswith("OBSERVATION")]
+            for i in obs[:-3]:
+                convo[i] = {"role": "user", "content": _trim(convo[i]["content"], 1200)}
 
-        if action != "tool":
-            return {"ok": True, "text": raw, "chart": None, "steps": steps}
+        convo.append({"role": "user", "content": 'Lookup limit reached. Answer now with action "final" '
+                                                 "from what you have."})
+        raw = ask_model()
+        parsed = extract_json(raw) or {"action": "final", "answer": raw}
+        parsed.setdefault("action", "final")
+        return _result(parsed.get("answer") or raw, results, steps, parsed, question)
+    except _Stop as stop:
+        return _result(str(stop), results, steps, None, question, ok=False)
 
-        if calls >= cfg.max_tool_calls:
-            convo += [
-                {"role": "assistant", "content": raw},
-                {"role": "user",
-                 "content": "Tool-call limit reached. Answer now with "
-                            'action="final" and what you already have.'},
-            ]
-            try:
-                last = chat(convo, cfg)
-            except AssistantError as exc:
-                return {"ok": False, "text": str(exc), "chart": None,
-                        "steps": steps}
-            return finish(extract_json(last) or {}, last)
 
-        calls += 1
-        tool_id = f"t{calls}"
-        name = parsed.get("tool") or ""
-        args = parsed.get("args") or {}
-        if run_id and isinstance(args, dict) and "run_id" in args \
-                and not args.get("run_id"):
-            args["run_id"] = run_id
-        result = execute_tool(name, args if isinstance(args, dict) else {})
-        steps.append({"id": tool_id, "tool": name, "args": args,
-                      "ok": bool(result.get("ok"))})
-        if result.get("chart"):
-            charts[tool_id] = result["chart"]
-
-        convo += [
-            {"role": "assistant", "content": raw},
-            {"role": "user",
-             "content": f"OBSERVATION (tool={name}, tool_id={tool_id}):\n"
-                        f"{_trim(result.get('summary', '(no result)'), 6000)}"},
-        ]
+class _Stop(Exception):
+    pass

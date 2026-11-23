@@ -180,8 +180,10 @@ class TestTheLoop:
     @needs_run
     def test_the_tool_call_limit_forces_an_answer(self, monkeypatch):
         import backend.assistant.agent as agent
-        stub = _Stub(['{"action":"tool","tool":"list_runs","args":{}}'] * 3
-                     + ['{"action":"final","answer":"done"}'])
+        stub = _Stub(['{"action":"tool","tool":"overview","args":{"run_id":"latest"}}',
+                      '{"action":"tool","tool":"runs","args":{}}',
+                      '{"action":"tool","tool":"validation","args":{}}',
+                      '{"action":"final","answer":"done"}'])
         monkeypatch.setattr(agent, "chat", stub)
         r = agent.answer("go", cfg=self.cfg())
         assert r["ok"] and r["text"] == "done"
@@ -217,3 +219,148 @@ class TestTheLoop:
         monkeypatch.setattr(agent, "chat", _Stub(["I am not sure."]))
         r = agent.answer("hello", cfg=self.cfg())
         assert r["ok"] and r["text"] == "I am not sure."
+
+
+
+# ---------------------------------------------------------------------------
+# The domain tools: the same numbers as the pages, in shapes the app can show.
+# ---------------------------------------------------------------------------
+from backend.assistant import semantic as SEM  # noqa: E402
+from backend.assistant import knowledge as KN  # noqa: E402
+
+
+class TestDomainTools:
+    @needs_run
+    def test_every_tool_answers_or_says_why(self):
+        for name, fn in SEM.TOOLS.items():
+            args = {"query": "loss given default"} if name == "search_docs" else \
+                {"symbol": "compute_ecl"} if name == "read_code" else \
+                {"query": RUN} if name == "customer" else \
+                {"name": "model.yml"} if name == "config_file" else {}
+            r = fn(focus=RUN, **args)
+            assert isinstance(r, dict) and r.get("summary"), name
+
+    @needs_run
+    def test_the_stage_split_is_the_staging_pages(self):
+        r = SEM.breakdown(focus=RUN, by="stage", measure="ecl")
+        page = client.get(f"/api/analytics/{RUN}/staging").json()["distribution"]
+        got = {row["stage"]: row["ecl"] for row in r["table"]["rows"]}
+        for s in page:
+            assert got[s["stage"]] == pytest.approx(s["ecl"], rel=1e-9)
+
+    @needs_run
+    def test_two_dimensions_give_a_pivot_and_a_stacked_chart(self):
+        r = SEM.breakdown(focus=RUN, by=["portfolio", "stage"])
+        assert r["ok"] and "Total" in r["table"]["columns"]
+        assert r["chart"]["kind"] == "stacked"
+        total = sum(row["Total"] for row in r["table"]["rows"])
+        assert total == pytest.approx(client.get(f"/api/analytics/{RUN}/summary").json()["ecl"], rel=1e-9)
+
+    @needs_run
+    def test_filters_and_unknown_values_say_what_exists(self):
+        r = SEM.breakdown(focus=RUN, by="rating", filters={"stage": 2})
+        assert r["ok"] and "stage = 2" in r["summary"]
+        bad = SEM.breakdown(focus=RUN, by="rating", filters={"portfolio": "Nowhere"})
+        assert not bad["ok"] and "Values:" in bad["summary"]
+
+    @needs_run
+    def test_runs_are_found_the_way_people_name_them(self):
+        assert SEM.resolve_run("latest", None)[0] == RUNS[0]
+        assert SEM.resolve_run(None, RUN)[0] == RUN
+        n = int(RUN.rsplit("_", 1)[-1])
+        assert SEM.resolve_run(f"run {n}", None)[0] == RUN
+        assert SEM.resolve_run("nonsense-run", None)[0] is None
+
+    @needs_pair
+    def test_the_movement_adds_up_and_matches_the_page(self):
+        a, b = PAIR
+        r = SEM.movement(run_a=a, run_b=b, focus=b)
+        rows = r["table"]["rows"]
+        opening = rows[0]["amount"]
+        closing = rows[-1]["amount"]
+        steps = sum(x["amount"] for x in rows[1:-1])
+        assert opening + steps == pytest.approx(closing, abs=1.0)
+        page = client.get("/api/analytics/bridge", params={"prev": a, "curr": b}).json()
+        assert closing == pytest.approx(page["closing"], rel=1e-9)
+
+    @needs_pair
+    def test_which_portfolio_moved_most(self):
+        a, b = PAIR
+        r = SEM.movement(run_a=a, run_b=b, level="portfolio", focus=b)
+        assert r["ok"] and "Largest change" in r["summary"]
+        changes = [abs(x["change"]) for x in r["table"]["rows"]]
+        assert changes == sorted(changes, reverse=True)
+
+    @needs_run
+    def test_the_mev_coefficients_come_from_the_frozen_config(self):
+        r = SEM.model(focus=RUN)
+        if r["ok"]:
+            assert "coefficient" in " ".join(r["table"]["columns"]).lower()
+
+    def test_no_tool_writes(self):
+        verbs = ("write", "delete", "approve", "trigger", "set", "apply", "create", "edit", "start")
+        for name in SEM.TOOLS:
+            assert not any(name.startswith(v) for v in verbs), name
+
+
+class TestKnowledge:
+    def test_the_documents_and_the_code_are_indexed(self):
+        kinds = {c.kind for c in KN.index().chunks}
+        assert {"doc", "code"} <= kinds
+
+    def test_a_methodology_question_finds_the_methodology(self):
+        hits = KN.search("loss given default collateral haircut", "docs", 3)
+        assert any("Loss given default" in h.section for h in hits)
+
+    def test_a_how_to_finds_the_manual(self):
+        hits = KN.search("approve an overlay", "docs", 3)
+        assert any(h.source == "user_manual" for h in hits)
+
+    def test_code_is_found_by_its_parts(self):
+        assert KN.code_symbol("compute_ecl") is not None
+        assert any(h.kind == "code" for h in KN.search("compute ecl", "code", 3))
+
+
+class TestAnswers:
+    @staticmethod
+    def cfg():
+        return AssistantConfig(enabled=True, endpoint="http://stub", model="stub", max_tool_calls=4)
+
+    @needs_run
+    def test_tables_and_charts_are_the_tools_own(self, monkeypatch):
+        import backend.assistant.agent as agent
+        stub = _Stub(['{"action":"tool","tool":"breakdown","args":{"by":["portfolio","stage"]}}',
+                      '{"action":"final","answer":"see","show":["t1"],"chart":"t1","cite":[],'
+                      '"followups":["why?"]}'])
+        monkeypatch.setattr(agent, "chat", stub)
+        r = agent.answer("stage split by portfolio", run_id=RUN, cfg=self.cfg())
+        assert r["tables"] and r["tables"][0]["rows"]
+        assert r["chart"]["kind"] == "stacked"
+        assert r["followups"] == ["why?"]
+
+    def test_a_clarifying_question_comes_back_with_options(self, monkeypatch):
+        import backend.assistant.agent as agent
+        monkeypatch.setattr(agent, "chat", _Stub(
+            ['{"action":"ask","question":"Which run?","options":["run_00001","run_00002"]}']))
+        r = agent.answer("compare them", cfg=self.cfg())
+        assert r["ask"] == {"question": "Which run?", "options": ["run_00001", "run_00002"]}
+        assert r["text"] == "Which run?"
+
+    def test_citations_are_the_passages_it_read(self, monkeypatch):
+        import backend.assistant.agent as agent
+        hit = KN.search("loss given default", "docs", 1)[0]
+        monkeypatch.setattr(agent, "chat", _Stub(
+            ['{"action":"tool","tool":"search_docs","args":{"query":"loss given default"}}',
+             '{"action":"final","answer":"LGD is ...","cite":["%s"]}' % hit.id]))
+        r = agent.answer("how is LGD calculated?", cfg=self.cfg())
+        assert [c["id"] for c in r["cites"]] == [hit.id]
+
+    def test_a_repeated_lookup_is_not_run_twice(self, monkeypatch):
+        import backend.assistant.agent as agent
+        call = '{"action":"tool","tool":"search_docs","args":{"query":"staging"}}'
+        monkeypatch.setattr(agent, "chat", _Stub([call, call, '{"action":"final","answer":"ok"}']))
+        r = agent.answer("staging?", cfg=self.cfg())
+        assert len(r["steps"]) == 1 and r["text"] == "ok"
+
+    def test_a_reply_with_literal_newlines_is_still_read(self):
+        assert extract_json('{"action":"final","answer":"line 1\nline 2"}')["answer"] == "line 1\nline 2"

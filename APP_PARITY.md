@@ -102,6 +102,12 @@ Like the R app, the pages read the **overlaid** report when an overlay has been
 applied to a run, and so does the assistant in both apps (grounded on the
 runs, read-only tools), saying so. The help page is present.
 
+The Python assistant goes further than R's: domain tools over the same analytics
+as the pages (breakdowns, comparisons, the movement bridge, migration, scenarios,
+PD curves, customers, governance), search with citations over the Help documents,
+the engine code and the config, clarifying questions with options, charts, and
+tables that download to Excel.
+
 The override review covers the investment book too (counterparty rating on
 the external scale, stage and restructuring through `CustomerStagingFlag_2`),
 which the R app does not: with no investment override the files are
