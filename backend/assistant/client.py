@@ -21,6 +21,31 @@ def _trim(text: str, n: int = 300) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
+def alternate(messages: list[dict]) -> list[dict]:
+    """The conversation as strict-template models (Gemma, Mistral, Llama 2
+    on vLLM) accept it: at most one system message first, then user and
+    assistant taking turns, starting and ending with the user. Messages of
+    the same role in a row are joined into one; nothing is dropped."""
+    system = "\n\n".join(str(m.get("content") or "") for m in messages
+                         if m.get("role") == "system").strip()
+    turns: list[dict] = []
+    for m in messages:
+        role = m.get("role")
+        if role == "system":
+            continue
+        role = "assistant" if role == "assistant" else "user"
+        text = str(m.get("content") or "")
+        if turns and turns[-1]["role"] == role:
+            turns[-1]["content"] += "\n\n" + text
+        else:
+            turns.append({"role": role, "content": text})
+    if not turns or turns[0]["role"] != "user":
+        turns.insert(0, {"role": "user", "content": "(conversation start)"})
+    if turns[-1]["role"] != "user":
+        turns.append({"role": "user", "content": "Continue."})
+    return ([{"role": "system", "content": system}] if system else []) + turns
+
+
 def chat(messages: list[dict], cfg: AssistantConfig) -> str:
     """One round trip. Returns the assistant's message content."""
     reason = cfg.unavailable_reason()
@@ -34,7 +59,7 @@ def chat(messages: list[dict], cfg: AssistantConfig) -> str:
 
     payload = {
         "model": cfg.model,
-        "messages": messages,
+        "messages": alternate(messages),
         "temperature": cfg.temperature,
         "top_p": cfg.top_p,
         "max_tokens": cfg.max_tokens,

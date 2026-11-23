@@ -537,3 +537,56 @@ class TestRouter:
     def test_small_talk_is_left_to_the_model(self):
         from backend.assistant.router import plan
         assert plan("hello", None, self.P) == []
+
+
+class TestAlternation:
+    """23 Nov 2026: the endpoint refused the conversation (HTTP 400, "roles
+    must alternate") once the first lookup was added before the model's turn."""
+
+    def test_roles_alternate_after_system_whatever_the_loop_built(self):
+        from backend.assistant.client import alternate
+        msgs = [{"role": "system", "content": "S"},
+                {"role": "assistant", "content": "earlier answer"},
+                {"role": "user", "content": "q1"}, {"role": "user", "content": "q2"},
+                {"role": "assistant", "content": "{tool}"},
+                {"role": "user", "content": "OBSERVATION t1"}, {"role": "user", "content": "answer now"},
+                {"role": "assistant", "content": "a"}, {"role": "assistant", "content": "b"}]
+        out = alternate(msgs)
+        assert out[0] == {"role": "system", "content": "S"}
+        roles = [m["role"] for m in out[1:]]
+        assert roles[0] == "user" and roles[-1] == "user"
+        assert all(a != b for a, b in zip(roles, roles[1:]))
+        joined = " ".join(m["content"] for m in out)
+        for t in ("earlier answer", "q1", "q2", "OBSERVATION t1", "answer now", "a", "b"):
+            assert t in joined
+
+    @needs_run
+    def test_every_request_the_loop_sends_alternates(self, monkeypatch):
+        import json as _json
+        import backend.assistant.agent as agent
+        import backend.assistant.client as client
+        sent = []
+
+        class R:
+            status_code = 200
+            text = ""
+
+            def __init__(self, c):
+                self.c = c
+
+            def json(self):
+                return {"choices": [{"message": {"content": self.c}}]}
+
+        replies = [_json.dumps({"action": "final", "answer": "Listed below.", "show": ["t1"]})]
+        monkeypatch.setattr(client.requests, "post",
+                            lambda url, json, **k: (sent.append(json["messages"]), R(replies.pop(0)))[1])
+        monkeypatch.setattr(agent, "chat", client.chat)
+        cfg = AssistantConfig(enabled=True, endpoint="http://stub", model="stub", max_tool_calls=4)
+        hist = [{"role": "user", "content": "now stage 2 customer top 5"},
+                {"role": "assistant", "content": "..."}]
+        r = agent.answer("where is stage 2 list?", history=hist, run_id=RUN, cfg=cfg)
+        assert r["tables"]
+        for msgs in sent:
+            roles = [m["role"] for m in msgs if m["role"] != "system"]
+            assert roles[0] == "user" and roles[-1] == "user"
+            assert all(a != b for a, b in zip(roles, roles[1:])), roles
