@@ -228,6 +228,29 @@ tbl = shown[shown["kind"] == "delta"].copy()
 tbl["% of previous"] = [100 * a / b["opening"] if b["opening"] else None
                         for a in tbl["amount"]]
 tbl["What it is"] = tbl["key"].map(WHAT)
+
+
+def _methodology_text() -> str:
+    """Methodology change for THESE two runs: how much is a change of the ECL
+    settings (and which ones) and how much a change of engine version, so a
+    reader of two runs on the same engine sees it is the settings."""
+    s, m = float(amount.get("settings", 0.0)), float(amount.get("method", 0.0))
+    parts = []
+    if abs(s) >= 0.5:
+        items = "; ".join(f"{i['item']}: {i['before']} → {i['after']}"
+                          for i in changes.get("settings") or [])
+        parts.append(f"ECL settings in model.yml changed between the two runs "
+                     f"({signed(s)}): {items or 'see below'}.")
+    if abs(m) >= 0.5:
+        parts.append(f"The previous run was priced by another version of the "
+                     f"engine ({signed(m)}).")
+    else:
+        parts.append("Engine version: no effect (both runs give the same "
+                     "result on this engine).")
+    return " ".join(parts)
+
+
+tbl.loc[tbl["key"] == "methodology", "What it is"] = _methodology_text()
 text_table(fmt_table(tbl[["label", "amount", "% of previous", "What it is"]]
                      .rename(columns={"label": "Step", "amount": "Amount"}),
                      money_cols=("Amount",), pct_cols=("% of previous",)),
