@@ -297,7 +297,7 @@ def _text(df: pd.DataFrame, limit: int = MAX_ROWS) -> str:
         if pd.api.types.is_float_dtype(show[c]):
             pct = any(t in str(c).lower() for t in ("coverage", "pct", "%", "pd", "lgd", "share"))
             show[c] = show[c].map(lambda v: _fmt(v, "pct" if pct else ""))
-    s = show.to_string(index=False, max_colwidth=70)
+    s = show.to_string(index=False, max_colwidth=110)
     if len(df) > limit:
         s += f"\n… {len(df) - limit:,} more rows not shown"
     return s
@@ -596,6 +596,205 @@ def migration(run_a="previous", run_b=None, kind="stage", focus=None, **_) -> di
             "chart": {"kind": "bar", "x": "move", "y": "customers",
                       "title": f"Customers by stage move {ra} → {rb}",
                       "rows": t[t["direction"] != "same"].to_dict(orient="records")}}
+
+
+# ----------------------------------------------------- why a stage --------
+def _threshold(rid: str) -> float:
+    from ..routes import analytics as A
+    try:
+        return float(A._threshold(rid, None))
+    except Exception:
+        return 60.0
+
+
+def _overrides(rid: str) -> tuple[set, set]:
+    """Customers a reviewed override put in Stage 2 and in Stage 3."""
+    from ..routes import analytics as A
+    from ifrs9qdb.analytics.profile import _stage_override_set
+    ov = A._stage_overrides(rid)
+    return _stage_override_set(ov, "Stage 2"), _stage_override_set(ov, "Stage 3")
+
+
+def customer_stages(rid: str) -> pd.DataFrame:
+    """One row per customer: its stage (the worst of its contracts, as the
+    staging works per customer) and the staging rule's inputs -- worst DPD,
+    watchlist, restructured, default flag, Tasdeer, override -- with the
+    reason in words, the way section 6.1 of the ECL methodology states it."""
+    d = _report(rid).copy()
+    thr = _threshold(rid)
+    ov2, ov3 = _overrides(rid)
+    num = lambda c: pd.to_numeric(d[c], errors="coerce") if c in d else pd.Series(0, index=d.index)
+    d["_st"], d["_dpd"] = num("stage"), num("dpd")
+    for c in ("watchlist", "restructured", "default_flag", "local3"):
+        d["_" + c] = (num(c) == 1)
+    d["_tas"] = d["portfolio"].astype(str).eq("Tasdeer")
+    g = d.groupby(d["customer"].astype(str))
+    cv = pd.DataFrame({
+        "stage": g["_st"].max(), "worst_dpd": g["_dpd"].max(),
+        "watchlist": g["_watchlist"].any(), "restructured": g["_restructured"].any(),
+        "default_flag": g["_default_flag"].any(), "local3": g["_local3"].any(),
+        "tasdeer_only": g["_tas"].all(),
+        "portfolio": g["portfolio"].agg(lambda x: ", ".join(sorted(set(map(str, x))))),
+        "rating": g["rating"].first(), "contracts": g.size(),
+        "exposure": g["exposure"].sum(), "ecl": g["ecl"].sum(),
+    })
+    if "customer_name" in d:
+        cv.insert(0, "name", g["customer_name"].first().fillna("").astype(str))
+    cv["override_s2"] = cv.index.isin(ov2)
+    cv["override_s3"] = cv.index.isin(ov3)
+
+    def why(r) -> str:
+        dpd = r["worst_dpd"]
+        dpd_s = f"{dpd:.0f}" if dpd == dpd else "n/a"
+        if r["stage"] >= 3:
+            if dpd == dpd and dpd > 90:
+                return f"DPD over 90 (worst {dpd_s} days)"
+            if r["override_s3"]:
+                return "Stage 3 override"
+            if r["default_flag"]:
+                return "Default flag (an override or the default marker, DPD not over 90)"
+            return "No Stage 3 reason in the report"
+        if r["stage"] == 2:
+            out = []
+            if dpd == dpd and thr < dpd <= 90:
+                out.append(f"DPD {dpd_s} days (over the {thr:g}-day threshold)")
+            if r["watchlist"]:
+                out.append("Watchlist")
+            if r["restructured"]:
+                out.append("Restructured")
+            if r["tasdeer_only"]:
+                out.append("Tasdeer (collectively assessed)")
+            rule = bool(out)
+            if r["override_s2"] or (r["local3"] and not rule):
+                out.append("Stage 2 override")
+            if not out and not r["tasdeer_only"]:
+                out.append("Tasdeer contract (collective), other contracts by contagion"
+                           if "Tasdeer" in r["portfolio"] else "No Stage 2 reason in the report")
+            return "; ".join(out)
+        return "No trigger: DPD within the threshold, not on the watchlist, not restructured"
+
+    cv["reason"] = cv.apply(why, axis=1)
+    cv.index.name = "customer"
+    return cv.reset_index()
+
+
+def _changed(a: pd.Series, b: pd.Series, thr: float) -> str:
+    """What changed in a customer's staging inputs between two runs."""
+    out = []
+    da, db = a.get("worst_dpd"), b.get("worst_dpd")
+    if da == da and db == db and abs((db or 0) - (da or 0)) >= 1:
+        out.append(f"DPD {da:.0f} → {db:.0f} days")
+    for k, on, off in (("watchlist", "added to the watchlist", "off the watchlist"),
+                       ("restructured", "restructured", "no longer restructured"),
+                       ("default_flag", "default flag set", "default flag cleared"),
+                       ("override_s3", "Stage 3 override", "Stage 3 override removed"),
+                       ("override_s2", "Stage 2 override", "Stage 2 override removed")):
+        if bool(a.get(k)) != bool(b.get(k)):
+            out.append(on if b.get(k) else off)
+    if str(a.get("rating")) != str(b.get("rating")):
+        out.append(f"rating {a.get('rating')} → {b.get('rating')}")
+    return "; ".join(out) or "no change in the staging inputs"
+
+
+def stage_moves(run_a="previous", run_b=None, from_stage=None, to_stage=None, n=50,
+                direction=None, focus=None, **_) -> dict:
+    """Which customers changed stage between two runs, and why: the reason
+    for the stage they are in now and what changed in their staging inputs
+    (DPD, watchlist, restructuring, default flag, override, rating), with
+    exposure and ECL in both runs."""
+    rb, bad = _run_or_fail(run_b, focus)
+    if bad:
+        return bad
+    ra, why = resolve_run(run_a, rb)
+    if not ra:
+        return _fail(why)
+    if ra == rb:
+        return _fail(f"Both sides are {ra}; name two different runs.")
+    a, b = customer_stages(ra).set_index("customer"), customer_stages(rb).set_index("customer")
+    both = a.index.intersection(b.index)
+    moved = [c for c in both if a.at[c, "stage"] != b.at[c, "stage"]]
+    thr = _threshold(rb)
+    rows = []
+    for c in moved:
+        ra_, rb_ = a.loc[c], b.loc[c]
+        rows.append({"customer": f"{c} · {rb_['name']}" if "name" in b and rb_.get("name") else c,
+                     "from": int(ra_["stage"]), "to": int(rb_["stage"]),
+                     "reason now": rb_["reason"], "what changed": _changed(ra_, rb_, thr),
+                     "portfolio": rb_["portfolio"],
+                     "exposure_prev": ra_["exposure"], "exposure": rb_["exposure"],
+                     "ecl_prev": ra_["ecl"], "ecl": rb_["ecl"], "ecl_change": rb_["ecl"] - ra_["ecl"]})
+    t = pd.DataFrame(rows, columns=["customer", "from", "to", "reason now", "what changed", "portfolio",
+                                    "exposure_prev", "exposure", "ecl_prev", "ecl", "ecl_change"])
+    sel = []
+    if from_stage is not None:
+        t = t[t["from"] == int(re.sub(r"\D", "", str(from_stage)) or 0)]
+        sel.append(f"from Stage {from_stage}")
+    if to_stage is not None:
+        t = t[t["to"] == int(re.sub(r"\D", "", str(to_stage)) or 0)]
+        sel.append(f"to Stage {to_stage}")
+    if direction in ("worse", "better"):
+        t = t[(t["to"] > t["from"]) if direction == "worse" else (t["to"] < t["from"])]
+        sel.append(direction)
+    t = t.reindex(t["ecl_change"].abs().sort_values(ascending=False).index)
+    n = max(1, min(int(n or 50), 200))
+    label = " ".join(sel) or "all moves"
+    new = sorted(set(b.index) - set(a.index))
+    gone = sorted(set(a.index) - set(b.index))
+    head = (f"Customers that changed stage {ra} → {rb} ({label}): {len(t)} customers, exposure "
+            f"{_fmt(t['exposure'].sum())}, ECL {_fmt(t['ecl_prev'].sum())} → {_fmt(t['ecl'].sum())} "
+            f"(change {_fmt(t['ecl_change'].sum())}). Customers in only one run are not moves "
+            f"({len(new)} new, {len(gone)} gone). Stage 2 DPD threshold {thr:g} days.")
+    if not len(t):
+        return {"ok": True, "summary": head + "\nNo customer made that move.",
+                "table": _table(t, f"Stage moves {ra} → {rb} · {label}")}
+    reasons = (t["reason now"].str.split("; ").explode()
+               .str.replace(r"\s*\(.*\)$", "", regex=True).value_counts())
+    rs = "; ".join(f"{k}: {v}" for k, v in reasons.head(6).items())
+    return {"ok": True,
+            "summary": f"{head}\nReasons for the new stage (customers): {rs}.\n{_text(t.head(n))}",
+            "table": _table(t.head(n), f"Stage moves {ra} → {rb} · {label}"),
+            "extra_tables": ([_table(reasons.rename_axis("reason now").reset_index(name="customers"),
+                                     f"Why they are in their new stage · {label}")]
+                             if len(reasons) > 1 else [])}
+
+
+def stage_reason(run_id=None, query="", focus=None, **_) -> dict:
+    """Why a customer is in its stage: the staging rule's inputs for it and
+    the reason in words; with run_a, also what changed since that run."""
+    rid, bad = _run_or_fail(run_id, focus)
+    if bad:
+        return bad
+    q = str(query or "").strip()
+    if not q:
+        return _fail("Name the customer (id or part of the name).")
+    cv = customer_stages(rid)
+    hit = cv[cv["customer"].astype(str).str.lower() == q.lower()]
+    if not len(hit):
+        m = cv["customer"].astype(str).str.contains(re.escape(q), case=False)
+        if "name" in cv:
+            m |= cv["name"].str.contains(re.escape(q), case=False)
+        hit = cv[m]
+    if not len(hit):
+        return _fail(f"No customer matches {q!r} in {rid}.")
+    cols = [c for c in ("customer", "name", "stage", "reason", "worst_dpd", "watchlist", "restructured",
+                        "default_flag", "override_s2", "override_s3", "portfolio", "rating", "contracts",
+                        "exposure", "ecl") if c in hit]
+    t = hit[cols].head(20)
+    if len(hit) > 1:
+        return {"ok": True, "ambiguous": len(hit) > 5,
+                "summary": f"{len(hit)} customers match {q!r} in {rid}:\n{_text(t, 20)}",
+                "table": _table(t, f"Why in their stage · {rid}")}
+    r = hit.iloc[0]
+    nm = f" · {r['name']}" if r.get("name") else ""
+    return {"ok": True,
+            "summary": (f"Customer {r['customer']}{nm} is in Stage {int(r['stage'])} in {rid}. Reason: "
+                        f"{r['reason']}. Inputs: worst DPD {r['worst_dpd']:.0f} days (Stage 2 threshold "
+                        f"{_threshold(rid):g}, Stage 3 over 90); watchlist {'yes' if r['watchlist'] else 'no'}; "
+                        f"restructured {'yes' if r['restructured'] else 'no'}; default flag "
+                        f"{'yes' if r['default_flag'] else 'no'}; override "
+                        f"{'Stage 3' if r['override_s3'] else 'Stage 2' if r['override_s2'] else 'none'}. "
+                        f"Contracts {int(r['contracts'])}, exposure {_fmt(r['exposure'])}, ECL {_fmt(r['ecl'])}."),
+            "table": _table(t, f"{r['customer']}{nm} · why Stage {int(r['stage'])} · {rid}")}
 
 
 def top(run_id=None, by="customer", measure="ecl", n=10, filters=None, focus=None, **_) -> dict:
@@ -981,9 +1180,33 @@ def search_docs(query="", scope="all", k: int = 5, **_) -> dict:
         body = c.text if c.kind != "code" else c.text[:1500]
         parts.append(f"[{c.id}] {K.cite_label(c)}\n{body[:1800]}")
     return {"ok": True, "summary": "\n\n".join(parts),
-            "cites": [{"id": c.id, "label": K.cite_label(c), "kind": c.kind,
-                       "where": c.where, "source": c.source, "section": c.section, "line": c.line}
-                      for c in hits]}
+            "cites": [_doc_cite(c) for c in hits]}
+
+
+def _doc_cite(c) -> dict:
+    return {"id": c.id, "label": K.cite_label(c), "kind": c.kind, "where": c.where,
+            "source": c.source, "section": c.section, "line": c.line, "link": K.link(c)}
+
+
+def explain(query="", **_) -> dict:
+    """How something is calculated, decided or done, from the documents under
+    Help: the sections that answer it, whole -- text, formulas, worked
+    examples -- each with a link that opens it in the app. Every version the
+    documents describe (internal and external scale, Stage 1/2 and Stage 3,
+    lending and investments) comes back unless the question names one."""
+    q = str(query or "").strip()
+    if not q:
+        return _fail("Say what to explain.")
+    hits = K.explain(q, k=4)
+    if not hits:
+        return _fail(f"The user manual and the methodologies have nothing on {q!r}.")
+    parts = [f"[{c.id}] {c.title} › {c.heading} ({c.where})\n{c.text[:3500]}" for c in hits]
+    return {"ok": True,
+            "summary": ("Document sections (copy formulas from here; cover every version they "
+                        "describe unless the user named one):\n\n" + "\n\n".join(parts)),
+            "docs": [{"id": c.id, "title": c.title, "heading": c.heading, "text": c.text,
+                      "link": K.link(c)} for c in hits],
+            "cites": [_doc_cite(c) for c in hits]}
 
 
 def read_code(symbol="", **_) -> dict:
@@ -1005,7 +1228,8 @@ TOOLS = {
     "concentration": concentration_, "data_quality": data_quality,
     "validation": validation, "run_info": run_info, "config_versions": config_versions,
     "overlays": overlays, "audit": audit, "model": model, "config_file": config_file,
-    "search_docs": search_docs, "read_code": read_code,
+    "search_docs": search_docs, "read_code": read_code, "explain": explain,
+    "stage_moves": stage_moves, "stage_reason": stage_reason,
 }
 
 CATALOGUE = """\
@@ -1014,7 +1238,9 @@ DATA (run = an id like run_00002, "latest", "previous", a number, or a date like
 - breakdown(run, by, measure, filters) — by: one or two of stage, portfolio, rating, rating_type, account_type, customer, maturity_band, dpd_band, watchlist, restructured. measure: ecl, exposure, ead, overlay, contracts, customers, coverage, pd12, pd, lgd. filters: {"stage": 2, "portfolio": "Off BS"}. Two dims (e.g. ["portfolio","stage"]) give a pivot.
 - compare(run_a, run_b, by, measure, filters) — the same breakdown on two runs with change and %; run_a defaults to "previous", run_b to the focus run.
 - movement(run_a, run_b, level, member) — WHY the ECL moved (derecognised, new business, exposure, stage, rating, macro, model, LGD, overlay). level: book (default), portfolio, stage, rating, account_type, customer; with no member a level gives one row per group.
-- migration(run_a, run_b, kind) — customers moving between stages (kind=stage) or grades (kind=rating).
+- migration(run_a, run_b, kind) — counts of customers moving between stages (kind=stage) or grades (kind=rating): the matrix.
+- stage_moves(run_a, run_b, from_stage, to_stage, direction, n) — WHICH customers changed stage, each with the reason for its new stage and what changed (DPD, watchlist, restructured, default flag, override, rating), exposure and ECL before and after. direction: worse or better.
+- stage_reason(run, query) — WHY one customer is in its stage: the staging rule's inputs and the reason.
 - top(run, by, measure, n, filters) — largest customers (by=customer) or contracts by ecl or exposure.
 - customer(run, query) — one customer's contracts; query = id or part of the name.
 - staging(run) — why contracts are in Stage 2 / Stage 3, DPD by stage.
@@ -1028,5 +1254,6 @@ MODEL AND CONFIG
 - model(run) — PD model the run froze: macro variables with coefficient, weight, intercept, sd; forecast; severities; scenario weights used.
 - config_file(name, run) — a config file as the run froze it: model.yml, model_inputs.yml, collateral_types.csv, staging_thresholds.csv, ttc_pd_table.csv, master_rating_scale.csv, product_portfolio_mapping.csv, fx_rates.csv …
 KNOWLEDGE (for how/why/where questions; cite what you use)
+- explain(query) — HOW something is calculated, decided or done: the sections of the ECL methodology, stress methodology and user manual that answer it, whole, with formulas. Use this for any methodology or how-to question.
 - search_docs(query, scope) — search the user manual, ECL methodology, stress testing methodology (scope=docs), the engine code (scope=code), config (scope=config), or all. Returns passages with ids like k12.
 - read_code(symbol) — the source of an engine function or class, e.g. read_code("compute_lgd")."""

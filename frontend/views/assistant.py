@@ -185,8 +185,33 @@ def chart(ch: dict, key: str) -> None:
     st.plotly_chart(fig, use_container_width=True, key=key)
 
 
+_DMATH = re.compile(r"\$\$(.+?)\$\$", re.S)
+_ITEM = re.compile(r"^(\s*)(?:[-*•]|\d+[.)])\s+")
+
+
+def tidy_math(text: str) -> str:
+    """A formula the model wrote inside a sentence ("… factor. $$SF = …$$ This …")
+    on a line of its own, centred, the way the methodology prints it; inside a
+    numbered step it stays part of that step."""
+    out = []
+    for line in (text or "").split("\n"):
+        if "$$" not in line or line.strip().startswith("$$") and line.strip().endswith("$$") \
+                and line.strip().count("$$") == 2:
+            out.append(line)
+            continue
+        m = _ITEM.match(line)
+        pad = " " * (len(m.group(0)) if m else 0)
+        parts = _DMATH.split(line)
+        for k, part in enumerate(parts):
+            if k % 2:                                     # a formula
+                out += ["", f"{pad}$$", f"{pad}{part.strip()}", f"{pad}$$", ""]
+            elif part.strip():
+                out.append(part.rstrip() if k == 0 else f"{pad}{part.strip()}")
+    return "\n".join(out)
+
+
 def render(turn: dict, i: int, live: bool = False) -> None:
-    st.markdown(turn["content"])
+    st.markdown(tidy_math(turn["content"]))
     chk = turn.get("check") or {}
     if chk.get("removed"):
         st.caption(":material/fact_check: Parts of the reply that the run's data did not support "
@@ -198,19 +223,36 @@ def render(turn: dict, i: int, live: bool = False) -> None:
         df = _frame(t)
         if not len(df):
             continue
-        st.caption(t.get("title") or "")
-        st.dataframe(df, hide_index=True, use_container_width=True,
-                     column_config=_column_config(df), height=min(38 + 35 * len(df), 420),
-                     key=f"as_tbl_{i}_{j}")
+        box = (st.expander(f"Data: {t.get('title') or 'table'}", icon=":material/table:")
+               if t.get("collapsed") else st.container())
+        with box:
+            if not t.get("collapsed"):
+                st.caption(t.get("title") or "")
+            st.dataframe(df, hide_index=True, use_container_width=True,
+                         column_config=_column_config(df), height=min(38 + 35 * len(df), 420),
+                         key=f"as_tbl_{i}_{j}")
+    docs = turn.get("docs") or []
+    if docs:
+        st.caption("From the documents")
+        for j, d in enumerate(docs):
+            with st.expander(f"{d.get('title', '')} › {d.get('heading', '')}", icon=":material/menu_book:",
+                             expanded=False):
+                _doc_text(d.get("text") or "")
+                _open_link(d.get("link"), key=f"as_doc_{i}_{j}")
     if tables:
         st.download_button("Download as Excel", to_excel(tables, turn.get("question", "")),
                            file_name=f"assistant_answer_{i}.xlsx", key=f"as_xl_{i}",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                            icon=":material/download:")
-    if turn.get("cites"):
-        with st.expander(f"Sources ({len(turn['cites'])})", icon=":material/menu_book:"):
-            for c in turn["cites"]:
-                st.markdown(f"- **[{c['id']}]** {c['label']}")
+    cites = [c for c in turn.get("cites") or []
+             if not (c.get("link") and any(c["id"] == d.get("id") for d in docs))]
+    if cites:
+        with st.expander(f"Sources ({len(cites)})", icon=":material/link:"):
+            for j, c in enumerate(cites):
+                if c.get("link"):
+                    _open_link(c["link"], key=f"as_cite_{i}_{j}")
+                else:
+                    st.markdown(f"- **[{c['id']}]** {c['label']}")
     ask = turn.get("ask")
     if ask and ask.get("options") and i == len(history) - 1:
         cols = st.columns(min(len(ask["options"]), 3))
@@ -229,6 +271,25 @@ def render(turn: dict, i: int, live: bool = False) -> None:
                                         "arguments": str(s.get("args") or ""),
                                         "worked": "yes" if s.get("ok") else "no"} for s in turn["steps"]]),
                          hide_index=True, use_container_width=True, key=f"as_steps_{i}")
+
+
+def _doc_text(text: str) -> None:
+    """A document section as the Help page draws it: headings one level down,
+    formulas rendered, pictures from docs/."""
+    import docs_view
+    docs_view.render_section(text)
+
+
+def _open_link(link: dict | None, key: str) -> None:
+    """A button that opens the Help page at the section."""
+    if not link:
+        return
+    try:
+        st.page_link(link["page"], label=f"Open {link.get('label') or 'in Help'}",
+                     icon=":material/open_in_new:",
+                     query_params={k: v for k, v in (("ch", link.get("ch")), ("sec", link.get("sec"))) if v})
+    except Exception:                       # page not registered (a test, an old app)
+        st.caption(link.get("label") or "")
 
 
 def _queue(q: str) -> None:
@@ -282,5 +343,5 @@ if question:
                     "tables": r.get("tables") or [], "chart": r.get("chart"),
                     "cites": r.get("cites") or [], "ask": r.get("ask"),
                     "followups": r.get("followups") or [], "steps": r.get("steps") or [],
-                    "check": r.get("check") or {}})
+                    "check": r.get("check") or {}, "docs": r.get("docs") or []})
     st.rerun()

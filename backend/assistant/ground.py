@@ -189,7 +189,8 @@ _TOOL_NAMES = ("overview", "breakdown", "compare", "movement", "migration", "top
                "staging", "scenarios", "pd_curve", "concentration", "validation", "run_info",
                "search_docs", "read_code", "config_file", "aggregate", "filter_rows")
 _TOOL_TALK = re.compile(r"(\btools?[\"'`”]? page|\bnavigat\w* to the [\"'`“]?tools?|the [\"'`“]?(?:" + "|".join(_TOOL_NAMES) + r")[\"'`”]? tool|"
-                        r"\w+\s+parameter|use the tool|call the tool|run the tool)\b", re.I)
+                        r"[\"'`“]\w+[\"'`”]\s+(?:as the\s+[\"'`“]?\w+[\"'`”]?\s+)?parameter|use the tool|"
+                        r"call the tool|run the tool)", re.I)
 
 
 def tool_talk(text: str) -> list[str]:

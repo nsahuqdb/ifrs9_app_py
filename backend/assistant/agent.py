@@ -16,6 +16,7 @@ examples better than long rules.
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 
@@ -129,7 +130,7 @@ Reply with ONE JSON object and nothing else. Three moves:
   {{"action":"final","answer":"<markdown>","show":["t1"],"chart":"t1","cite":["k12"],"followups":["<question>", "..."]}}
 After a tool call you receive OBSERVATION tN. "show" lists the observations to display as tables (the app \
 draws them, with an Excel download); "chart" is the observation to plot, or null; "cite" lists passage ids \
-(k…) from search_docs or read_code that support the answer; "followups" are 2–3 short next questions.
+(k…) from explain, search_docs or read_code that support the answer; "followups" are 2–3 short next questions.
 
 TOOLS
 {tools}
@@ -141,12 +142,21 @@ If something is not available, say so and name the page that has it.
 3. Ask instead of guessing when the question is ambiguous in a way that changes the answer: which run(s), \
 which customer of several matches, which measure ("biggest" by ECL or exposure?). Do not ask when a \
 sensible default exists: focus run = {focus}; comparisons = previous run → focus run; measure = ECL.
-4. For how / why / where questions about the method or the tool, call search_docs and cite the passages. \
-For "how does the code do X", search_docs with scope "code" or read_code.
-5. Keep the answer short: the direct answer first (one or two sentences with the key figures), then at \
-most a few bullets. Do not retype a table that you list in "show"; refer to it. Amounts in QAR with \
-thousands separators; say "mln" for millions when rounding.
-6. Charts: set "chart" when a picture helps (splits, comparisons, trends, PD curves, movement). Otherwise null.
+4. For how / what-is / why questions about the METHOD or the TOOL, call explain(query) and answer from \
+the sections it returns, like a methodology expert: one sentence that answers the question; then the steps \
+in order, each with its formula copied from the section in LaTeX ($$ … $$) and one plain line on what it \
+means and which input it uses; then anything that differs. If the sections describe more than one version \
+(internal and external scale, lending and investments, Stage 1/2 and Stage 3) and the user did not name \
+one, cover EACH under its own bold heading. Say only what the sections say: no definitions, horizons or \
+claims of your own. Cite the section ids (k…). Never cite or mention code unless \
+the user asked about the code (then search_docs with scope "code" or read_code).
+5. For a question about the RUN's figures: the direct answer first (one or two sentences with the key \
+figures), then at most three bullets on what drives it -- for a "why", name the main reason or step from \
+the observation with its figure (a movement step, a stage reason, a trigger). Do not retype a table that \
+you list in "show"; refer to it. Amounts in QAR with thousands separators; say "mln" for millions when \
+rounding.
+6. The app decides whether a result is drawn as a table, a chart or both; you only list the observations \
+in "show".
 7. You are read-only: you cannot run, edit or approve. Say which page does it (e.g. Runs → Run the \
 pipeline, Governance → Management overlay, Runs → Approval queue).
 8. NEVER type a table, a list of customers with amounts, or rows of figures in "answer". The app draws \
@@ -170,10 +180,10 @@ User: which portfolio moved most between the two runs?
 OBSERVATION t1 …
 {{"action":"final","answer":"**<portfolio from t1>** moved most: ECL fell by … (…%), mainly … (…).","show":["t1"],"chart":"t1","cite":[],"followups":["Show that portfolio's movement step by step"]}}
 
-User: how is LGD calculated?
-{{"action":"tool","tool":"search_docs","args":{{"query":"LGD calculation collateral haircut floor","scope":"docs"}}}}
-OBSERVATION t1 …
-{{"action":"final","answer":"LGD = 45% × the unsecured share of the balance, with a floor of 50% of 45% (22.5%) … [k7]","show":[],"chart":null,"cite":["k7"],"followups":["What haircut does commercial property get?"]}}
+User: how is the PD calculated?
+{{"action":"tool","tool":"explain","args":{{"query":"how is the PD calculated"}}}}
+OBSERVATION t1 … sections k19 (internal scale) and k22 (external scale) …
+{{"action":"final","answer":"<one sentence answer>\\n\\n**Internal scale (lending)**\\n1. <step>: $$<formula from k19>$$ <what it means>\\n2. …\\n\\n**External scale (investments)**\\n1. <step>: $$<formula from k22>$$ <what it means>","show":[],"cite":["k19","k22"],"followups":["How are the scenario weights set?"]}}
 
 User: what is the ECL of <a name>?
 {{"action":"tool","tool":"customer","args":{{"query":"<the name>"}}}}
@@ -237,6 +247,35 @@ def _as_list(v) -> list:
     return v if isinstance(v, list) else [v]
 
 
+# How each lookup is best shown when the user has not said: "both" a chart
+# with its table, "chart" with the table folded underneath, "table" alone,
+# "auto" (a chart when a handful of groups are compared, else the table).
+VIEW = {"movement": "both", "compare": "both", "staging": "both", "scenarios": "both",
+        "migration": "both", "overview": "both", "breakdown": "auto", "pd_curve": "chart",
+        "concentration": "both", "top": "table", "stage_moves": "table", "customer": "table",
+        "stage_reason": "table", "validation": "table", "model": "table", "run_info": "table",
+        "runs": "table", "config_file": "table", "data_quality": "table", "audit": "table"}
+_WANT_CHART = re.compile(r"\b(chart|plot|graph|visual\w*|draw|diagram|trend|curve|waterfall|pie|bars?)\b", re.I)
+_WANT_TABLE = re.compile(r"\b(table|tabular|in rows|spreadsheet|excel)\b", re.I)
+_WANT_CODE = re.compile(r"\b(code|function|python|source|implementation|implemented|script|module)\b", re.I)
+
+
+def present(question: str, res: dict) -> tuple[str, bool]:
+    """(how to show a lookup, whether its chart is drawn): what the user
+    asked for, else what suits the result."""
+    has_chart = bool(res.get("chart") and (res["chart"].get("rows") or []))
+    chart_asked, table_asked = bool(_WANT_CHART.search(question or "")), bool(_WANT_TABLE.search(question or ""))
+    if chart_asked and has_chart:
+        return ("both" if table_asked else "chart"), True
+    if table_asked:
+        return "table", False
+    mode = VIEW.get(res.get("tool", ""), "table")
+    if mode == "auto":
+        n = len((res.get("chart") or {}).get("rows") or [])
+        mode = "both" if 2 <= n <= 15 else "table"
+    return mode, has_chart and mode in ("both", "chart")
+
+
 def _result(text: str, results: dict, steps: list, parsed: dict | None,
             question: str, ok: bool = True) -> dict:
     """The answer the app shows: the text, and the tool results it named --
@@ -244,37 +283,51 @@ def _result(text: str, results: dict, steps: list, parsed: dict | None,
     parsed = parsed or {}
     data_ids = [k for k, r in results.items() if r.get("ok") and r.get("table")]
     show = [str(x) for x in _as_list(parsed.get("show")) if str(x) in results]
-    chart_ref = parsed.get("chart") if "chart" in parsed else parsed.get("chart_ref")
-    if isinstance(chart_ref, dict):
-        chart_ref = chart_ref.get("ref")
     if not show and data_ids and parsed.get("action", "final") == "final":
         show = [data_ids[-1]]
-    tables = []
+    # what was looked up for the question itself is always shown
+    routed = [k for k in data_ids if results[k].get("routed")]
+    if parsed.get("action", "final") == "final":
+        show = routed + [k for k in show if k not in routed]
+    tables, chart = [], None
     for k in show:
         r = results[k]
+        mode, draw = present(question, r)
+        if draw and chart is None:
+            chart = r["chart"]
+        fold = mode == "chart" and draw
         if r.get("table"):
-            tables.append(r["table"])
-        tables += r.get("extra_tables", [])[:2] if k == show[-1] else []
-    chart = None
-    if chart_ref and str(chart_ref) in results:
-        chart = results[str(chart_ref)].get("chart")
-    if chart is None and _DATA_WORDS.search(question or ""):
+            tables.append({**r["table"], "collapsed": fold})
+        if k == show[-1]:
+            tables += [{**t, "collapsed": fold} for t in (r.get("extra_tables") or [])[:2]]
+    if chart is None and _WANT_CHART.search(question or ""):
         for k in reversed(list(results)):
             if results[k].get("chart"):
                 chart = results[k]["chart"]
                 break
+    # documents: the sections an explanation rests on, whole, with a link
+    docs, seen = [], set()
+    for r in results.values():
+        for d in r.get("docs") or []:
+            if d["id"] not in seen:
+                seen.add(d["id"])
+                docs.append(d)
     cites_all = {c["id"]: c for r in results.values() for c in (r.get("cites") or [])}
+    if not _WANT_CODE.search(question or ""):
+        # the reader checks a document, not the engine's code, unless asked
+        cites_all = {i: c for i, c in cites_all.items() if c.get("kind") != "code"} or (
+            {} if docs else cites_all)
     cites = [cites_all[c] for c in map(str, _as_list(parsed.get("cite"))) if c in cites_all]
     if not cites and cites_all:
         # it searched but did not say which passage: show what it read
-        cites = list(cites_all.values())[:3]
+        cites = list(cites_all.values())[:4]
     ask = None
     if parsed.get("action") == "ask":
         ask = {"question": parsed.get("question") or text,
                "options": [str(o) for o in _as_list(parsed.get("options"))][:6]}
     followups = [str(f) for f in _as_list(parsed.get("followups"))][:3]
     return {"ok": ok, "text": text, "tables": tables, "chart": chart, "cites": cites,
-            "ask": ask, "followups": followups, "steps": steps}
+            "docs": docs, "ask": ask, "followups": followups, "steps": steps}
 
 
 def answer(question: str, history: list[dict] | None = None,
@@ -368,7 +421,10 @@ def answer(question: str, history: list[dict] | None = None,
             parsed["question"] = text
         if not text.strip():
             have = [r["table"] for r in results.values() if r.get("ok") and r.get("table")]
-            text = (f"Here is what the lookup returned: **{have[-1].get('title') or 'the table below'}**."
+            docs = [d for r in results.values() for d in (r.get("docs") or [])]
+            text = ("The documents explain it in the sections below: "
+                    + "; ".join(f"**{d['heading']}**" for d in docs) + "." if docs and not have else
+                    f"Here is what the lookup returned: **{have[-1].get('title') or 'the table below'}**."
                     if have else
                     "I could not find that in the run data. Try asking it another way, "
                     "or open the page that shows it.")
@@ -382,6 +438,7 @@ def answer(question: str, history: list[dict] | None = None,
         tid = f"t{calls}"
         seen_calls[json.dumps([name, args], sort_keys=True, default=str)] = tid
         res = execute(name, args, run_id)
+        res["tool"] = name
         results[tid] = res
         steps.append({"id": tid, "tool": name, "args": args, "ok": bool(res.get("ok"))})
         convo.extend([{"role": "assistant", "content": raw},
@@ -394,11 +451,22 @@ def answer(question: str, history: list[dict] | None = None,
     try:
         portfolios = _portfolios(run_id)
         for name, args in route(question, history, portfolios)[:2]:
-            lookup(name, args, json.dumps({"action": "tool", "tool": name, "args": args}))
-        if results:
+            tid = lookup(name, args, json.dumps({"action": "tool", "tool": name, "args": args}))
+            results[tid]["routed"] = True
+        if any(r.get("tool") == "explain" for r in results.values()):
+            # a methodology answer is longer than a figure: room for the steps
+            cfg = dataclasses.replace(cfg, max_tokens=max(cfg.max_tokens, 2000),
+                                      timeout_seconds=max(cfg.timeout_seconds, 120))
             convo.append({"role": "user", "content":
-                          "The lookup above answers this question. Reply with action \"final\": one or "
-                          "two sentences, list it in \"show\", and do not retype its rows."})
+                          "The sections above answer this question. Reply with action \"final\" as rule 4 "
+                          "says: one sentence that answers it, then the steps with their formulas copied in "
+                          "LaTeX and a plain line each, covering every version the sections describe unless "
+                          "the question named one; cite the section ids."})
+        elif results:
+            convo.append({"role": "user", "content":
+                          "The lookup above answers this question. Reply with action \"final\": the answer "
+                          "in one or two sentences with the key figure, then up to three bullets on what "
+                          "drives it; list the lookup in \"show\" and do not retype its rows."})
     except Exception:
         pass
 

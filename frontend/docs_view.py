@@ -96,6 +96,12 @@ def _render(text: str) -> None:
     flush()
 
 
+def render_section(text: str) -> None:
+    """One section drawn the way this page draws it (used by the assistant
+    to show the passage an answer rests on)."""
+    _render(text)
+
+
 def show(stem: str, blurb: str) -> None:
     """Draw docs/<stem>.md with its chapter picker, search and downloads."""
     md_path = DOCS / f"{stem}.md"
@@ -107,6 +113,14 @@ def show(stem: str, blurb: str) -> None:
     page_setup(meta.get("title", stem), meta.get("subtitle") or blurb)
     chapters = _chapters(body)
     titles = [t for t, _ in chapters if t]
+
+    # opened from a link (the assistant's sources): ?ch=<chapter>&sec=<section>
+    S = st.session_state
+    ch_q, sec_q = st.query_params.get("ch"), st.query_params.get("sec")
+    if ch_q in titles and S.get(f"doc_{stem}_applied") != (ch_q, sec_q):
+        S[f"doc_{stem}_ch"] = ch_q
+        S[f"doc_{stem}_applied"] = (ch_q, sec_q)
+        S[f"doc_{stem}_sec"] = (ch_q, sec_q)
 
     c1, c2, c3, c4 = st.columns([4, 3, 1.4, 1.4], vertical_alignment="bottom")
     pick = c1.selectbox("Chapter", ["Whole document"] + titles, key=f"doc_{stem}_ch")
@@ -145,7 +159,17 @@ def show(stem: str, blurb: str) -> None:
         for _, text in chapters:
             _render(text)
     else:
-        _render(next(text for t, text in chapters if t == pick))
+        text = next(text for t, text in chapters if t == pick)
+        opened = S.get(f"doc_{stem}_sec")
+        if opened and opened[0] == pick and opened[1]:
+            hit = next((x for x in _sections(text)
+                        if x.lstrip().startswith(f"## {opened[1]}")), None)
+            if hit:
+                with st.container(border=True):
+                    caption(f"The section you opened: {opened[1]}")
+                    _render(hit)
+                st.divider()
+        _render(text)
         i = titles.index(pick)
         b1, b2 = st.columns(2)
 

@@ -1416,8 +1416,9 @@ number?" without opening a file.
 *Help → Assistant*
 
 Ask questions in plain language about the runs, the model, the configuration
-and how the tool works. It answers from the same figures as the pages, the
-documents under Help and the engine's code. It is read-only: it cannot run,
+and how the tool works. Figures come from the same lookups as the pages;
+explanations come from the documents under Help (the ECL methodology, the
+stress testing methodology and this manual). It is read-only: it cannot run,
 edit or approve anything, and says which page does.
 
 ![The assistant: answer, chart, table with an Excel download, follow-up questions.](images/assistant.png)
@@ -1427,23 +1428,30 @@ edit or approve anything, and says which page does.
 | Ask about | Examples |
 |---|---|
 | A run's figures | *What is the ECL by stage?* · *Show the stage split by portfolio* · *Coverage by rating for Stage 2* · *Exposure by remaining maturity* |
-| Comparing runs | *Which portfolio moved most between the two runs?* · *Why did the ECL change since the previous run?* · *How many customers moved to Stage 2?* |
+| Comparing runs | *Which portfolio moved most between the two runs?* · *Why did the ECL change since the previous run?* · *What is the difference between run 22 and run 23?* · *Rating migration* |
+| Who moved stage, and why | *Which customers moved from Stage 2 to Stage 3 in the two runs?* · *Who was downgraded to Stage 3?* · *Which customers cured?* — each customer with the reason for its new stage and what changed (DPD, watchlist, restructuring, default flag, override, rating) |
+| Why a customer is in its stage | *Why is 20235 in Stage 2?* · *Why is <name> in Stage 3?* — the staging rule's inputs for that customer and the reason |
 | Customers and contracts | *Top 10 customers by ECL* · *Show customer 20235* · *Largest contracts by exposure in Off BS* |
 | Staging, scenarios, PD | *Why are contracts in Stage 2?* · *ECL under each scenario* · *Plot the PD curves for QDB 3, QDB 5 and QDB 7* |
 | Model and configuration | *What are the MEV coefficients?* · *What haircut does commercial property get?* · *What scenario weights did this run use?* |
 | Governance | *Which validation checks failed?* · *Who approved this run?* · *Which overlays are approved?* · *List the config versions* |
-| How the tool and method work | *How is LGD calculated?* · *How do I approve an overlay?* · *How does the code compute the ECL?* |
+| How the method works | *How is the PiT PD calculated?* · *How is LGD calculated?* · *How is Stage 2 decided?* · *What is the exposure cap?* — the steps with their formulas, and every version the documents describe (internal and external scale, lending and investments) unless you name one |
+| How the tool works | *How do I approve an overlay?* · *How do I run the ECL?* |
+| The code (only when asked) | *Where is the function that computes LGD?* |
 
 **What an answer contains**
 
 - **The answer** in a few sentences, with the key figures.
-- **A chart** when it helps (splits, comparisons, movement as a waterfall,
-  PD curves). It is drawn from the lookup's own numbers.
-- **Tables** of the figures behind the answer, exactly as computed, with
-  **Download as Excel** (one sheet per table, numbers as numbers).
-- **Sources** — the document sections or code it relied on, e.g. *IFRS 9 ECL
-  methodology › 9. Loss given default (Help → ECL methodology)* or
-  *ifrs9qdb/calc_book.py:860 `_lgd`*. Open the Help page named to read more.
+- **A chart, a table or both**, chosen for the result: a chart with its table
+  for splits, comparisons and the movement (a waterfall); the chart with the
+  table folded under it for PD curves; a table alone for lists of customers,
+  one customer and validation results. Say *as a table* or *as a chart* to
+  choose yourself. Both are drawn from the lookup's own numbers; every table
+  has **Download as Excel** (one sheet per table, numbers as numbers).
+- **From the documents** — for a methodology or how-to question, the
+  sections the answer rests on, whole (text, formulas, worked examples), each
+  with a button that opens the Help page at that section, highlighted at the
+  top. Engine code is cited only when you ask about the code.
 - **Ask next** — two or three follow-up questions; click one to ask it.
 - **How this was looked up** — every lookup with its arguments, so any figure
   can be traced.

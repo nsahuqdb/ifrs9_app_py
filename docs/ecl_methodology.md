@@ -312,7 +312,12 @@ SF = 0.3159.
 
 ## 7.4 Point-in-time PD and reversion to TTC
 
-For a grade with TTC PD $p$, the yearly PD in the five forecast years is
+This is the point-in-time (PiT) PD of the **internal scale** (lending, QDB
+grades). Externally rated investments get their PiT PD from the external
+model in section 7.7, which uses a different formula.
+
+For a grade with TTC (through-the-cycle) PD $p$ and the scenario's scaling
+factor $\text{SF}_{s,y}$ of section 7.3, the yearly PD in the five forecast years is
 
 $$
 \text{PD}_{s,y} = \Phi\!\big(\Phi^{-1}(p) + \text{SF}_{s,y}\big),\qquad y = 1 \dots 5
@@ -375,7 +380,9 @@ fractions against a history in percentage points.
 
 ## 7.7 The external model (investments)
 
-Externally rated holdings follow **GCC real GDP growth**:
+This is the point-in-time (PiT) PD of the **external scale** (investments and
+banks rated by an agency). Lending uses the internal model of sections
+7.1–7.6. Externally rated holdings follow **GCC real GDP growth**:
 
 - **History:** each year's growth of the six GCC countries, weighted by each
   country's nominal GDP that year, from 1982, with at least two countries a

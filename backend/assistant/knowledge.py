@@ -27,16 +27,62 @@ HELP_PAGES = {
     "stress_testing_methodology": "Help → Stress testing methodology",
 }
 
+# The app page that shows each document (for a link that opens it there).
+HELP_PAGE_FILES = {
+    "user_manual": "frontend/views/help_manual.py",
+    "ecl_methodology": "frontend/views/help_ecl.py",
+    "stress_testing_methodology": "frontend/views/help_stress.py",
+}
+
 _STOP = set("""a an and are as at be by for from has have how i if in into is it
 its of on or that the their then there these this to was were what when where
 which who why will with does do can our we you your show me give list tell""".split())
 
 
+_IRREGULAR = {"stage": "stag", "staging": "stag", "staged": "stag", "stages": "stag",
+              "running": "run", "ran": "run", "runs": "run", "rerun": "run",
+              "approving": "approv", "approve": "approv", "approved": "approv", "approval": "approv"}
+
+
 def _stem(w: str) -> str:
+    if w in _IRREGULAR:
+        return _IRREGULAR[w]
     for suf in ("ations", "ation", "ings", "ing", "ies", "ied", "es", "ed", "s"):
         if len(w) > len(suf) + 2 and w.endswith(suf):
             return w[: -len(suf)] + ("y" if suf in ("ies", "ied") else "")
     return w
+
+
+# Abbreviations and the words the documents use for them. A question in
+# shorthand ("how is pit pd done") then finds the section that spells it out.
+SYNONYMS = {
+    "pit": "point in time", "ttc": "through the cycle ttc", "lgd": "loss given default lgd",
+    "ead": "exposure at default ead", "ecl": "expected credit loss ecl provision",
+    "pd": "probability of default pd", "sicr": "significant increase credit risk staging stage 2",
+    "mev": "macro variable macroeconomic", "mevs": "macro variable macroeconomic",
+    "lrdr": "long run default rate lrdr", "sf": "scaling factor", "asrf": "basel asrf",
+    "dpd": "days past due dpd", "eir": "effective interest rate eir",
+    "ccf": "credit conversion factor off balance", "fli": "forward looking macro scenario",
+    "mef": "macro economic forecast scenario", "gdp": "gdp growth", "rwa": "risk weight",
+    "s1": "stage 1", "s2": "stage 2", "s3": "stage 3", "ifrs9": "ifrs 9",
+    "haircut": "haircut collateral", "collateral": "collateral haircut loss given default", "overlay": "management overlay",
+    "override": "override during the run", "cure": "cure probation",
+}
+
+
+GENERIC = set("""calculat calculate comput compute decid decide determin determine work done
+deriv derive use used mean explain method methodology formula get got happen way does
+calculated computed decided determined derived works""".split())
+
+
+def expand(query: str) -> str:
+    """The question with each known abbreviation followed by its words."""
+    out = []
+    for w in re.findall(r"[A-Za-z0-9]+|\S", str(query)):
+        out.append(w)
+        if w.lower() in SYNONYMS:
+            out.append(SYNONYMS[w.lower()])
+    return " ".join(out)
 
 
 def tokens(text: str) -> list[str]:
@@ -62,6 +108,8 @@ class Chunk:
     text: str
     line: int = 1
     where: str = ""      # where to open it in the app (for documents)
+    chapter: str = ""    # the document's top-level heading the section sits in
+    heading: str = ""    # the section's own heading
     toks: list[str] = field(default_factory=list, repr=False)
 
 
@@ -91,7 +139,8 @@ def _doc_chunks(path: Path) -> list[Chunk]:
         if text and not re.fullmatch(r"#+ .*", text):
             sec = " › ".join(head) if head else title
             out.append(Chunk("", "doc", path.stem, title, sec, text, start,
-                             HELP_PAGES.get(path.stem, f"docs/{path.name}")))
+                             HELP_PAGES.get(path.stem, f"docs/{path.name}"),
+                             chapter=head[0] if head else "", heading=head[-1] if head else ""))
 
     for i, line in enumerate(lines, 1):
         if line.lstrip().startswith(("```", "~~~")):
@@ -186,9 +235,23 @@ class Index:
 
     def search(self, query: str, kinds: tuple[str, ...] = ("doc", "code", "config"),
                k: int = 5) -> list[tuple[float, Chunk]]:
-        q = tokens(query)
+        q = tokens(expand(query))
+        # "how is X calculated / decided / done": the verb says nothing about
+        # where the answer is; leave it out unless it is all there is
+        content = [t for t in q if t not in GENERIC]
+        q = content or q
         if not q:
             return []
+        # what was asked, one group per word with its spelled-out form, for
+        # the heading match ("pit" counts once whether the heading says PiT
+        # or point-in-time)
+        groups = []
+        for w in tokens(query):
+            if w in GENERIC:
+                continue
+            g = set(tokens(w + " " + SYNONYMS.get(w, ""))) - GENERIC
+            if g and g not in groups:
+                groups.append(g)
         scored = []
         for c, tf in zip(self.chunks, self.tf):
             if c.kind not in kinds:
@@ -202,6 +265,11 @@ class Index:
                 s += idf * f * (self.k1 + 1) / (
                     f + self.k1 * (1 - self.b + self.b * len(c.toks) / self.avg))
             if s > 0:
+                # a heading that names what was asked is the best sign the
+                # section is about it ("10.3 Stage 3" for "stage 3 ecl")
+                head = set(tokens(c.section))
+                if groups:
+                    s *= 0.6 + 2.0 * sum(bool(g & head) for g in groups) / len(groups)
                 # the documents explain; the code shows how. For a question that
                 # could be either, the explanation comes first.
                 scored.append((s * (1.35 if c.kind == "doc" else 1.0), c))
@@ -273,3 +341,60 @@ def cite_label(c: Chunk) -> str:
     if c.kind == "code":
         return f"{c.source}:{c.line} `{c.section}`"
     return c.title
+
+
+def link(c: Chunk) -> dict | None:
+    """Where a document section opens in the app: the Help page, its chapter
+    and the section, as query parameters the page reads."""
+    page = HELP_PAGE_FILES.get(c.source) if c.kind == "doc" else None
+    if not page:
+        return None
+    return {"page": page, "ch": c.chapter, "sec": c.heading,
+            "label": f"{c.title} › {c.heading or c.chapter}"}
+
+
+def explain(query: str, k: int = 4) -> list[Chunk]:
+    """The document sections that answer a how/what/why question, whole (with
+    their formulas and worked examples), best first. Every section that scores
+    close to the best is kept, so a question that has two answers -- the
+    internal and the external PD, lending and investments, Stage 1/2 and
+    Stage 3 -- gets both unless it names one."""
+    hits = [(sc, c) for sc, c in index().search(query, ("doc",), k=30)
+            if c.source in HELP_PAGE_FILES]
+    if not hits:
+        return []
+    best = hits[0][0]
+    keep = [c for s, c in hits if s >= 0.45 * best]
+    # a chapter's opening lines only when none of its sections made it
+    secs = {(c.source, c.chapter) for c in keep if c.heading != c.chapter}
+    keep = [c for c in keep if c.heading != c.chapter or (c.source, c.chapter) not in secs
+            or len(c.text) > 400]
+    # the user manual explains the screens; the methodologies explain the
+    # numbers. For a question about a number the methodology comes first.
+    how_to = re.search(r"\b(page|screen|button|click|where do i|how do i|how can i|upload|approve|"
+                       r"run (?:a|the)|open|download|enter|create)\b", query, re.I)
+    order = ({"user_manual": 0, "ecl_methodology": 1, "stress_testing_methodology": 2} if how_to else
+             {"ecl_methodology": 0, "stress_testing_methodology": 1, "user_manual": 2})
+    keep.sort(key=lambda c: order.get(c.source, 3))
+    # a section that sends the reader to another ("... in section 7.7") brings
+    # it along: that is where the other half of the answer is
+    if keep:
+        top = keep[0]
+        by_num = {re.match(r"(\d+(?:\.\d+)?)\s", c.heading).group(1): c
+                  for c in index().chunks if c.kind == "doc" and c.source == top.source
+                  and re.match(r"\d+(?:\.\d+)?\s", c.heading or "")}
+        for num in re.findall(r"\bsections? (\d+\.\d+)\b", top.text)[:2]:
+            c = by_num.get(num)
+            if c is not None and c not in keep:
+                keep.insert(1, c)
+    out, seen = [], set()
+    for c in keep:
+        if (c.source, c.heading) in seen or not c.heading:
+            continue
+        seen.add((c.source, c.heading))
+        out.append(c)
+    out = out[:k]
+    # read in the document's own order: 7.3 before 7.4, the methodology
+    # before the manual
+    out.sort(key=lambda c: (order.get(c.source, 3), c.line))
+    return out

@@ -516,7 +516,20 @@ class TestRouter:
         ("what are the MEV coefficients?", "model", {}),
         ("which validation checks failed?", "validation", {"only_failures": True}),
         ("Plot the PD curves for QDB 3, QDB 5 and QDB 7", "pd_curve", {"ratings": ["QDB 3", "QDB 5", "QDB 7"]}),
-        ("How is LGD calculated?", "search_docs", {}),
+        ("How is LGD calculated?", "explain", {}),
+        ("How pit pd is calculated", "explain", {}),
+        ("which customers moved from stage 2 to stage 3 in 2 runs", "stage_moves", {"from_stage": 2, "to_stage": 3}),
+        ("which customers moved from stage 2 to stage 3 between run 22 and run 23", "stage_moves",
+         {"run_a": "run_00022", "run_b": "run_00023"}),
+        ("why is 20002 in stage 2", "stage_reason", {"query": "20002"}),
+        ("why is Al Waha Trading in stage 2", "stage_reason", {"query": "Al Waha Trading"}),
+        ("why are customers in stage 2", "staging", {}),
+        ("what is the difference between run 22 and run 23", "compare", {"run_a": "run_00022"}),
+        ("which customers cured", "stage_moves", {"direction": "better"}),
+        ("rating migration", "migration", {"kind": "rating"}),
+        ("where is the function that computes lgd", "search_docs", {"scope": "code"}),
+        ("what are the scenario weights", "scenarios", {}),
+        ("how are scenario weights set", "explain", {}),
         ("what is the total provision?", "overview", {}),
         ("how much is stage 3 ECL in Tasdeer", "breakdown", {"filters": {"stage": 3, "portfolio": "Tasdeer"}}),
         ("how many customers in stage 3", "breakdown", {"measure": "customers"}),
@@ -590,3 +603,112 @@ class TestAlternation:
             roles = [m["role"] for m in msgs if m["role"] != "system"]
             assert roles[0] == "user" and roles[-1] == "user"
             assert all(a != b for a, b in zip(roles, roles[1:])), roles
+
+
+class TestExplain:
+    """24 Nov 2026: "How pit pd is calculated" got one line on the external
+    PD and three code references. A methodology answer comes from the
+    documents, whole, covers every version, and links to the section."""
+
+    def test_pit_pd_brings_the_internal_and_the_external_model_and_the_factor(self):
+        from backend.assistant.knowledge import explain
+        heads = [c.heading for c in explain("How pit pd is calculated")]
+        assert heads[:3] == ["7.3 Scaling factor", "7.4 Point-in-time PD and reversion to TTC",
+                             "7.7 The external model (investments)"]
+
+    @pytest.mark.parametrize("q,want", [
+        ("how is lgd calculated", "9. Loss given default"),
+        ("how is stage 2 decided", "6.1 The rule"),
+        ("how is stage 3 ecl calculated", "10.3 Stage 3"),
+        ("what is the exposure cap", "10.2 The exposure cap"),
+        ("how is EAD calculated for off balance", "8.3 Off-balance products"),
+        ("how are scenario weights set", "7.6 Scenario weights (internal scale)"),
+        ("how do I approve an overlay", "9.5 Mark tested, approve, copy"),
+        ("what is contagion", "6.1 The rule"),
+    ])
+    def test_the_section_that_answers_comes_back(self, q, want):
+        from backend.assistant.knowledge import explain
+        assert want in [c.heading for c in explain(q)]
+
+    def test_only_the_help_documents_never_the_engine_notes(self):
+        from backend.assistant.knowledge import HELP_PAGE_FILES, explain
+        for q in ("how is lgd calculated", "what is the scaling factor", "how is the ecl discounted"):
+            assert all(c.source in HELP_PAGE_FILES for c in explain(q))
+
+    def test_each_section_links_to_its_help_page(self):
+        from backend.assistant.semantic import explain
+        r = explain("How pit pd is calculated")
+        assert r["ok"] and len(r["docs"]) == 3
+        for d in r["docs"]:
+            assert d["link"]["page"] == "frontend/views/help_ecl.py"
+            assert d["link"]["ch"] == "7. Probability of default" and d["link"]["sec"] == d["heading"]
+            assert "$$" in d["text"]
+
+    def test_the_answer_cites_documents_not_code(self, monkeypatch):
+        import json as _json
+        import backend.assistant.agent as agent
+        ok = _json.dumps({"action": "final", "answer": "Two models, below.", "cite": ["k1"]})
+        monkeypatch.setattr(agent, "chat", _Stub([ok]))
+        cfg = AssistantConfig(enabled=True, endpoint="http://stub", model="stub", max_tool_calls=4)
+        r = agent.answer("How pit pd is calculated", cfg=cfg)
+        assert r["steps"][0]["tool"] == "explain"
+        assert r["docs"] and all(c.get("kind") == "doc" for c in r["cites"])
+        assert all(c.get("link") for c in r["cites"])
+
+    def test_formulas_and_risk_parameter_are_not_tool_talk(self):
+        from backend.assistant.ground import tool_talk
+        assert tool_talk("It uses a risk parameter (R) and $$R = 0.24 - 0.12$$.") == []
+        assert tool_talk('specify "customer" as the "by" parameter') != []
+
+
+class TestStageMoves:
+    @needs_run
+    def test_who_moved_from_2_to_3_and_why(self):
+        from backend.assistant.agent import execute
+        r = execute("stage_moves", {"from_stage": 2, "to_stage": 3}, RUN)
+        assert r["ok"]
+        rows = r["table"]["rows"]
+        assert rows and all(x["from"] == 2 and x["to"] == 3 for x in rows)
+        assert all(x["reason now"] and x["what changed"] for x in rows)
+        # the ECL change is the difference of the two runs' ECL
+        for x in rows:
+            assert abs(x["ecl_change"] - (x["ecl"] - x["ecl_prev"])) < 1e-6
+
+    @needs_run
+    def test_why_one_customer_is_in_its_stage(self):
+        from backend.assistant.agent import execute
+        from backend.assistant.semantic import customer_stages
+        cv = customer_stages(RUN)
+        s2 = cv[cv["stage"] == 2].iloc[0]
+        r = execute("stage_reason", {"query": str(s2["customer"])}, RUN)
+        assert r["ok"] and f"Stage 2" in r["summary"] and s2["reason"] in r["summary"]
+
+    @needs_run
+    def test_every_stage_2_and_3_customer_has_a_reason(self):
+        from backend.assistant.semantic import customer_stages
+        cv = customer_stages(RUN)
+        bad = cv[(cv["stage"] >= 2) & cv["reason"].str.startswith("No ")]
+        assert len(bad) == 0, bad[["customer", "stage", "reason"]].head().to_dict("records")
+
+
+class TestPresentation:
+    """The app picks table, chart or both unless the user says."""
+
+    @staticmethod
+    def _show(question, tool, chart=True, rows=5):
+        from backend.assistant.agent import present
+        res = {"tool": tool, "table": {"rows": [{}] * rows},
+               "chart": {"rows": [{}] * rows} if chart else None}
+        return present(question, res)
+
+    def test_defaults(self):
+        assert self._show("ecl by stage", "breakdown") == ("both", True)
+        assert self._show("why did the ecl change", "movement") == ("both", True)
+        assert self._show("top 10 customers", "top") == ("table", False)
+        assert self._show("pd curves for QDB 3", "pd_curve") == ("chart", True)
+        assert self._show("ecl by customer", "breakdown", rows=40) == ("table", False)
+
+    def test_what_the_user_asks_for_wins(self):
+        assert self._show("top 10 customers as a chart", "top") == ("chart", True)
+        assert self._show("ecl by stage as a table", "breakdown") == ("table", False)
+        assert self._show("ecl by stage, table and chart", "breakdown") == ("both", True)
