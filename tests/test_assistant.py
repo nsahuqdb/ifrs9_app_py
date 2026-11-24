@@ -856,3 +856,76 @@ class TestPortfolioChapter:
         ports = pd.read_csv(Path(ifrs9qdb.__file__).resolve().parent / "static" / "portfolios.csv")
         for p in ports["portfolio_code"]:
             assert f"## 16." in doc and f" {p}\n" in doc.replace("## 16.", "\n## 16."), p
+
+
+class TestFormulasAndLinks:
+    """24 Nov 2026: formulas came out broken ("ight),qquad R ... rac{...}")
+    because "\\right" and "\\frac" in the model's JSON were read as a carriage
+    return and a form feed; sources could not be opened."""
+
+    def test_latex_in_the_models_json_survives(self):
+        from backend.assistant.agent import extract_json
+        raw = (r'{"action":"final","answer":"$$ \text{SF} = \Phi^{-1}(p) \right) \frac{1}{2} '
+               r'\hat g_y + z_s\,\sigma $$\nNext line with \"quotes\" and café"}')
+        got = extract_json(raw)["answer"]
+        for s in (r"\text{SF}", r"\Phi^{-1}", r"\right)", r"\frac{1}{2}", r"\hat g", r"z_s\,\sigma"):
+            assert s in got, s
+        assert "\nNext line" in got and '"quotes"' in got and "café" in got
+        assert "\r" not in got and "\x0c" not in got and "\t" not in got
+
+    def test_correctly_doubled_latex_and_markdown_escapes_still_work(self):
+        from backend.assistant.agent import extract_json
+        assert extract_json(r'{"answer":"\\frac{a}{b} and \\Phi"}')["answer"] == r"\frac{a}{b} and \Phi"
+        assert extract_json(r'{"action":"tool","tool":"model\_spec","args":{}}')["tool"] == "model_spec"
+
+    def test_citations_become_links_to_the_document_section(self):
+        from backend.assistant.links import linkify
+        cites = {"k19": {"id": "k19", "kind": "doc", "source": "ecl_methodology",
+                         "link": {"page": "frontend/views/help_ecl.py", "ch": "7. Probability of default",
+                                  "sec": "7.4 Point-in-time PD and reversion to TTC", "label": "x"}}}
+        out = linkify("The PD for years 1 to 5 [k19].", cites)
+        assert "[§7.4 ↗](/help_ecl?ch=7.%20Probability%20of%20default&sec=7.4%20Point-in-time" in out
+
+    def test_regulatory_references_become_links_every_time(self):
+        from backend.assistant.links import OFFICIAL, linkify
+        out = linkify("Cash 0% [CRE22.49; CRE32.11]; currency mismatch 8% (CRE22.52); default B5.5.37.")
+        assert out.count(OFFICIAL["CRE22"][1]) == 2 and OFFICIAL["CRE32"][1] in out
+        assert OFFICIAL["IFRS9"][1] in out
+        assert "[[" not in out                       # the model's brackets are gone
+
+    def test_the_users_own_copy_is_preferred(self):
+        from backend.assistant.links import linkify
+        out = linkify("See CRE22.49 and QCB Circular 9/2017.",
+                      files=["Basel/CRE22.pdf", "QCB/Circular 9-2017 IFRS 9.pdf"])
+        assert "regfile://Basel/CRE22.pdf" in out and "regfile://QCB/Circular%209-2017%20IFRS%209.pdf" in out
+
+    def test_a_regulatory_page_citation_opens_the_file_at_the_page(self):
+        from backend.assistant.links import cite_url
+        lab, url = cite_url({"kind": "reg", "where": "docs/regulatory/QCB/rules.pdf", "section": "page 12"})
+        assert url == "regfile://QCB/rules.pdf#page=12"
+
+    def test_the_backend_serves_only_files_in_the_folder(self, tmp_path, monkeypatch):
+        from fastapi.testclient import TestClient
+        from backend.assistant import regulatory as R
+        from backend.main import app
+        (tmp_path / "QCB").mkdir()
+        (tmp_path / "QCB" / "rules.pdf").write_bytes(b"%PDF-1.4 test")
+        monkeypatch.setattr(R, "REG_DIR", tmp_path)
+        c = TestClient(app)
+        r = c.get("/api/regulatory/file/QCB/rules.pdf")
+        assert r.status_code == 200 and r.headers["content-type"] == "application/pdf"
+        assert "inline" in r.headers["content-disposition"]
+        assert c.get("/api/regulatory/file/../secret.txt").status_code == 404
+
+    def test_benchmark_rows_carry_a_link_to_each_source(self):
+        from backend.assistant.semantic import benchmark
+        t = benchmark("collateral")["table"]
+        row = t["rows"][0]
+        assert row["Basel source"].startswith("https://www.bis.org/")
+
+    def test_methodology_answers_show_the_sections_and_the_model_writes_no_formulas(self):
+        import backend.assistant.agent as agent
+        from backend.assistant.semantic import explain
+        p = agent._system_prompt("S", None)
+        assert "Do NOT write formulas" in p
+        assert all(d["kind"] == "section" for d in explain("How pit pd is calculated")["docs"])

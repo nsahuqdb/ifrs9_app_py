@@ -70,6 +70,11 @@ _PCT = re.compile(r"(%|coverage)", re.I)
 def _column_config(df: pd.DataFrame) -> dict:
     cfg = {}
     for c in df.columns:
+        vals = df[c].dropna().astype(str)
+        if len(vals) and vals.str.match(r"^(https?://|regfile://)").all():
+            df[c] = df[c].map(lambda v: _urls(v) if isinstance(v, str) else v)
+            cfg[c] = st.column_config.LinkColumn(c, display_text="Open ↗")
+            continue
         if pd.api.types.is_numeric_dtype(df[c]):
             if _PCT.search(str(c)):
                 cfg[c] = st.column_config.NumberColumn(format="%.2f%%")
@@ -211,8 +216,14 @@ def tidy_math(text: str) -> str:
     return "\n".join(out)
 
 
+def _urls(text: str) -> str:
+    """A file in docs/regulatory is served by the backend; the answer names it
+    regfile://<path>."""
+    return (text or "").replace("regfile://", f"{api.BACKEND.rstrip('/')}/api/regulatory/file/")
+
+
 def render(turn: dict, i: int, live: bool = False) -> None:
-    st.markdown(tidy_math(turn["content"]))
+    st.markdown(tidy_math(_urls(turn["content"])))
     chk = turn.get("check") or {}
     if chk.get("removed"):
         st.caption(":material/fact_check: Parts of the reply that the run's data did not support "
@@ -233,32 +244,36 @@ def render(turn: dict, i: int, live: bool = False) -> None:
                          column_config=_column_config(df), height=min(38 + 35 * len(df), 420),
                          key=f"as_tbl_{i}_{j}")
     docs = turn.get("docs") or []
-    if docs:
-        st.caption("From the documents")
-        for j, d in enumerate(docs):
-            with st.expander(f"{d.get('title', '')} › {d.get('heading', '')}", icon=":material/menu_book:",
-                             expanded=False):
+    sections = [d for d in docs if d.get("kind", "section") == "section"]
+    passages = [d for d in docs if d.get("kind") == "passage"]
+    # a methodology answer: the document sections themselves, in full, each
+    # with a link that opens the document there (in a new tab)
+    for j, d in enumerate(sections):
+        with st.container(border=True):
+            url = _section_url(d.get("link"))
+            st.markdown(f"**{d.get('title', '')} › {d.get('heading', '')}**"
+                        + (f" &nbsp;·&nbsp; [Open in the document ↗]({url})" if url else ""))
+            body = d.get("text") or ""
+            if body.lstrip().startswith("#"):          # its heading is the line above
+                body = body.lstrip().split("\n", 1)[1] if "\n" in body.lstrip() else ""
+            _doc_text(body)
+    # regulatory passages: folded, each with its link
+    if passages:
+        with st.expander(f"Passages ({len(passages)})", icon=":material/gavel:"):
+            for j, d in enumerate(passages):
+                url = _section_url(d.get("link")) or (
+                    _urls("regfile://" + d["file"].removeprefix("docs/regulatory/")
+                          + _page_anchor(d.get("heading"))) if d.get("file") else None)
+                st.markdown(f"**{d.get('title', '')} › {d.get('heading', '')}**"
+                            + (f" &nbsp;·&nbsp; [Open ↗]({url})" if url else ""))
                 if d.get("file"):
-                    st.caption(f"{d['file']} · {d.get('heading', '')}")
-                    st.text(d.get("text") or "")
-                    _file_button(d["file"], key=f"as_file_{i}_{j}")
+                    st.text((d.get("text") or "")[:3000])
                 else:
                     _doc_text(d.get("text") or "")
-                _open_link(d.get("link"), key=f"as_doc_{i}_{j}")
-    if tables:
-        st.download_button("Download as Excel", to_excel(tables, turn.get("question", "")),
-                           file_name=f"assistant_answer_{i}.xlsx", key=f"as_xl_{i}",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                           icon=":material/download:")
-    cites = [c for c in turn.get("cites") or []
-             if not (c.get("link") and any(c["id"] == d.get("id") for d in docs))]
-    if cites:
-        with st.expander(f"Sources ({len(cites)})", icon=":material/link:"):
-            for j, c in enumerate(cites):
-                if c.get("link"):
-                    _open_link(c["link"], key=f"as_cite_{i}_{j}")
-                else:
-                    st.markdown(f"- **[{c['id']}]** {c['label']}")
+    srcs = turn.get("sources") or []
+    if srcs:
+        st.markdown("**Sources** &nbsp; " + " &nbsp;·&nbsp; ".join(
+            f"[{s_['label']} ↗]({_urls(s_['url'])})" for s_ in srcs))
     ask = turn.get("ask")
     if ask and ask.get("options") and i == len(history) - 1:
         cols = st.columns(min(len(ask["options"]), 3))
@@ -284,6 +299,21 @@ def _doc_text(text: str) -> None:
     formulas rendered, pictures from docs/."""
     import docs_view
     docs_view.render_section(text)
+
+
+def _section_url(link: dict | None) -> str | None:
+    """/help_ecl?ch=..&sec=..: a Help document at a section."""
+    from urllib.parse import quote
+    if not link or not link.get("page"):
+        return None
+    stem = link["page"].rsplit("/", 1)[-1].removesuffix(".py")
+    q = "&".join(f"{k}={quote(str(v))}" for k, v in (("ch", link.get("ch")), ("sec", link.get("sec"))) if v)
+    return f"/{stem}" + (f"?{q}" if q else "")
+
+
+def _page_anchor(heading) -> str:
+    m = re.search(r"(\d+)", str(heading or ""))
+    return f"#page={m.group(1)}" if m else ""
 
 
 def _open_link(link: dict | None, key: str) -> None:
@@ -359,5 +389,6 @@ if question:
                     "tables": r.get("tables") or [], "chart": r.get("chart"),
                     "cites": r.get("cites") or [], "ask": r.get("ask"),
                     "followups": r.get("followups") or [], "steps": r.get("steps") or [],
-                    "check": r.get("check") or {}, "docs": r.get("docs") or []})
+                    "check": r.get("check") or {}, "docs": r.get("docs") or [],
+                    "sources": r.get("sources") or []})
     st.rerun()

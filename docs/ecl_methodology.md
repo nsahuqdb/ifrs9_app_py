@@ -404,7 +404,9 @@ banks rated by an agency). Lending uses the internal model of sections
   R = 0.24 - 0.12\,\frac{1-e^{-50p}}{1-e^{-50}}
   $$
 
-  The factor is subtracted, so weaker growth gives a higher PD. After the
+  $R$ is the asset correlation of the Basel IRB formula for corporate
+  exposures: 24% for the lowest PDs, falling to 12% as the PD rises. The
+  factor is subtracted, so weaker growth gives a higher PD. After the
   forecast years the PD reverts to TTC as in section 7.4.
 - **Weights:** one set per forecast year from that year's regional forecast
   (`mode: auto`), with maturities after the forecast years using the average of

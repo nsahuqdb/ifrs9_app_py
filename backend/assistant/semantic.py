@@ -1202,10 +1202,11 @@ def explain(query="", **_) -> dict:
         return _fail(f"The user manual and the methodologies have nothing on {q!r}.")
     parts = [f"[{c.id}] {c.title} › {c.heading} ({c.where})\n{c.text[:3500]}" for c in hits]
     return {"ok": True,
-            "summary": ("Document sections (copy formulas from here; cover every version they "
-                        "describe unless the user named one):\n\n" + "\n\n".join(parts)),
+            "summary": ("Document sections (the app shows them in full, with their formulas, under the "
+                        "answer: explain them in plain words; cover every version they describe unless "
+                        "the user named one):\n\n" + "\n\n".join(parts)),
             "docs": [{"id": c.id, "title": c.title, "heading": c.heading, "text": c.text,
-                      "link": K.link(c)} for c in hits],
+                      "link": K.link(c), "kind": "section"} for c in hits],
             "cites": [_doc_cite(c) for c in hits]}
 
 
@@ -1252,6 +1253,17 @@ def benchmark(topic="", run_id=None, focus=None, **_) -> dict:
     rows = R.benchmark_rows(q, t or "all")
     df = pd.DataFrame(rows)
     df = df[[c for c in df.columns if c != "topic" and (df[c].astype(str).str.strip() != "").any()]]
+    # each reference opens its source (the user's copy in docs/regulatory first)
+    from .links import first_url
+    try:
+        files = [p.relative_to(R.REG_DIR).as_posix() for p in R.folder_files()]
+    except Exception:
+        files = []
+    for ref in ("Basel ref", "IFRS 9 ref", "QCB ref"):
+        if ref in df:
+            urls = df[ref].map(lambda v: first_url(str(v), files))
+            if urls.notna().any():
+                df.insert(df.columns.get_loc(ref) + 1, ref.replace(" ref", " source"), urls)
     head = (f"QDB's settings ({where}) beside the benchmarks{'' if not t or t == 'all' else ' · ' + t}. "
             "Basel values are capital rules, used as a reference point; IFRS 9 sets principles, not "
             "numbers; QCB values come from the methodology pack's quotes of Circular 9/2017 and KPMG's "
@@ -1311,7 +1323,7 @@ def regulation(query="", k: int = 5, **_) -> dict:
         docs.append({"id": c.id, "title": c.title if c.kind == "doc" else c.source,
                      "heading": c.heading if c.kind == "doc" else c.section, "text": c.text,
                      "link": K.link(c) if c.kind == "doc" else None,
-                     "file": c.where if c.kind == "reg" else None})
+                     "file": c.where if c.kind == "reg" else None, "kind": "passage"})
     have = "; ".join(f"{d['document']}" + (f" ({d['problem']})" if d["problem"] else "")
                      for d in listing) or "none"
     return {"ok": True,

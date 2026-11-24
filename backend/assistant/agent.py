@@ -142,14 +142,16 @@ If something is not available, say so and name the page that has it.
 3. Ask instead of guessing when the question is ambiguous in a way that changes the answer: which run(s), \
 which customer of several matches, which measure ("biggest" by ECL or exposure?). Do not ask when a \
 sensible default exists: focus run = {focus}; comparisons = previous run → focus run; measure = ECL.
-4. For how / what-is / why questions about the METHOD or the TOOL, call explain(query) and answer from \
-the sections it returns, like a methodology expert: one sentence that answers the question; then the steps \
-in order, each with its formula copied from the section in LaTeX ($$ … $$) and one plain line on what it \
-means and which input it uses; then anything that differs. If the sections describe more than one version \
-(internal and external scale, lending and investments, Stage 1/2 and Stage 3) and the user did not name \
-one, cover EACH under its own bold heading. Say only what the sections say: no definitions, horizons or \
-claims of your own. Cite the section ids (k…). Never cite or mention code unless \
-the user asked about the code (then search_docs with scope "code" or read_code).
+4. For how / what-is / why questions about the METHOD or the TOOL, call explain(query). The app shows \
+the sections it returns IN FULL under your answer -- text, formulas, worked examples -- each with a link \
+that opens the document at that section. Your answer is the guide on top, in plain words: what the answer \
+is, then the steps in order, saying for each step which input it uses and what comes out of it. If the \
+sections describe more than one version (internal and external scale, lending and investments, Stage 1/2 \
+and Stage 3) and the user did not name one, cover EACH under its own bold heading. Do NOT write formulas \
+or LaTeX: the sections show them exactly. Say only what the sections say, with their own names for \
+things: no definitions, horizons or claims of your own. Put the section id in square brackets where you \
+use it, e.g. [k19]: the app turns it into a link. Never cite or mention code unless the user asked about \
+the code (then search_docs with scope "code" or read_code).
 5a. For a question that compares QDB with a regulation (Basel, QCB, IFRS 9, EBA, Bank of England, Fed, \
 FINMA) or asks what a regulation says: use benchmark(topic) and regulation(query). For each item asked \
 about, state QDB's value, the regulator's value with its paragraph (e.g. CRE22.49, B5.5.37, pack slide 84) \
@@ -190,7 +192,7 @@ OBSERVATION t1 …
 User: how is the PD calculated?
 {{"action":"tool","tool":"explain","args":{{"query":"how is the PD calculated"}}}}
 OBSERVATION t1 … sections k19 (internal scale) and k22 (external scale) …
-{{"action":"final","answer":"<one sentence answer>\\n\\n**Internal scale (lending)**\\n1. <step>: $$<formula from k19>$$ <what it means>\\n2. …\\n\\n**External scale (investments)**\\n1. <step>: $$<formula from k22>$$ <what it means>","show":[],"cite":["k19","k22"],"followups":["How are the scenario weights set?"]}}
+{{"action":"final","answer":"<one sentence answer>\\n\\n**Internal scale (lending)**\\n1. <step in plain words, the input it uses and what it gives> [k19]\\n2. …\\n\\n**External scale (investments)**\\n1. <step> [k22]\\n…","show":[],"cite":["k19","k22"],"followups":["How are the scenario weights set?"]}}
 
 User: what is the ECL of <a name>?
 {{"action":"tool","tool":"customer","args":{{"query":"<the name>"}}}}
@@ -220,6 +222,54 @@ _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.S)
 _BAD_ESCAPE = re.compile(r'\\(?!["\\/bfnrtu])')
 
 
+# LaTeX commands whose first letter is also a JSON escape (\b \f \n \r \t):
+# a model writing "\frac" or "\right" in a JSON string means the command, not
+# a form feed or a carriage return.
+_LATEX_JSON_CLASH = set("""beta bar big Big bigg bigl bigr binom bmod boldsymbol bullet backslash bot bf
+frac forall flat nu nabla neq ne not notin nolimits ni nmid newline right rho rangle rceil rfloor rm
+rbrace rbrack text textbf textit textrm tfrac theta tau times to tilde top tan tanh triangle tt""".split())
+_WORD = re.compile(r"[A-Za-z]+")
+
+
+def latex_safe(raw: str) -> str:
+    r"""A model's JSON with its LaTeX kept: every backslash that starts a LaTeX
+    command or symbol is doubled, so json.loads gives back "\frac", "\Phi",
+    "\," instead of a form feed, a dropped letter or an error. Real JSON
+    escapes (\n, \", \\, \u00e9 ...) are left as they are."""
+    out, i, n = [], 0, len(raw)
+    while i < n:
+        c = raw[i]
+        if c != "\\":
+            out.append(c)
+            i += 1
+            continue
+        nxt = raw[i + 1] if i + 1 < n else ""
+        if nxt in ('"', "\\", "/"):
+            out.append(raw[i:i + 2])
+            i += 2
+            continue
+        m = _WORD.match(raw, i + 1)
+        if m and m.group(0) in _LATEX_JSON_CLASH:
+            out.append("\\\\" + m.group(0))
+            i = m.end()
+            continue
+        if nxt and nxt in "bfnrt":
+            out.append(raw[i:i + 2])
+            i += 2
+            continue
+        if nxt in "_*#`":                   # a Markdown escape (model\_spec): the character
+            out.append(nxt)
+            i += 2
+            continue
+        if nxt == "u" and re.match(r"[0-9a-fA-F]{4}", raw[i + 2:i + 6]):
+            out.append(raw[i:i + 6])
+            i += 6
+            continue
+        out.append("\\\\")              # \Phi, \sigma, \, ... : the backslash itself
+        i += 1
+    return "".join(out)
+
+
 def extract_json(text: str) -> dict | None:
     """The first well-formed JSON object in a reply, fences and slips allowed."""
     if not text:
@@ -230,7 +280,7 @@ def extract_json(text: str) -> dict | None:
         candidates.append(text[start:])
     for raw in candidates:
         raw = raw.strip()
-        for attempt in (raw, _BAD_ESCAPE.sub("", raw),
+        for attempt in (latex_safe(raw), raw, _BAD_ESCAPE.sub("", raw),
                         # literal newlines inside strings: common, and illegal
                         re.sub(r'(?<!\\)\n', r'\\n', _BAD_ESCAPE.sub("", raw))):
             for end in range(len(attempt), max(len(attempt) - 4000, 0), -1):
@@ -334,8 +384,23 @@ def _result(text: str, results: dict, steps: list, parsed: dict | None,
         ask = {"question": parsed.get("question") or text,
                "options": [str(o) for o in _as_list(parsed.get("options"))][:6]}
     followups = [str(f) for f in _as_list(parsed.get("followups"))][:3]
+    # every source can be opened: citations and regulatory references in the
+    # text become links, and the sources are listed with theirs
+    from .links import linkify, sources
+    from .regulatory import REG_DIR, folder_files
+    try:
+        files = [p.relative_to(REG_DIR).as_posix() for p in folder_files()]
+    except Exception:
+        files = []
+    every_cite = {c["id"]: c for r in results.values() for c in (r.get("cites") or [])}
+    text = linkify(text, every_cite, files)
+    if ask:
+        ask["question"] = linkify(ask["question"], every_cite, files)
+    named = " ".join([text] + [str(r.get("summary") or "") for r in results.values()
+                               if r.get("tool") == "benchmark"])
+    srcs = sources(cites, named, files)
     return {"ok": ok, "text": text, "tables": tables, "chart": chart, "cites": cites,
-            "docs": docs, "ask": ask, "followups": followups, "steps": steps}
+            "docs": docs, "sources": srcs, "ask": ask, "followups": followups, "steps": steps}
 
 
 def answer(question: str, history: list[dict] | None = None,
@@ -489,10 +554,11 @@ def answer(question: str, history: list[dict] | None = None,
             cfg = dataclasses.replace(cfg, max_tokens=max(cfg.max_tokens, 2000),
                                       timeout_seconds=max(cfg.timeout_seconds, 120))
             convo.append({"role": "user", "content":
-                          "The sections above answer this question. Reply with action \"final\" as rule 4 "
-                          "says: one sentence that answers it, then the steps with their formulas copied in "
-                          "LaTeX and a plain line each, covering every version the sections describe unless "
-                          "the question named one; cite the section ids."})
+                          "The sections above answer this question; the app shows them in full, with their "
+                          "formulas and a link each, under your reply. Reply with action \"final\" as rule 4 "
+                          "says: in plain words the answer, then each version's steps in order with the input "
+                          "each uses and what it gives -- no formulas -- with the section id in square "
+                          "brackets where you use it."})
         elif results:
             convo.append({"role": "user", "content":
                           "The lookup above answers this question. Reply with action \"final\": the answer "

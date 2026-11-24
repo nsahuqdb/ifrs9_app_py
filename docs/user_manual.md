@@ -1450,10 +1450,17 @@ edit or approve anything, and says which page does.
   one customer and validation results. Say *as a table* or *as a chart* to
   choose yourself. Both are drawn from the lookup's own numbers; every table
   has **Download as Excel** (one sheet per table, numbers as numbers).
-- **From the documents** — for a methodology or how-to question, the
-  sections the answer rests on, whole (text, formulas, worked examples), each
-  with a button that opens the Help page at that section, highlighted at the
-  top. Engine code is cited only when you ask about the code.
+- **From the documents** — for a methodology or how-to question, the answer
+  is a short guide in plain words, followed by the sections it rests on,
+  whole (text, formulas, worked examples). Formulas are always the
+  document's own, never retyped by the model.
+- **Links** — every source opens in a new browser tab: a citation such as
+  *§7.4* or *Open in the document* opens the Help document at that section,
+  highlighted at the top; a regulatory reference (CRE22.49, B5.5.37, the EBA
+  Methodological Note, KPMG ...) opens the official document, or your own
+  copy in `docs/regulatory` at the cited page; tables of comparisons have a
+  *source* column with the same links. The **Sources** line under the answer
+  lists them all. Engine code is cited only when you ask about the code.
 - **Ask next** — two or three follow-up questions; click one to ask it.
 - **How this was looked up** — every lookup with its arguments, so any figure
   can be traced.
