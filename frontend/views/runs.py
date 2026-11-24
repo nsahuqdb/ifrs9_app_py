@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 
 import api
-from ui import (accepted_findings_table, callout, caption, flash,
+from ui import (accepted_findings_table, callout, caption, flash, validation_label,
                 guard, kpis, money, overlay_impact, page_setup, pill, style_severity)
 
 page_setup("Browse runs", "Every run, where it stands in approval, and everything "
@@ -25,8 +25,8 @@ kpis([("Runs", money(tiles["total"]), "plum", ""),
        "warn" if tiles["pending_checker"] else "", "awaiting approval"),
       ("Unofficial", money(tiles["unofficial"]), "info" if tiles["unofficial"] else "",
        "no approval needed"),
-      ("With validation fails", money(tiles["with_validation_fails"]),
-       "err" if tiles["with_validation_fails"] else "ok", "")])
+      ("With validation errors", money(tiles.get("with_validation_errors", 0)),
+       "err" if tiles.get("with_validation_errors") else "ok", "")])
 if not t["exists"]:
     callout("warn", f"The runs folder `{t['runs_dir']}` does not exist. Set "
             "`IFRS9_RUNS_DIR`, or start a run on **Run the pipeline**.")
@@ -67,7 +67,8 @@ show = pd.DataFrame({
     "Run date": runs["started_at"].fillna("").astype(str).str[:16].str.replace("T", " "),
     "Purpose": runs["run_purpose"].map(lambda p: PURPOSE.get(p, _dash(p))),
     "Type": runs["run_type"].map(lambda x: str(x).capitalize() if x else "—"),
-    "Scenario": runs["ecl_scenario"].map(lambda s: "Weighted" if s in (None, "weighted") else s),
+    "Validation": [validation_label(e, w) for e, w in
+                   zip(runs["n_validation_errors"], runs["n_validation_warnings"])],
     "Portfolio date": runs["portfolio_date"].map(_dash),
     "Run by": runs["user"].map(_dash),
     "Approver": runs["approver"].map(_dash),
@@ -75,7 +76,6 @@ show = pd.DataFrame({
         lambda v: "(live config)" if _dash(v) == "—" else v),
     "Calculator version": runs.apply(_calc_version, axis=1),
     "Outputs": runs["n_outputs"],
-    "Validation fails": runs["n_validation_failures"],
     "Readiness": runs["has_readiness"].map({True: "yes", False: "—"}),
 })
 _, c_r = st.columns([6, 1], vertical_alignment="bottom")
@@ -93,14 +93,19 @@ def _status_style(v):
     return ""
 
 
-sty = show.style.map(_status_style, subset=["Status"])
-sty._grid_severity = ("Status",)            # the grid colours the status
+def _validation_style(v):
+    return ("background-color: #fef3f2; color: #b42318; font-weight: 600"
+            if "error" in str(v) else "")
+
+
+sty = (show.style.map(_status_style, subset=["Status"])
+       .map(_validation_style, subset=["Validation"]))
+sty._grid_severity = ("Status", "Validation")   # the grid colours these
 ev = st.dataframe(sty, hide_index=True, width="stretch",
                   height=min(420, 38 + 35 * max(len(show), 1)),
                   on_select="rerun", selection_mode="single-row", key="runs_tbl",
                   column_config={
-                      "Outputs": st.column_config.NumberColumn(format="%d"),
-                      "Validation fails": st.column_config.NumberColumn(format="%d")})
+                      "Outputs": st.column_config.NumberColumn(format="%d")})
 sel = ev.selection.rows if ev and ev.selection else []
 if not sel:
     caption("Select a run above to see its manifest, validation, readiness, "
@@ -255,7 +260,6 @@ with t_man:
             st.markdown("**Run metadata**")
             st.table(pd.DataFrame([
                 ("run type", s.get("run_type")), ("purpose", s.get("run_purpose")),
-                ("ECL basis", s.get("ecl_scenario")),
                 ("portfolio date", s.get("portfolio_date")),
                 ("config version", s.get("config_version") or "(live config)"),
                 ("calculator", s.get("calculator_label") or s.get("calculator_version")),

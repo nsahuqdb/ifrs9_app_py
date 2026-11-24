@@ -433,3 +433,94 @@ def test_review_list_names_and_filters_by_portfolio(tmp_path):
         assert gone["counts"]["stage"] == 0 and gone["counts"]["rating"] == 1
     finally:
         workflow._PAUSED.pop("run_00042", None)
+
+
+class TestDailyInputFolders:
+    """The inputs are picked by date: the folder of that day under the daily
+    inputs folder, read where it is."""
+
+    def test_folder_names_give_their_date(self):
+        from datetime import date
+
+        from backend.input_folders import folder_date
+        d = date(2026, 11, 24)
+        for name in ("2026-11-24", "20261124", "2026_11_24", "24-11-2026",
+                     "24.11.2026", "24112026", "24Nov2026", "24-Nov-2026",
+                     "IN_2026-11-24", "inputs 24 November 2026"):
+            assert folder_date(name) == d, name
+        assert folder_date("2026") is None and folder_date("IN") is None
+        assert folder_date("2026-13-40") is None
+
+    def _bundle(self, d, n=12):
+        from ifrs9qdb.acquisition import expected_input_files
+        d.mkdir(parents=True)
+        for f in expected_input_files()[:n]:
+            (d / f).write_text("x")
+
+    def test_dated_folders_are_listed_newest_first(self, tmp_path):
+        from backend.input_folders import date_folders, folder_for
+        self._bundle(tmp_path / "2026-11-23")
+        self._bundle(tmp_path / "24-11-2026", n=9)
+        self._bundle(tmp_path / "2026" / "20261122")          # one level down
+        self._bundle(tmp_path / "2026-11-21" / "IN")          # files one further in
+        (tmp_path / "notes").mkdir()
+        rows = date_folders(tmp_path)
+        assert [r["date"] for r in rows] == \
+            ["2026-11-24", "2026-11-23", "2026-11-22", "2026-11-21"]
+        assert rows[0]["found"] == 9 and not rows[0]["complete"]
+        assert rows[1]["complete"]
+        assert rows[3]["path"].endswith("IN")
+        assert folder_for(tmp_path, "2026-11-20") is None
+        assert folder_for(tmp_path, "2026-11-23")["path"].endswith("2026-11-23")
+
+    def test_a_date_with_no_folder_says_so(self, tmp_path, monkeypatch):
+        from backend import settings
+        monkeypatch.setattr(settings, "inputs_root", lambda: tmp_path)
+        self._bundle(tmp_path / "2026-11-23")
+        r = client.post("/api/workflow/validate-inputs",
+                        json={"kind": "date", "date": "2026-11-24", "preview": False})
+        assert r.status_code == 404 and "No inputs for 24 Nov 2026" in r.text
+        r = client.post("/api/workflow/validate-inputs",
+                        json={"kind": "date", "date": "2026-11-23", "preview": False})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["input_dir"].endswith("2026-11-23") and body["dq"] is None
+        assert body["input_source"]["kind"] == "date"
+        s = client.get("/api/workflow/sources").json()
+        assert s["inputs_root"] == str(tmp_path)
+        assert [d["date"] for d in s["dates"]] == ["2026-11-23"]
+
+    def test_the_files_upload_as_they_are(self, tmp_path, monkeypatch):
+        from pathlib import Path
+
+        from backend import settings
+        monkeypatch.setattr(settings, "UPLOAD_DIR", tmp_path)
+        r = client.post("/api/workflow/upload-files", files=[
+            ("files", ("AccountMaster.xls", b"<html><table></table></html>")),
+            ("files", ("Collateral.xlsx", b"PK\x03\x04"))])
+        assert r.status_code == 200
+        got = sorted(p.name for p in Path(r.json()["path"]).iterdir())
+        assert got == ["AccountMaster.xls", "Collateral.xlsx"]
+        bad = client.post("/api/workflow/upload-files",
+                          files=[("files", ("run.exe", b"MZ"))])
+        assert bad.status_code == 400
+
+
+def test_a_run_is_flagged_for_errors_not_warnings(tmp_path):
+    from backend.routes.runs_detail import validation_counts
+    run = tmp_path / "run_00001" / "reports"
+    run.mkdir(parents=True)
+    (run / "validation.csv").write_text(
+        "stage,id,severity,effective_severity,suppressed,passed,message\n"
+        "INPUT,A,WARN,WARN,FALSE,FALSE,x\n"
+        "INPUT,B,WARN,WARN,FALSE,FALSE,x\n"
+        "INPUT,C,ERROR,ERROR,TRUE,FALSE,accepted\n"
+        "INPUT,D,ERROR,ERROR,FALSE,TRUE,passed\n"
+        "INPUT,E,INFO,INFO,FALSE,FALSE,x\n")
+    assert validation_counts(tmp_path / "run_00001") == (0, 2)
+    (run / "validation.csv").write_text(
+        "stage,id,severity,effective_severity,suppressed,passed,message\n"
+        "INPUT,A,ERROR,ERROR,FALSE,FALSE,x\n")
+    import os
+    os.utime(run / "validation.csv", (1, 2))      # a new stamp
+    assert validation_counts(tmp_path / "run_00001") == (1, 0)

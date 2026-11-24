@@ -661,6 +661,19 @@ def wf_upload_zip(file) -> dict:
     return upload("/workflow/upload-zip", file)
 
 
+def wf_upload_files(files) -> dict:
+    """POST the input files (or one zip of them) as multipart."""
+    try:
+        r = requests.post(_url("/workflow/upload-files"),
+                          files=[("files", (f.name, f.getvalue())) for f in files],
+                          timeout=(5, 900))
+    except requests.exceptions.ConnectionError:
+        raise BackendError(f"Cannot reach the backend at {BACKEND}.")
+    if not r.ok:
+        _raise(r)
+    return r.json()
+
+
 def wf_validate_inputs(payload: dict) -> dict:
     return post("/workflow/validate-inputs", payload)
 

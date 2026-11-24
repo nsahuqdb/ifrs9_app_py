@@ -14,7 +14,7 @@ import pandas as pd
 import streamlit as st
 
 import api
-from ui import (accepted_findings_table, caption, flash, guard, kpis, money,
+from ui import (accepted_findings_table, validation_label, caption, flash, guard, kpis, money,
                 overlay_impact, overlay_rules_frame, page_setup, pill,
                 style_severity)
 
@@ -99,7 +99,9 @@ with t_runs:
             "Run by": runs_p.get("user", runs_p["requested_by"]),
             "Config version": runs_p["snapshot_label"].replace("", None)
             .fillna("(live config)"),
-            "Validation fails": runs_p.get("n_validation_failures"),
+            "Validation": [validation_label(e, w) for e, w in zip(
+                runs_p.get("n_validation_errors", pd.Series(0, index=runs_p.index)).fillna(0),
+                runs_p.get("n_validation_warnings", pd.Series(0, index=runs_p.index)).fillna(0))],
             "Overrides": runs_p["n_overrides_total"]})
         i = _pick(show, "aq_runs")
         if i is None:

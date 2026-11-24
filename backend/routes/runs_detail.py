@@ -45,11 +45,50 @@ def _run_path(run_id: str) -> Path:
     return p
 
 
+_VCOUNTS: dict[str, tuple] = {}
+
+
+def validation_counts(run_path) -> tuple[int, int]:
+    """(errors, warnings) a run's validation left open: failed, not accepted,
+    by effective severity. Accepted findings and INFO are neither. Kept until
+    the validation file changes."""
+    run = Path(run_path)
+    f = next((p for p in (run / "reports" / "validation.csv", run / "validation.csv")
+              if p.is_file()), None)
+    if f is None:
+        return 0, 0
+    key, stamp = str(f), f.stat().st_mtime
+    hit = _VCOUNTS.get(key)
+    if hit and hit[0] == stamp:
+        return hit[1]
+    v = read_run_validation(run)
+    out = (0, 0)
+    if v is not None and len(v) and "passed" in v.columns:
+        open_ = ((v["passed"].astype(str).str.upper() != "TRUE")
+                 & (v.get("suppressed", pd.Series("FALSE", index=v.index))
+                    .astype(str).str.upper() != "TRUE"))
+        eff = (v["effective_severity"] if "effective_severity" in v.columns
+               else v["severity"]).astype(str).str.upper()
+        out = (int((open_ & (eff == "ERROR")).sum()), int((open_ & (eff == "WARN")).sum()))
+    _VCOUNTS[key] = (stamp, out)
+    return out
+
+
+def with_validation_counts(df: pd.DataFrame) -> pd.DataFrame:
+    """Runs with n_validation_errors and n_validation_warnings."""
+    df = df.copy()
+    counts = [validation_counts(p) for p in df["path"]] if len(df) else []
+    df["n_validation_errors"] = [c[0] for c in counts]
+    df["n_validation_warnings"] = [c[1] for c in counts]
+    return df
+
+
 @router.get("/runs-table")
 def runs_table() -> dict:
     """Every run with its manifest, status and health -- R's list_runs(), with
-    the counts the page's summary tiles show."""
-    df = list_runs(settings.RUNS_DIR)
+    the counts the page's summary tiles show. A run is flagged for its open
+    validation errors only; warnings are counted beside them."""
+    df = with_validation_counts(list_runs(settings.RUNS_DIR))
     st = df["status"].fillna("unknown") if len(df) else pd.Series(dtype=str)
     tiles = {
         "total": int(len(df)),
@@ -58,6 +97,8 @@ def runs_table() -> dict:
         "unofficial": int((st == "unofficial").sum()),
         "with_validation_fails": int((pd.to_numeric(df["n_validation_failures"],
                                                     errors="coerce") > 0).sum())
+        if len(df) else 0,
+        "with_validation_errors": int((df["n_validation_errors"] > 0).sum())
         if len(df) else 0,
     }
     root = settings.RUNS_DIR

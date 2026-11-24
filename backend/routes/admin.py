@@ -37,7 +37,9 @@ def _records(df) -> list[dict]:
 # ------------------------------------------------------- approval queue ----
 def _run_rows() -> pd.DataFrame:
     from ifrs9qdb.runs import list_runs
-    return list_runs(settings.RUNS_DIR)
+
+    from .runs_detail import with_validation_counts
+    return with_validation_counts(list_runs(settings.RUNS_DIR))
 
 
 @router.get("/approval-queue/runs")
@@ -47,7 +49,8 @@ def queue_runs() -> dict:
     from ifrs9qdb.run_status import list_runs_decided, list_runs_pending_approval
     info = _run_rows()
     cols = ["run_id", "started_at", "duration_seconds", "user", "n_outputs",
-            "n_validation_failures", "run_purpose", "portfolio_date"]
+            "n_validation_failures", "n_validation_errors", "n_validation_warnings",
+            "run_purpose", "portfolio_date"]
     info = info[cols] if len(info) else pd.DataFrame(columns=cols)
     pend = list_runs_pending_approval(settings.RUNS_DIR)
     dec = list_runs_decided(settings.RUNS_DIR)

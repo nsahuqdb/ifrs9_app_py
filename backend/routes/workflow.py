@@ -127,7 +127,11 @@ def sources() -> dict:
         for r in drops.to_dict(orient="records"):
             r["modified"] = str(r.get("modified") or "")
             rows.append(r)
-    return {"configured_dir": str(cfg), "configured_exists": cfg.is_dir(),
+    from ..input_folders import date_folders
+    iroot = settings.inputs_root()
+    return {"inputs_root": str(iroot), "inputs_root_exists": iroot.is_dir(),
+            "dates": date_folders(iroot),
+            "configured_dir": str(cfg), "configured_exists": cfg.is_dir(),
             "configured_found": _found_inputs(cfg),
             "drop_root": str(root) if root else "",
             "drop_root_exists": bool(root and root.is_dir()),
@@ -169,16 +173,76 @@ async def upload_zip(file: UploadFile = File(...)) -> dict:
     return res
 
 
+_INPUT_SUFFIXES = {".xlsx", ".xls", ".xlsm", ".csv", ".xml", ".html", ".htm", ".txt"}
+
+
+@router.post("/workflow/upload-files")
+async def upload_files(files: list[UploadFile] = File(...)) -> dict:
+    """Take the extracts as they are (one zip of them also works) into a
+    fresh folder: a new one per upload, so two uploads cannot mix."""
+    files = [f for f in files if f.filename]
+    if not files:
+        raise HTTPException(400, "Choose the input files.")
+    if len(files) == 1 and files[0].filename.lower().endswith(".zip"):
+        return await upload_zip(files[0])
+    limit = settings.max_upload_mb() * 1024 * 1024
+    dest = settings.UPLOAD_DIR / "files" / f"{datetime.now():%Y-%m-%d_%H-%M-%S}"
+    dest.mkdir(parents=True, exist_ok=True)
+    total, names = 0, []
+    for f in files:
+        name = Path(f.filename).name          # never a path the browser sends
+        if Path(name).suffix.lower() not in _INPUT_SUFFIXES:
+            shutil.rmtree(dest, ignore_errors=True)
+            raise HTTPException(400, f"{name}: not an input file (Excel, csv, xml "
+                                     "or a zip of them).")
+        with open(dest / name, "wb") as fh:
+            while chunk := await f.read(1 << 20):
+                total += len(chunk)
+                if total > limit:
+                    fh.close()
+                    shutil.rmtree(dest, ignore_errors=True)
+                    raise HTTPException(
+                        413, f"The files are larger than the upload limit "
+                             f"({settings.max_upload_mb()} MB). Raise "
+                             "run.max_upload_size_mb in config.yml if you need more.")
+                fh.write(chunk)
+        names.append(name)
+    return {"path": str(dest), "source_zip": "", "files": names,
+            "extracted_at": datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "size_mb": round(total / 1e6, 2)}
+
+
 class SourceIn(BaseModel):
-    kind: str = "configured"          # configured | drop_folder | upload | folder
+    kind: str = "date"                # date | upload | configured | drop_folder | folder
     path: str | None = None
+    date: str | None = None           # kind "date": the day whose folder to use
     source_zip: str | None = None
     extracted_at: str | None = None
     version: str | None = None        # config version, or "__LIVE__"
+    preview: bool = True              # also the data-quality preview
+
+
+def _nice_date(d: str) -> str:
+    try:
+        return datetime.fromisoformat(str(d)[:10]).strftime("%d %b %Y")
+    except ValueError:
+        return str(d)
 
 
 def _resolve_source(body: SourceIn) -> tuple[Path, dict]:
-    kind = body.kind or "configured"
+    kind = body.kind or "date"
+    if kind == "date":
+        from ..input_folders import folder_for
+        if not body.date:
+            raise HTTPException(400, "Choose the date of the inputs.")
+        root = settings.inputs_root()
+        hit = folder_for(root, body.date)
+        if hit is None:
+            raise HTTPException(404, f"No inputs for {_nice_date(body.date)}: there "
+                                     f"is no folder for that date in {root}.")
+        d = Path(hit["path"])
+        return d, {"kind": "date", "details": {"path": str(d), "date": hit["date"],
+                                               "inputs_root": str(root)}}
     if kind == "configured":
         d = settings.input_dir()
         return d, {"kind": "configured", "details": {"path": str(d)}}
@@ -219,7 +283,7 @@ _VERSION_PATH_KEYS = ("variable_dictionary", "models", "model_inputs",
 # Where a run executes on this machine, not what it computes: taken from the
 # live project config.yml, as R's snapshot_run_paths() does.
 _RUNTIME_PATH_KEYS = ("input_dir", "output_dir", "runs_dir", "data_drop_root",
-                      "reference_outputs")
+                      "inputs_root", "reference_outputs")
 
 
 def _run_config_for(label: str | None) -> dict:
@@ -304,7 +368,7 @@ def validate_inputs(body: SourceIn) -> dict:
            "n_pass": int((check["status"] == "PASS").sum()),
            "ok": n_fail == 0, "dq": None, "strip_log": {}, "clean_log": {},
            "extract_date": None}
-    if d.is_dir():
+    if d.is_dir() and body.preview:
         try:
             cfg, st, _ = _version_paths(body.version)
             supp_path = _suppressions_for(cfg)

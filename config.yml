@@ -9,6 +9,12 @@
 # Both are now parameterised here.
 
 paths:
+  # The daily input folders: one sub-folder per date (2026-11-24, 20261124,
+  # 24-11-2026 ...) holding the extracts as saved that day. The Run the
+  # pipeline page picks the folder by date. Relative to the app folder:
+  # "../ifrs_inputs" is a folder named ifrs_inputs beside it.
+  inputs_root: "../ifrs_inputs"
+
   # Where to read raw input files from (matches the Excel tool's IFRSIN folder)
   input_dir: "input"
 

@@ -71,7 +71,7 @@ def ensure_project() -> list[str]:
     seeded = []
     # The folders a first run needs: without them a fresh install greets the
     # user with "that folder does not exist" for the input and runs folders.
-    for d in (RUNS_DIR, input_dir()):
+    for d in (RUNS_DIR, input_dir(), inputs_root()):
         try:
             d.mkdir(parents=True, exist_ok=True)
         except OSError:
@@ -115,6 +115,16 @@ def input_dir() -> Path:
         return Path(env).expanduser()
     p = _resolve((run_config().get("paths") or {}).get("input_dir"))
     return p or PROJECT_ROOT / "input"
+
+
+def inputs_root() -> Path:
+    """The parent folder of the daily input folders: env, then config.yml
+    (paths.inputs_root), then ifrs_inputs beside the app folder."""
+    env = os.environ.get("IFRS9_INPUTS_ROOT")
+    if env:
+        return Path(env).expanduser()
+    p = _resolve((run_config().get("paths") or {}).get("inputs_root"))
+    return (p or APP_ROOT.parent / "ifrs_inputs").resolve()
 
 
 def data_drop_root() -> Path | None:

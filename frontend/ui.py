@@ -1417,7 +1417,7 @@ def grid(data, *, key: str | None = None, height: int | None = None,
             gb.configure_columns([c], cellStyle=JsCode(
                 "function(p){var m=" + str(tones).replace("'", '"') + ";"
                 "var u=String(p.value||'').trim().toUpperCase();var t=m[u];"
-                "if(!t){if(u.indexOf('REJECT')>=0)t='err';"
+                "if(!t){if(u.indexOf('REJECT')>=0||u.indexOf('ERROR')>=0)t='err';"
                 "else if(u.indexOf('PENDING')>=0)t='warn';"
                 "else if(u.indexOf('UNOFFICIAL')>=0)t='info';"
                 "else if(u.indexOf('APPROVED')>=0)t='ok';}" + rules
@@ -1470,7 +1470,10 @@ def grid(data, *, key: str | None = None, height: int | None = None,
     r = AgGrid(df, gridOptions=go, height=height,
                theme="streamlit", allow_unsafe_jscode=True, key=key,
                update_on=["selectionChanged"] if sel else [],
-               show_toolbar=False, show_search=False, show_download_button=False)
+               show_toolbar=False, show_search=False, show_download_button=False,
+               # a short table is as tall as its rows (the grid's own minimum
+               # leaves a blank band under one or two rows)
+               custom_css=_AUTO_HEIGHT_CSS)
     if not sel:
         return None
     rows = r.selected_rows
@@ -1480,6 +1483,10 @@ def grid(data, *, key: str | None = None, height: int | None = None,
 
 
 _NATIVE_TYPES = {"number", "text", None}
+_AUTO_HEIGHT_CSS = {
+    ".ag-layout-auto-height .ag-center-cols-viewport": {"min-height": "0 !important"},
+    ".ag-layout-auto-height .ag-center-cols-container": {"min-height": "0 !important"},
+    ".ag-layout-auto-height .ag-center-cols-clipper": {"min-height": "0 !important"}}
 _CUSTOMER_COLS = {"customer", "customer id", "customerid", "cust id", "customer no",
                   "customer number", "customer_b", "customer_a"}
 
@@ -1763,3 +1770,13 @@ def overlay_rules_frame(rules: list, blank_row: bool = False) -> pd.DataFrame:
         rows = [{"Method": "Uplift %", "Level": "Portfolio",
                  "Target": "Business Finance", "Value": 10.0, "Reason": ""}]
     return pd.DataFrame(rows, columns=["Method", "Level", "Target", "Value", "Reason"])
+
+
+def validation_label(errors, warnings) -> str:
+    """A run's validation in a few words: flagged only for open errors;
+    warnings are counted, not flagged."""
+    e = int(errors or 0) if not pd.isna(errors) else 0
+    w = int(warnings or 0) if not pd.isna(warnings) else 0
+    if e:
+        return f"🛑 {e} error{'s' if e != 1 else ''}"
+    return "✅ OK" + (f" · {w} warning{'s' if w != 1 else ''}" if w else "")

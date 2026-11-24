@@ -1,14 +1,16 @@
 """Run the pipeline: the R app's phased workflow on one screen.
 
-    1  Input extracts   the configured folder, a data-drop folder, a zip upload
-                        or a folder on the server; Validate inputs checks the
-                        bundle and previews every INPUT finding
+    1  Input extracts   a date (its folder under the daily inputs folder,
+                        ifrs_inputs, read as saved) or the files uploaded
     2  Run settings     config version, run type and purpose, calculator,
                         portfolio date
-    3  Check and start  the pre-run validators AND the pricing-readiness dry
+    3  Check and start  one Check: the files are all there and readable, then
+                        the pre-run validators AND the pricing-readiness dry
                         run -- which contracts would get no ECL, which LIC
                         would leave blank, which are priced from incomplete
-                        inputs -- before anything is committed. A blocking
+                        inputs -- before anything is committed. The results
+                        show the input findings first, then the pre-run
+                        checks. A blocking
                         finding that can be accepted is accepted here, with a
                         reason, FOR THIS RUN ONLY -- recorded on the run, never
                         saved for the next one, which asks again -- and the
@@ -30,9 +32,8 @@ import streamlit as st
 
 import api
 from ui import (accepted_findings_table, accepted_note, callout, caption,
-                card_header, empty_state, findings, flash, guard, kpis, money,
-                page_setup, pill, severity_counts, stepper, style_severity,
-                tone_of)
+                card_header, empty_state, flash, guard, kpis, money,
+                page_setup, pill, severity_counts, stepper, style_severity)
 
 S = st.session_state
 S.setdefault("wf_state", "idle")          # idle | paused | done
@@ -41,11 +42,7 @@ page_setup("Run the pipeline",
            "Load the input extracts, check they can be priced, then run. The "
            "run pauses for overrides before it finishes.")
 
-KINDS = {"configured": "Input folder", "drop_folder": "Data drop",
-         "upload": "Upload a zip", "folder": "Another folder"}
-SEV_LABEL = {"err": "Errors", "warn": "Warnings", "info": "Info",
-             "muted": "Accepted"}
-
+KINDS = {"date": "Folder", "upload": "Upload"}
 
 # =================================================================== jobs ====
 # The checks and the two phases run as background jobs in the backend. A
@@ -111,11 +108,19 @@ def _resume_jobs() -> None:
     req = S.get("wf_check_req")
     if req:
         if S.get("wf_pre") is None:
-            with st.spinner("Running the pre-run validators…"):
+            with st.spinner("Checking the inputs and the config…"):
                 try:
                     S["wf_pre"] = api.wf_pre_run_check(req)
                 except api.BackendError as e:
                     _fail(e)
+            ext = S["wf_pre"].get("extract_date")
+            if ext:
+                # the portfolio date follows the extract's EXTRACTDA; set on
+                # the next run, before the date widget is drawn
+                try:
+                    S["wf_pdate_next"] = date.fromisoformat(str(ext)[:10])
+                except ValueError:
+                    pass
         if not S.get("wf_ready_job"):
             try:
                 S["wf_ready_job"] = api.wf_readiness(req)["job_id"]
@@ -213,30 +218,6 @@ def _check_rows() -> list[dict]:
 
 def _blocking(rows) -> list[dict]:
     return [r for r in rows if _sev(r) == "ERROR"]
-
-
-def _findings_view(rows: list[dict], key: str, cap: int = 560) -> None:
-    """Findings, worst first, with a severity filter; errors and warnings
-    shown to begin with. Long lists scroll inside their panel instead of
-    stretching the page."""
-    counts = severity_counts(rows)
-    avail = [t for t in SEV_LABEL if counts[t]]
-    if not avail:
-        findings([], "No findings.")
-        return
-    default = [t for t in avail if t in ("err", "warn")] or avail
-    sel = st.pills("Show", avail, selection_mode="multi", default=default,
-                   format_func=lambda t: f"{SEV_LABEL[t]} · {counts[t]}",
-                   key=f"fx_{key}", label_visibility="collapsed")
-    shown = [r for r in rows if tone_of(_sev(r)) in (sel or [])]
-    if not shown:
-        caption("Pick a severity above to list its findings.")
-        return
-    if len(shown) > 5:
-        with st.container(height=min(cap, 60 + 84 * len(shown)), border=False):
-            findings(shown)
-    else:
-        findings(shown)
 
 
 # ===================================================== accept a finding ====
@@ -408,18 +389,19 @@ def _stepper() -> None:
         return
     val, pre, rdy = S.get("wf_val"), S.get("wf_pre"), S.get("wf_ready")
     if val is None:
-        s1 = ("now", "choose the files and validate")
+        s1 = ("now", "choose the date or upload the files")
     elif val["ok"]:
-        s1 = ("done", f"{_nice(val.get('extract_date'))} extract")
+        s1 = ("done", f"{_nice((pre or {}).get('extract_date'))} extract" if pre
+              else "all files found")
     else:
         s1 = ("err", f"{val['n_fail']} problem(s) to fix")
     if not val or not val["ok"]:
-        s2 = ("", "pre-run check and pricing dry run")
+        s2 = ("", "inputs, config and pricing dry run")
     elif pre is None or rdy is None:
-        s2 = ("now", "pre-run check and pricing dry run")
+        s2 = ("now", "inputs, config and pricing dry run")
     else:
         n = len(_blocking(_check_rows()))
-        s2 = ("err", f"{n} blocking finding(s)") if n or rdy.get("status") != "done" \
+        s2 = ("err", f"{n} error(s)") if n or rdy.get("status") != "done" \
             else ("done", "ready to start")
     s3 = ("now" if s2[0] == "done" else "", "start, then add overrides")
     stepper([("Inputs", *s1), ("Checks", *s2), ("Review & overrides", *s3),
@@ -688,74 +670,74 @@ def _done_page() -> None:
 
 
 # ========================================================== idle: cards ====
+def _date_changed():
+    """Another input date: other inputs, and the portfolio date follows it
+    until the check reads the extract's own date."""
+    _reset_val()
+    if S.get("wf_in_date"):
+        S["wf_pdate_next"] = S["wf_in_date"]
+
+
 def _inputs_card(src: dict) -> tuple[dict, bool]:
-    """Where the 12 files come from. Returns the source and whether it is
-    ready to validate (the button is in Check and start)."""
+    """Where the 12 files come from: the folder of a date under the daily
+    inputs folder, or the files uploaded. Returns the source and whether it
+    can be checked (the button is in Check and start)."""
     val = S.get("wf_val")
     with st.container(border=True):
         card_header("Input extracts", None, right=(
-            "" if val is None else pill("valid", "ok") if val["ok"]
+            "" if val is None or val["ok"]
             else pill(f"{val['n_fail']} problem(s)", "err")))
         kind = st.segmented_control(
-            "Where are the 12 input files?", list(KINDS), format_func=KINDS.get,
-            default="configured", required=True, key="wf_kind",
-            on_change=_reset_val, width="stretch")
-        body, ready = {"kind": kind}, True
-        if kind == "configured":
-            n = src.get("configured_found")
-            caption(f"`{src['configured_dir']}`"
-                    + (" — **this folder does not exist yet.** Put the 12 files "
-                       "there, or choose another source."
-                       if not src["configured_exists"] else
-                       " — **empty.** Copy the 12 extracts there, or choose "
-                       "another source." if n == 0 else
-                       f" · {n} of 12 files found" if n is not None else ""))
-            ready = bool(src["configured_exists"]) and n != 0
-        elif kind == "drop_folder":
-            if not src["drops"]:
-                callout("warn", f"No data-drop folders under "
-                        f"`{src['drop_root'] or '(not set)'}`. Set "
-                        "`paths.data_drop_root` in config.yml to the data "
-                        "team's drop folder, or choose another source.")
-                ready = False
+            "Inputs", list(KINDS), format_func=KINDS.get, default="date",
+            required=True, key="wf_kind", on_change=_reset_val, width="stretch",
+            label_visibility="collapsed")
+        body, ready = {"kind": kind}, False
+        if kind == "date":
+            dates = {date.fromisoformat(d["date"]): d for d in src.get("dates") or []}
+            if "wf_in_date" not in S:
+                S["wf_in_date"] = max(dates) if dates else date.today()
+                S.setdefault("wf_pdate_next", S["wf_in_date"])
+            day = st.date_input("Date of the inputs", key="wf_in_date",
+                                format="DD/MM/YYYY", on_change=_date_changed)
+            hit = dates.get(day)
+            root = src.get("inputs_root") or ""
+            if hit:
+                body["date"] = day.isoformat()
+                ready = True
+                n, m = hit["found"], hit["expected"]
+                caption(f"`{hit['path']}` · {n} of {m} files"
+                        + ("" if hit["complete"] else " — **some files are missing**"))
+            elif not dates:
+                callout("warn", f"No date folders in `{root}` yet. Save each day's "
+                        "extracts, as they are, in a folder named by its date, "
+                        "for example `2026-11-24`.",
+                        title="No inputs found.")
             else:
-                labels = {f"{d['name']} — {d['n_files']} files"
-                          + ("" if d["looks_complete"] else " (incomplete)"): d["path"]
-                          for d in src["drops"]}
-                pick = st.selectbox("Drop folder, newest first", list(labels),
-                                    key="wf_drop", on_change=_reset_val)
-                body["path"] = labels[pick]
-        elif kind == "upload":
-            up = st.file_uploader(
-                f"A zip of the 12 files (up to {src['upload_limit_mb']} MB)",
-                type=["zip"], key="wf_zip",
-                help="The files may sit at the top of the zip or inside one "
-                     "folder. Each may be Excel (.xlsx) or Oracle SQL*Plus HTML "
-                     "(.xls); the format is read from the bytes. Raise the limit "
-                     "with run.max_upload_size_mb in config.yml.")
-            ready = up is not None
-            if up is not None:
-                key = f"{up.name}:{up.size}"
-                if S.get("wf_zip_key") != key:
-                    with st.spinner("Uploading and unpacking…"):
-                        with guard():
-                            S["wf_zip_res"] = api.wf_upload_zip(up)
-                    S["wf_zip_key"] = key
-                    _reset_val()
-                z = S.get("wf_zip_res") or {}
-                body.update({"path": z.get("path"), "source_zip": z.get("source_zip"),
-                             "extracted_at": z.get("extracted_at")})
+                last = max(dates)
+                callout("warn", f"There is no folder for {day:%d %b %Y} in `{root}`. "
+                        f"Latest inputs: {last:%d %b %Y}.",
+                        title=f"No inputs for {day:%d %b %Y}.")
         else:
-            body["path"] = st.text_input("Folder on the backend machine",
-                                         key="wf_folder", on_change=_reset_val,
-                                         placeholder=r"e.g. D:\IFRS9\input\2026-06")
-            ready = bool((body["path"] or "").strip())
-
-        if val is not None:
-            caption(f"{val['n_pass']} structural checks passed. Results on the right."
-                    if val["ok"] else
-                    f"**{val['n_fail']} structural check(s) failed.** Results on the "
-                    "right.")
+            ups = st.file_uploader(
+                f"The input files (up to {src['upload_limit_mb']} MB in all)",
+                type=["xlsx", "xls", "xlsm", "csv", "xml", "html", "htm", "zip"],
+                accept_multiple_files=True, key="wf_files",
+                help="The 12 extracts as they are (Excel, csv or the SQL*Plus "
+                     "exports), or one zip of them. The format is read from "
+                     "the file itself.")
+            if ups:
+                key = "|".join(f"{u.name}:{u.size}" for u in ups)
+                if S.get("wf_up_key") != key:
+                    with st.spinner("Uploading…"):
+                        with guard():
+                            S["wf_up_res"] = api.wf_upload_files(ups)
+                    S["wf_up_key"] = key
+                    _reset_val()
+                z = S.get("wf_up_res") or {}
+                body.update({"kind": "upload", "path": z.get("path"),
+                             "source_zip": z.get("source_zip"),
+                             "extracted_at": z.get("extracted_at")})
+                ready = bool(z.get("path"))
     return body, ready
 
 
@@ -823,83 +805,74 @@ def _settings_card(vers: dict, calcs: dict) -> dict:
         # drawn: Streamlit refuses a keyed widget's state written after it
         if "wf_pdate_next" in S:
             S["wf_pdate_in"] = S.pop("wf_pdate_next")
-        S.setdefault("wf_pdate_in", date.today())
+        S.setdefault("wf_pdate_in", S.get("wf_in_date") or date.today())
         pdate = c5.date_input("Portfolio date", key="wf_pdate_in",
                               format="DD/MM/YYYY",
                               help="The as-of date. Filled from the inputs' "
-                                   "EXTRACTDA when they are validated.")
+                                   "EXTRACTDA when they are checked.")
         if not gate["ok"]:
             callout("warn", gate["reason"], title="An official run cannot start.")
     return {"version": version, "run_type": run_type, "purpose": purpose,
             "calc_id": calc_id, "pdate": pdate, "gate": gate}
 
 
-def _validate(body: dict, version: str) -> None:
-    body = {**body, "version": version}
-    with st.spinner("Reading the files and checking them…"):
-        with guard():
-            S["wf_val"] = api.wf_validate_inputs(body)
+def _check(body: dict, cfg: dict) -> None:
+    """One check: the files are all there and readable; if so, the pre-run
+    validators and the pricing dry run (run by _resume_jobs)."""
     _reset_checks()
-    if S["wf_val"].get("extract_date"):
-        # The Validate button sits below the date widget, so its state cannot
-        # be written in this run: it is handed to the next one, which sets it
-        # before drawing the widget.
-        S["wf_pdate_next"] = date.fromisoformat(S["wf_val"]["extract_date"])
+    try:
+        with st.spinner("Finding the files…"):
+            S["wf_val"] = api.wf_validate_inputs(
+                {**body, "version": cfg["version"], "preview": False})
+    except api.BackendError as e:
+        S.pop("wf_val", None)
+        st.error(str(e))
+        return
+    if S["wf_val"]["ok"]:
+        _request_checks({"input_dir": S["wf_val"]["input_dir"],
+                         "version": cfg["version"], "run_type": cfg["run_type"]})
     st.rerun()
 
 
 def _actions_card(val, cfg: dict, body: dict, ready: bool) -> None:
-    """Validate inputs, the pre-run check and Start, side by side."""
+    """Check and Start, side by side."""
     pre, rdy = S.get("wf_pre"), S.get("wf_ready")
-    checked = pre is not None and rdy is not None
+    checked = bool(val and val["ok"]) and pre is not None and rdy is not None
     rdy_failed = checked and rdy.get("status") != "done"
     blocking = _blocking(_check_rows()) if checked else []
-    can_pre = bool(val and val["ok"])
-    can_run = (can_pre and checked and not rdy_failed and not blocking
-               and cfg["gate"]["ok"])
+    can_run = (checked and not rdy_failed and not blocking and cfg["gate"]["ok"])
     with st.container(border=True):
         card_header("Check and start", None, right=(
             "" if not checked else pill("blocked", "err") if blocking or rdy_failed
             else pill("ready", "ok")))
-        b0, b1, b2 = st.columns(3)
-        val_go = b0.button("Validate inputs" if val is None else "Validate again",
-                           icon=":material/rule:", disabled=not ready,
-                           type="primary" if val is None or not val["ok"] else "secondary",
-                           width="stretch")
-        pre_go = b1.button("Pre-run check" if not checked else "Check again",
-                           type="primary" if can_pre and not checked else "secondary",
-                           disabled=not can_pre, icon=":material/fact_check:",
-                           width="stretch")
+        b1, b2 = st.columns(2)
+        go = b1.button("Check" if val is None else "Check again",
+                       type="primary" if not checked else "secondary",
+                       disabled=not ready, icon=":material/fact_check:",
+                       width="stretch")
         official = cfg["run_type"] == "official"
         start_go = b2.button("Start official run" if official else "Start unofficial run",
                              type="primary", disabled=not can_run,
                              icon=":material/play_arrow:", width="stretch")
         if not ready:
-            caption("Choose where the 12 input files are, above.")
+            caption("Choose the inputs above.")
         elif val is None:
-            caption("Validate: are the files all there and readable, and how is their "
-                    "data quality, against the chosen config version.")
-        elif not can_pre:
-            caption("Fix the structural problems on the right and validate again.")
-        elif not checked:
-            caption("Runs every input validator with the chosen config, then a "
-                    "pricing dry run: which contracts would get no ECL, before "
-                    "anything is committed.")
+            caption("Checks the input files, the config and which contracts would "
+                    "get no ECL, before anything is committed.")
+        elif not val["ok"]:
+            caption("Fix the problems on the right and check again.")
         elif rdy_failed:
             callout("err", f"The pricing dry run failed: {rdy.get('message')}")
         elif blocking:
-            callout("err", f"Start is locked by {len(blocking)} blocking "
-                    "finding(s). See them on the right.")
+            callout("err", f"Start is locked by {len(blocking)} error(s). See them "
+                    "on the right.")
         elif not cfg["gate"]["ok"]:
             callout("warn", "Start is locked: " + cfg["gate"]["reason"])
-        else:
-            callout("ok", "Ready. The run pauses after phase 1 so you can add "
-                    "overrides, then finishes.")
-    if val_go:
-        _validate(body, cfg["version"])
-    if pre_go:
-        _request_checks({"input_dir": val["input_dir"], "version": cfg["version"],
-                         "run_type": cfg["run_type"]})
+        elif checked:
+            caption("Ready. The run pauses after phase 1 for overrides, then "
+                    "finishes.")
+    if go:
+        _check(body, cfg)
     if start_go:
         S["wf_phase_req"] = {"kind": "phase1", "payload": {
             "input_dir": val["input_dir"], "input_source": val["input_source"],
@@ -916,63 +889,77 @@ def _actions_card(val, cfg: dict, body: dict, ready: bool) -> None:
 # ======================================================== idle: results ====
 def _welcome() -> None:
     empty_state("Nothing checked yet",
-                "Choose where the input files come from and press **Validate "
-                "inputs**. Three layers of checks run before anything is "
-                "calculated:")
+                "Choose the inputs and press **Check**. It looks at:")
     st.markdown(
         '<div class="howto">'
-        '<div><b>1 · Structure</b><span>All 12 files present and readable, with '
-        'the columns the run needs.</span></div>'
-        '<div><b>2 · Data quality</b><span>Every row: dates, amounts, keys, '
-        'duplicates, and the links between files — every allocated collateral '
-        'exists, every contract has a customer.</span></div>'
-        '<div><b>3 · Pricing readiness</b><span>A dry run of the LIC build: which '
-        'contracts would get no ECL, or a blank, before anything is '
-        'committed.</span></div></div>', unsafe_allow_html=True)
+        '<div><b>1 · Inputs</b><span>All 12 files there and readable; every '
+        'row: dates, amounts, keys, duplicates, and the links between files.'
+        '</span></div>'
+        '<div><b>2 · Config</b><span>The chosen config version and its '
+        'reference tables are complete.</span></div>'
+        '<div><b>3 · Pricing</b><span>A dry run: which contracts would get no '
+        'ECL, or a blank, before anything is committed.</span></div></div>',
+        unsafe_allow_html=True)
 
 
-def _input_check(val: dict) -> None:
-    structural = pd.DataFrame(val["structural"])
-    files = structural[structural["check"].str.endswith(" present")]
-    n_files_ok = int((files["status"] == "PASS").sum())
-    dq = val.get("dq") or {}
-    rows = dq.get("findings") or []
-    c = severity_counts(rows)
-    auto = len(dq.get("standing") or [])
-    kpis([("Files found", f"{n_files_ok} of {len(files)}",
-           "ok" if n_files_ok == len(files) else "err", ""),
-          ("Structure", f"{val['n_pass']} passed", "err" if val["n_fail"] else "ok",
-           f"{val['n_fail']} failed" if val["n_fail"] else "all passed"),
-          ("Data quality", f"{c['err']} error(s)",
-           "err" if c["err"] else "warn" if c["warn"] or auto else "ok",
-           f"{c['warn']} warning(s)"
-           + (f" · **{auto} accepted automatically**" if auto else " · a preview")),
-          ("Extract date", _nice(val.get("extract_date")), "plum",
-           "the EXTRACTDA most rows carry")])
-    if not val["ok"]:
-        callout("err", f"{val['n_fail']} structural check(s) failed, so the inputs "
-                "cannot be used yet. Fix these, then validate again.",
-                title="The inputs are not usable.")
-        fails = structural[structural["status"] == "FAIL"]
-        findings([{"severity": "ERROR", "title": r["check"], "message": r["detail"]}
-                  for _, r in fails.iterrows()])
-    detail = val.get("clean_log") or {
-        k: {"header": v} for k, v in (val.get("strip_log") or {}).items() if v}
-    if detail:
-        callout("ok", "Removed before checking: " + _cleaned(detail)
-                + ". Rows like these are not data, so they are not findings. "
-                "Two rows with the same id that differ are not removed.",
-                title="Cleaned automatically.")
-    if val.get("dq_error"):
-        callout("warn", f"The data-quality preview could not run: {val['dq_error']}")
-    _standing_notice(dq.get("standing") or [], bool(dq.get("can_remove_standing")),
-                     "wf_stop_val", others=dq.get("standing_other") or [])
-    if rows:
-        caption("A preview: nothing here blocks yet. The pre-run check runs these "
-                "again with the chosen config version and decides what blocks.")
-        _findings_view(rows, "val", cap=620)
-    elif dq:
-        callout("ok", "Every data-quality check passed.")
+_ORDER = {"ERROR": 0, "WARN": 1, "INFO": 2, "ACCEPTED": 3}
+
+
+def _is_input(r: dict) -> bool:
+    """A finding about the input files (their fields and the links between
+    them); the rest are about the config, the reference tables and pricing."""
+    return str(r.get("id") or "").split("_", 1)[0] in ("INPUT", "XFILE")
+
+
+def _findings_table(rows: list[dict], key: str) -> None:
+    """Findings as one table, errors first."""
+    df = pd.DataFrame([{
+        "Severity": r.get("_sev") or _sev(r),
+        "Where": str(r.get("context") or ""),
+        "Check": str(r.get("description") or r.get("id") or ""),
+        "Detail": " — ".join(x for x in (str(r.get("message") or ""),
+                                          str(r.get("accepted_note") or "")) if x),
+    } for r in rows])
+    df = df.sort_values("Severity", key=lambda s: s.map(_ORDER).fillna(9),
+                        kind="stable")
+    st.dataframe(style_severity(df), hide_index=True, width="stretch", key=key,
+                 height=min(320, 38 + 35 * len(df)),
+                 column_config={
+                     "Severity": st.column_config.TextColumn(width="small"),
+                     "Where": st.column_config.TextColumn(width="small"),
+                     "Check": st.column_config.TextColumn(width="medium"),
+                     "Detail": st.column_config.TextColumn(width="large")})
+
+
+def _section(title: str, rows: list[dict]) -> None:
+    c = severity_counts([r for r in rows if not r.get("_sev")])
+    c["err"] += sum(1 for r in rows if r.get("_sev") == "ERROR")
+    bits = [pill(f"{c['err']} error(s)", "err") if c["err"] else "",
+            pill(f"{c['warn']} warning(s)", "warn") if c["warn"] else "",
+            pill(f"{c['info']} info", "info") if c["info"] else "",
+            pill(f"{c['muted']} accepted", "muted") if c["muted"] else ""]
+    st.markdown(f"**{title}** " + (" ".join(b for b in bits if b)
+                                   or pill("no findings", "ok")),
+                unsafe_allow_html=True)
+
+
+def _structural_rows(val: dict) -> list[dict]:
+    """The file checks that failed, as findings."""
+    out = []
+    for r in val.get("structural") or []:
+        if r.get("status") != "FAIL":
+            continue
+        chk = str(r["check"])
+        if chk.endswith(" present"):
+            name = chk[:-len(" present")]
+            out.append({"_sev": "ERROR", "context": name,
+                        "description": "File missing",
+                        "message": "looked for " + str(r["detail"]).removeprefix("tried ")})
+        else:
+            out.append({"_sev": "ERROR", "context": "", "description": chk,
+                        "message": r["detail"]})
+    return out
+
 
 
 _CLEANED = {"header": "repeated header", "trailer": "row-count trailer",
@@ -1065,12 +1052,19 @@ def _results(val) -> None:
         with st.container(border=True):
             _welcome()
         return
+    if not val["ok"]:
+        with st.container(border=True):
+            card_header("Check results", None, right=pill("not usable", "err"))
+            callout("err", "Fix these, then check again.",
+                    title=f"{val['n_fail']} problem(s) with the input files.")
+            rows = _structural_rows(val)
+            _section("Inputs", rows)
+            _findings_table(rows, "tbl_struct")
+        return
     if pre is None or rdy is None:
         with st.container(border=True):
-            card_header("Input check", None,
-                        right=pill("valid", "ok") if val["ok"]
-                        else pill("not usable", "err"))
-            _input_check(val)
+            empty_state("Check again",
+                        "The settings changed since the last check.")
         return
 
     rows = _check_rows()
@@ -1082,23 +1076,23 @@ def _results(val) -> None:
     lost = sum(((s.get(k) or {}).get("contracts") or 0)
                for k in ("No ECL", "Blank in LIC"))
     gap = (s.get("Priced - check") or {}).get("contracts") or 0
+    files = [r for r in val.get("structural") or [] if str(r["check"]).endswith(" present")]
     with st.container(border=True):
-        card_header("Pre-run check", None,
+        card_header("Check results", None,
                     right=pill("blocked", "err") if blocking or rdy.get("status") != "done"
                     else pill("ready", "ok"))
         if rdy.get("status") != "done":
             callout("err", f"The pricing dry run failed: {rdy.get('message')}",
                     title="Start is locked.")
         elif blocking:
-            text = f"**{len(blocking)} blocking finding(s)** stop the run. "
+            text = f"**{len(blocking)} error(s)** stop the run. "
             if acceptable:
                 text += (f"{len(acceptable)} can be accepted **for this run**, with "
-                         "a reason, for a known source issue the run has to live "
-                         "with (the next run asks again); ")
+                         "a reason (the next run asks again); ")
                 text += ("the rest must be fixed at source." if len(acceptable)
                          < len(blocking) else "otherwise fix them at source.")
             else:
-                text += "They must be fixed at source and the inputs validated again."
+                text += "Fix them at source and check again."
             if acceptable:
                 a, b = st.columns([4, 1.25], vertical_alignment="center")
                 with a:
@@ -1108,48 +1102,43 @@ def _results(val) -> None:
                     _accept_dialog(acceptable)
             else:
                 callout("err", text, title="Start is locked.")
-        elif _standing_hits(pre):
-            callout("warn", "Nothing blocks, because saved suppressions accept "
-                    f"**{len(_standing_hits(pre))} finding(s)** automatically "
-                    "(listed below)"
-                    + (f"; **{c['warn']} warning(s)** to review." if c["warn"]
-                       else "."), title="Ready to start.")
         elif c["warn"]:
-            callout("warn", f"No blocking findings. **{c['warn']} warning(s)** to "
-                    "review; they do not stop the run.", title="Ready to start.")
+            callout("warn", f"No errors. {c['warn']} warning(s) to review; they do "
+                    "not stop the run.", title="Ready to start.")
         else:
             callout("ok", "Every check passed and every contract will be priced.",
                     title="Ready to start.")
         _accepted_banners(pre)
-        kpis([("Blocking", money(len(blocking)), "err" if blocking else "ok",
-               "unaccepted errors"),
+        kpis([("Files", f"{sum(r['status'] == 'PASS' for r in files)} of {len(files)}",
+               "ok", _nice(pre.get("extract_date")) + " extract"),
+              ("Errors", money(len(blocking)), "err" if blocking else "ok", ""),
               ("Warnings", money(c["warn"]), "warn" if c["warn"] else "ok", ""),
-              ("Accepted", money(c["muted"]), "plum" if c["muted"] else "",
-               "for this run, or standing"),
               ("Contracts priced",
                f"{money((s.get('contracts') or 0) - lost)} of {money(s.get('contracts'))}",
                "err" if lost else "ok",
-               f"{money(lost)} would get no ECL or a blank" if lost else
+               f"{money(lost)} no ECL or blank" if lost else
                f"{money(gap)} from incomplete inputs" if gap else "every one")])
 
-        t_find, t_ready, t_gap, t_input = st.tabs([
-            f"Findings · {len(rows)}", "Pricing readiness",
-            f"Contracts with a gap · {money(rr.get('n_flagged') or 0)}",
-            "Input check"])
-        with t_find:
-            _findings_view(rows, "pre")
-        with t_ready:
+        inputs = [r for r in rows if _is_input(r)]
+        others = [r for r in rows if not _is_input(r)]
+        _section("Inputs", inputs)
+        if inputs:
+            _findings_table(inputs, "tbl_inputs")
+        detail = pre.get("clean_log") or {
+            k: {"header": v} for k, v in (pre.get("strip_log") or {}).items() if v}
+        if detail:
+            caption("Removed before checking (not data): " + _cleaned(detail) + ".")
+
+        _section("Pre-run checks", others)
+        if others:
+            _findings_table(others, "tbl_pre")
+        with st.expander("Pricing dry run"):
             _readiness_tab(rdy)
-        with t_gap:
-            if rr.get("flagged"):
-                caption("Every contract the run would not price cleanly, with its "
-                        "reasons.")
+        if rr.get("flagged"):
+            with st.expander(f"Contracts with a gap · {money(rr.get('n_flagged') or 0)}"):
                 st.dataframe(pd.DataFrame(rr["flagged"]), hide_index=True,
                              width="stretch", height=440)
-            else:
-                caption("None: every contract would be priced from complete inputs.")
-        with t_input:
-            _input_check(val)
+
 
 
 # ================================================================== page ====

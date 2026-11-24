@@ -159,14 +159,26 @@ accepts **.xlsx, .xls, SQL*Plus HTML saved as .xls, and .csv**.
 
 ## 4.3 Where the files go
 
-Three ways to give the pipeline its files (Section 7.2):
+Two ways to give the pipeline its files (Section 7.2):
 
-- **Data drop** — a dated sub-folder per quarter under the data-drop root,
-  e.g. `data_drop/2026-09-30/`, holding the 12 files. The newest folder is
-  offered first. This is the normal route.
-- **Input folder** — the folder named in the configuration (`input_dir`).
-- **Upload a zip** — a zip holding the 12 files, uploaded from your computer.
-- **Another folder** — any folder path on the machine that runs the tool.
+- **Folder** — the daily inputs folder, `ifrs_inputs`, beside the app folder
+  (e.g. `C:\Users\<you>\Documents\IFRS9_apps\ifrs_inputs`). Each day's
+  extracts go in a sub-folder named by the date, as they are: no zip, no
+  renaming, any of the formats above.
+
+  ```
+  ifrs_inputs\
+    2026-09-30\   AccountMaster.xls, Collateral.xlsx, ... (the 12 files)
+    2026-11-24\
+  ```
+
+  The date can be written `2026-11-24`, `20261124`, `24-11-2026`,
+  `24.11.2026` or `24Nov2026`, and may sit in a year folder
+  (`ifrs_inputs\2026\2026-11-24`). The files may also sit one folder further
+  in (`2026-11-24\IN\`). The app creates `ifrs_inputs` the first time it
+  starts. To use another parent folder, set `paths: inputs_root:` in
+  `config.yml`.
+- **Upload** — the 12 files (or one zip of them) uploaded from your computer.
 
 # 5. Configuration versions
 
@@ -406,11 +418,10 @@ vintage into a draft config version.
 
 The pipeline page takes a run from the 12 files to a finished, recorded run
 in four stages: **settings and inputs → check → review (overrides) →
-finish**. The three buttons of the **Check and start** card do the first part
-in order: **Validate inputs**, **Pre-run check**, **Start official run** (or
-**Start unofficial run**). Each is enabled when the one before has passed;
-changing a setting or the inputs sends you back a step. Nothing is written to
-the run history until the run is started.
+finish**. The **Check and start** card has two buttons: **Check** and **Start
+official run** (or **Start unofficial run**). Start is enabled once the check
+has passed; changing a setting or the inputs means checking again. Nothing is
+written to the run history until the run is started.
 
 ## 7.1 Settings
 
@@ -422,56 +433,58 @@ the run history until the run is started.
 | **Run type** | **Unofficial** / **Official** | *Unofficial*: testing and what-if; no approval; exports marked UNOFFICIAL. *Official*: the deliverable; needs an **approved** config version and a checker's approval. If the version is not approved an amber box says *An official run cannot start* and why. |
 | **Run purpose** | official: *Regulatory*; unofficial: *Non-regulatory*, *Impact analysis* | Every run is priced on the weighted curve and on each scenario either way. |
 | **Calculator version** | *this engine*, or an archived version | An archived calculator runs that version's frozen code, to reproduce an old run exactly. |
-| **Portfolio date** | dd/mm/yyyy | Filled automatically from the extracts' EXTRACTDA when they are validated. |
+| **Portfolio date** | dd/mm/yyyy | Set to the input date when you pick it, then to the extracts' EXTRACTDA when they are checked. |
 
 ## 7.2 Inputs
 
-![Choosing the data drop for the quarter.](images/pipe_q3_00_datadrop.png)
-
-1. Under **Where are the 12 input files?** choose **Input folder**, **Data
-   drop**, **Upload a zip** or **Another folder** (Section 4.3).
-2. For a data drop, pick the quarter's folder; the card lists the 12 files it
-   found and flags any missing one.
-3. Press **Validate inputs** (in the *Check and start* card). The tool reads every file and checks it against
-   the input schema; the card turns green (*valid*) or red (*N problem(s)*),
-   and the portfolio date is filled from the extracts.
-
-![Inputs validated: files read, rows kept, problems listed.](images/pipe_q2_02_validated.png)
-
-A file problem (missing file, missing required column, unreadable dates)
-stops here: fix the extract and press **Validate again**.
+1. In **Input extracts** choose **Folder** or **Upload** (Section 4.3).
+2. For **Folder**, pick the **Date of the inputs**. It starts on the latest
+   date there are inputs for. The card shows the folder and how many of the
+   12 files it holds. If there is no folder for that date it says *No inputs
+   for 24 Nov 2026*, with the latest date that has inputs.
+3. For **Upload**, choose the 12 files (or one zip).
 
 ## 7.3 Check
 
-Press **Pre-run check**. The tool prepares every contract exactly as
-the run would (ratings, staging inputs, EAD, collateral) without pricing, and
-reports:
+Press **Check**. In one go the tool:
 
-![The pre-run check: findings, pricing readiness, contracts with a gap.](images/pipe_q3_03_checked.png)
+1. finds the 12 files and opens them — a missing or unreadable file stops
+   here, listed under **Inputs**: fix it and press **Check again**;
+2. checks every row of the inputs and the chosen config version;
+3. prepares every contract exactly as the run would (ratings, staging
+   inputs, EAD, collateral) without pricing: which contracts would get no
+   ECL or a blank.
 
-- **Findings** — every validation finding, by severity: *Errors* (block an
-  official run), *Warnings*, *Info*, and *Accepted* (matched by a validation
-  suppression, Section 8.2). Each row gives the check, how many rows it hits,
-  and an example.
-- **Pricing readiness** — the exposure that would get **no ECL or a blank**
-  (a contract with no PD curve for its portfolio and grade, or no EIR),
-  and the exposure priced on incomplete inputs. The headline says *every
-  one* when nothing is lost.
-- **Contracts with a gap** — the contracts behind those numbers, one row each
-  with the reason. Download it and send it to the data owner.
-- **Input check** — row counts kept and dropped per file.
+The results are on the right, in **Check results**:
+
+![Check results: input findings first, then the pre-run checks.](images/pipe_check_results.png)
+
+- a line saying whether the run can start: *Ready to start*, or *Start is
+  locked* with the number of errors;
+- **Files**, **Errors**, **Warnings** and **Contracts priced**;
+- **Inputs** — the findings in the input files, one row each: severity,
+  file, check and detail, errors first;
+- **Pre-run checks** — the findings in the config, the reference tables and
+  the pricing dry run;
+- **Pricing dry run** (folded) — contracts and exposure by outcome, and why;
+- **Contracts with a gap** (folded, when there are any) — one row per
+  contract with the reason. Download it and send it to the data owner.
+
+Only **errors** stop the run. **Warnings** and **info** are to review; they
+do not stop it. Accepted findings show as *ACCEPTED* with who accepted them
+and why.
 
 The start button stays disabled, with a red *Start is locked* box, while
-there is a blocking finding or the official-run gate is not met. Some
-blocking findings can be **accepted for this run only**: press **Accept for
-this run…**, tick the **Findings to accept**, type a **Reason (required)**
-(e.g. *Schedule dates carry two-digit years in the source; IT ticket #1234;
-accepted pending the re-extract*) and **Accepted by**, and press **Accept for
-this run and re-check**. The acceptance is recorded on the run and in the
-audit trail; the next run asks again. Use it for a known source issue the run
-has to live with, never to get past a real error — for a finding that is
-expected every quarter, use a validation suppression (Section 8.2). Findings
-that cannot be accepted must be fixed at source.
+there is an error or the official-run gate is not met. Some errors can be
+**accepted for this run only**: press **Accept for this run…**, tick the
+**Findings to accept**, type a **Reason (required)** (e.g. *Schedule dates
+carry two-digit years in the source; IT ticket #1234; accepted pending the
+re-extract*) and **Accepted by**, and press **Accept for this run and
+re-check**. The acceptance is recorded on the run and in the audit trail;
+the next run asks again. Use it for a known source issue the run has to live
+with, never to get past a real error — for a finding that is expected every
+quarter, use a validation suppression (Section 8.2). Findings that cannot be
+accepted must be fixed at source.
 
 ## 7.4 Review and overrides
 
@@ -763,13 +776,15 @@ bar in the movement bridge.
 ![Browse runs: every run and where it stands.](images/runs_02_selected.png)
 
 Tiles: **Runs**, **Approved**, **Pending checker**, **Unofficial**, **With
-validation fails**. The table lists every run: status, run id, run date,
-purpose, type, scenario basis, portfolio date, run by, approver, config
-version, calculator version. Click a run to open it.
+validation errors**. The table lists every run: status, run id, run date,
+purpose, type, validation, portfolio date, run by, approver, config version,
+calculator version. **Validation** flags a run only for errors it left open
+(*🛑 2 errors*); warnings are counted beside *✅ OK* and accepted findings are
+not counted. Click a run to open it.
 
 | Tab | Shows |
 |---|---|
-| **Manifest** | the run's identity: id, start and finish, type, purpose, ECL basis, config version and its fingerprint, calculator version, input files and their checksums |
+| **Manifest** | the run's identity: id, start and finish, type, purpose, config version and its fingerprint, calculator version, input files and their checksums |
 | **Validation** | the run's findings |
 | **Readiness** | pricing readiness at the time of the run |
 | **Overrides** | every override with reason and maker |
