@@ -552,9 +552,11 @@ def assistant_status() -> dict:
     return get("/assistant/status")
 
 
-def assistant_ask(question: str, run_id: str | None, history: list) -> dict:
+def assistant_ask(question: str, run_id: str | None, history: list, model: str | None = None) -> dict:
+    # a methodology answer from a large model can take a few minutes
     return post("/assistant/ask",
-                {"question": question, "run_id": run_id, "history": history})
+                {"question": question, "run_id": run_id, "history": history, "model": model},
+                _timeout=(5, 600))
 
 
 def export_download(run_id: str) -> bytes:

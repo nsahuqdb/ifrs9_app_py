@@ -1492,9 +1492,13 @@ is previous run → that run; "biggest" means by ECL. You can name runs as
 - Each answer can build on the previous one (*now show it by stage*). Press
   **New chat** to start over.
 - Sector is not in the ECL report; ask by portfolio or account type.
-- It needs the bank's chat model configured by IT (an `assistant:` block in
-  `config.yml`, and the key, if any, in an environment variable). Until then
-  the page says how to switch it on.
+- **Model.** The box beside **New chat** picks the chat model: *Gemma 4
+  (31B)*, the default, or *Gemma 3 (12B)*. The models are listed under
+  `assistant: models:` in `config.yml`. Gemma 4 needs its key: put the line
+  `QDB_GEMMA4_API_KEY=<key>` in a file named `.env` in the app folder (copy
+  `.env.example`). The file is never committed and is read on every
+  question, so no restart is needed. Until the key is there the box shows
+  *(needs key)* and the page uses Gemma 3.
 
 ## 15.2 The documents
 

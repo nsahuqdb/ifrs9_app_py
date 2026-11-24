@@ -37,7 +37,8 @@ class TestUnconfigured:
             pytest.skip("configured")
         r = client.post("/api/assistant/ask", json={"question": "hello"})
         assert r.status_code == 503
-        assert "endpoint" in r.json()["detail"].lower()
+        d = r.json()["detail"].lower()
+        assert "endpoint" in d or "api key" in d     # what is missing, in words
 
     def test_an_empty_question_is_refused(self):
         r = client.post("/api/assistant/ask", json={"question": "   "})
@@ -47,8 +48,9 @@ class TestUnconfigured:
         """Only whether one is present. The status endpoint is unauthenticated
         as far as this app is concerned."""
         monkeypatch.setenv("IFRS9_LLM_API_KEY", "super-secret-value")
+        monkeypatch.setenv("QDB_GEMMA4_API_KEY", "sk-vllm-secret-value")
         body = client.get("/api/assistant/status").json()
-        assert "super-secret-value" not in str(body)
+        assert "super-secret-value" not in str(body) and "sk-vllm-secret-value" not in str(body)
 
     def test_the_key_comes_from_the_environment_not_the_config(self, monkeypatch):
         cfg = AssistantConfig(api_key_env="SOME_OTHER_VAR")
@@ -929,3 +931,83 @@ class TestFormulasAndLinks:
         p = agent._system_prompt("S", None)
         assert "Do NOT write formulas" in p
         assert all(d["kind"] == "section" for d in explain("How pit pd is calculated")["docs"])
+
+
+class TestModels:
+    """24 Nov 2026: Gemma 4 (31B) on its own gateway, with a key, as the
+    default; Gemma 3 stays as an option."""
+
+    @staticmethod
+    def _cfg(tmp_path, monkeypatch, env_text=None):
+        import shutil
+        from pathlib import Path
+        import backend.assistant.config as C
+        root = Path(__file__).resolve().parents[1]
+        shutil.copy(root / "config.yml", tmp_path / "config.yml")
+        monkeypatch.setenv("IFRS9_APP_CONFIG", str(tmp_path / "config.yml"))
+        for k in ("IFRS9_LLM_ENDPOINT", "IFRS9_LLM_MODEL", "IFRS9_LLM_API_KEY_ENV", "IFRS9_LLM_PROFILE",
+                  "QDB_GEMMA4_API_KEY"):
+            monkeypatch.delenv(k, raising=False)
+        monkeypatch.setattr(C, "APP_ROOT", tmp_path)
+        monkeypatch.chdir(tmp_path)
+        if env_text is not None:
+            (tmp_path / ".env").write_text(env_text)
+        return C
+
+    def test_gemma4_is_the_default(self, tmp_path, monkeypatch):
+        C = self._cfg(tmp_path, monkeypatch)
+        cfg = C.load_config()
+        assert cfg.profile == "gemma4" and cfg.model == "gemma-4-31B-it"
+        assert cfg.endpoint == "https://gemma4-api-aicloud.qdb.qa/v1/chat/completions"
+        assert cfg.verify_ssl is False and cfg.api_key_env == "QDB_GEMMA4_API_KEY"
+
+    def test_without_its_key_gemma4_says_where_the_key_goes(self, tmp_path, monkeypatch):
+        C = self._cfg(tmp_path, monkeypatch)
+        why = C.load_config().unavailable_reason()
+        assert "QDB_GEMMA4_API_KEY=" in why and ".env" in why
+        ms = {m["id"]: m for m in C.list_models()}
+        assert ms["gemma4"]["default"] and not ms["gemma4"]["available"]
+        assert ms["gemma3"]["available"]
+
+    def test_the_key_is_read_from_dotenv(self, tmp_path, monkeypatch):
+        C = self._cfg(tmp_path, monkeypatch, '# keys\nQDB_GEMMA4_API_KEY="sk-vllm-test"\n')
+        cfg = C.load_config()
+        assert cfg.api_key == "sk-vllm-test" and cfg.unavailable_reason() is None
+
+    def test_gemma3_can_still_be_picked(self, tmp_path, monkeypatch):
+        C = self._cfg(tmp_path, monkeypatch)
+        cfg = C.load_config("gemma3")
+        assert cfg.model == "unsloth/gemma-3-12b-it" and cfg.verify_ssl is True
+        assert cfg.unavailable_reason() is None
+
+    def test_the_call_sends_the_key_and_skips_the_certificate_check(self, tmp_path, monkeypatch):
+        C = self._cfg(tmp_path, monkeypatch, "QDB_GEMMA4_API_KEY=sk-vllm-test\n")
+        import backend.assistant.client as client
+        seen = {}
+
+        class R:
+            status_code = 200
+            text = ""
+
+            def json(self):
+                return {"choices": [{"message": {"content": '<think>working</think>{"action":"final"}'}}]}
+
+        def post(url, json, headers, timeout, verify):
+            seen.update(url=url, model=json["model"], auth=headers.get("Authorization"), verify=verify)
+            return R()
+        monkeypatch.setattr(client.requests, "post", post)
+        out = client.chat([{"role": "user", "content": "hi"}], C.load_config())
+        assert seen == {"url": "https://gemma4-api-aicloud.qdb.qa/v1/chat/completions", "model": "gemma-4-31B-it",
+                        "auth": "Bearer sk-vllm-test", "verify": False}
+        assert out == '{"action":"final"}'
+
+    def test_a_ca_file_path_turns_the_check_on(self):
+        from backend.assistant.client import _verify
+        assert _verify(AssistantConfig(verify_ssl="C:/certs/qdb.pem")) == "C:/certs/qdb.pem"
+        assert _verify(AssistantConfig(verify_ssl=True)) is True
+
+    def test_dotenv_and_keys_are_never_committed(self):
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[1]
+        assert ".env" in (root / ".gitignore").read_text().split()
+        assert "sk-vllm-xxxxxx" in (root / ".env.example").read_text()

@@ -142,14 +142,31 @@ approval:
 # ----------------------------------------------------------------------------
 assistant:
   enabled: true
-  endpoint: "https://aimodel.qdb.qa/v1/chat/completions"
-  model: "unsloth/gemma-3-12b-it"
+  default_model: gemma4            # the model used unless the Assistant page picks another
+  models:
+    gemma4:
+      label: "Gemma 4 (31B)"
+      endpoint: "https://gemma4-api-aicloud.qdb.qa/v1/chat/completions"
+      model: "gemma-4-31B-it"
+      api_key_env: "QDB_GEMMA4_API_KEY"   # the key goes in .env (app folder): QDB_GEMMA4_API_KEY=sk-...
+      key_required: true
+      # The gateway's certificate is not in Python's trust store (the curl
+      # example uses -k), so the certificate check is off for this endpoint.
+      # To check it, set this to the path of the bank's CA certificate file,
+      # e.g. "C:/certs/qdb-root-ca.pem".
+      verify_ssl: false
+      timeout_seconds: 120         # a larger model answers more slowly
+    gemma3:
+      label: "Gemma 3 (12B)"
+      endpoint: "https://aimodel.qdb.qa/v1/chat/completions"
+      model: "unsloth/gemma-3-12b-it"
+      api_key_env: "QDB_LLM_API_KEY"      # optional: this endpoint is open
+      verify_ssl: true
+  # shared by every model (a model above can override any of these)
   temperature: 0.3        # lower than the Postman default (0.7) for factual grounding
   top_p: 0.8
   max_tokens: 1024
   timeout_seconds: 60
-  api_key_env: "QDB_LLM_API_KEY"   # env var name; leave endpoint open if unset
   max_history_turns: 8             # how many prior turns to send for context
   max_context_chars: 24000         # cap on injected grounding context
   max_tool_calls: 6                # max analytics tool calls per question (agentic loop)
-  verify_ssl: true                 # set false only if the internal cert isn't trusted

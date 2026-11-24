@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from ..assistant import TOOLS, answer, load_config
+from ..assistant.config import list_models
 from ..assistant.agent import RAW
 
 router = APIRouter(tags=["assistant"])
@@ -28,6 +29,9 @@ def status() -> dict:
         "max_tool_calls": cfg.max_tool_calls,
         "config_source": cfg.source,
         "tools": list(TOOLS) + list(RAW),
+        "profile": cfg.profile,
+        "label": cfg.label or cfg.model,
+        "models": list_models(),
     }
 
 
@@ -54,13 +58,14 @@ class Ask(BaseModel):
     question: str
     run_id: str | None = None
     history: list[dict] = Field(default_factory=list)
+    model: str | None = None        # an entry of assistant.models; None = the default
 
 
 @router.post("/assistant/ask")
 def ask(body: Ask) -> dict:
     if not body.question.strip():
         raise HTTPException(400, "ask a question")
-    cfg = load_config()
+    cfg = load_config(body.model or None)
     if cfg.unavailable_reason():
         raise HTTPException(503, cfg.unavailable_reason())
     # Only the two roles the protocol uses; anything else is not this app's.

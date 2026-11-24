@@ -7,9 +7,26 @@ message rather than the payload that produced it.
 """
 from __future__ import annotations
 
+import re
+import warnings
+
 import requests
 
 from .config import AssistantConfig
+
+# Reasoning models may put their working before the answer; only the answer
+# is the reply.
+_THINK = re.compile(r"<(think|thinking|thought|reasoning)>.*?</\1>", re.S | re.I)
+
+
+def _verify(cfg: AssistantConfig):
+    """requests' verify: True, False, or a CA certificate file. With the check
+    off (an internal gateway whose certificate Python does not trust), the
+    warning urllib3 prints on every call is silenced for that call only."""
+    v = cfg.verify_ssl
+    if isinstance(v, str) and v.strip():
+        return v.strip()
+    return bool(v)
 
 
 class AssistantError(RuntimeError):
@@ -65,8 +82,13 @@ def chat(messages: list[dict], cfg: AssistantConfig) -> str:
         "max_tokens": cfg.max_tokens,
     }
     try:
-        resp = requests.post(cfg.endpoint, json=payload, headers=headers,
-                             timeout=cfg.timeout_seconds, verify=cfg.verify_ssl)
+        verify = _verify(cfg)
+        with warnings.catch_warnings():
+            if verify is False:
+                from urllib3.exceptions import InsecureRequestWarning
+                warnings.simplefilter("ignore", InsecureRequestWarning)
+            resp = requests.post(cfg.endpoint, json=payload, headers=headers,
+                                 timeout=cfg.timeout_seconds, verify=verify)
     except requests.Timeout as exc:
         raise AssistantError(
             f"The model did not answer within {cfg.timeout_seconds:g}s.") from exc
@@ -81,7 +103,8 @@ def chat(messages: list[dict], cfg: AssistantConfig) -> str:
             f"{_trim(resp.text)}")
     try:
         body = resp.json()
-        return body["choices"][0]["message"]["content"] or ""
+        msg = body["choices"][0]["message"]
+        return _THINK.sub("", msg.get("content") or "").strip()
     except Exception as exc:
         raise AssistantError(
             f"The model endpoint returned something unexpected: "

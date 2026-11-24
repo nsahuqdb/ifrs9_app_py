@@ -23,21 +23,20 @@ page_setup("Assistant", "Questions about the runs, the model and the tool")
 with guard():
     status = api.assistant_status()
 
-if not status.get("available"):
+MODELS = status.get("models") or []
+usable = [m for m in MODELS if m.get("available")]
+if not status.get("available") and not usable:
     st.info(status.get("reason", "The assistant is not configured."), icon="🔌")
     st.markdown(f"""
-It needs an OpenAI-compatible chat endpoint, set in the app's `config.yml`
-under `assistant:` or in the environment:
+It needs an OpenAI-compatible chat endpoint, listed in the app's `config.yml`
+under `assistant: models:`. A key goes in the `.env` file of the app folder,
+one line per key, for example:
 
-```yaml
-assistant:
-  enabled: true
-  endpoint: https://your-gateway/v1/chat/completions
-  model: your-model-name
-  api_key_env: {status.get('api_key_env', 'IFRS9_LLM_API_KEY')}
+```
+{status.get('api_key_env', 'QDB_GEMMA4_API_KEY')}=sk-...
 ```
 
-The key is read only from the environment variable named there.
+The key is read on every question, so no restart is needed.
 """)
     st.stop()
 
@@ -343,12 +342,29 @@ def _queue(q: str) -> None:
 
 
 # ------------------------------------------------------------------- page --
-c1, c2 = st.columns([6, 1])
+c1, c3, c2 = st.columns([4.6, 1.6, 1], vertical_alignment="bottom")
 c1.caption(f"Focus: {run_id or 'the most recent run'} · answers use the same figures as the pages, "
            "the documents under Help and the engine's code")
+model_id = None
+if MODELS:
+    ids = [m["id"] for m in MODELS]
+    if S.get("assistant_model") not in ids:
+        default = next((m["id"] for m in MODELS if m.get("default") and m.get("available")), None)
+        S["assistant_model"] = default or (usable[0]["id"] if usable else ids[0])
+    label = {m["id"]: m["label"] + ("" if m.get("available") else " (needs key)") for m in MODELS}
+    model_id = c3.selectbox("Model", ids, format_func=lambda i: label[i], key="assistant_model",
+                            label_visibility="collapsed")
+    chosen = next(m for m in MODELS if m["id"] == model_id)
+    dflt = next((m for m in MODELS if m.get("default")), None)
+    if not chosen.get("available"):
+        st.warning(chosen.get("reason") or "This model cannot be used now.", icon=":material/key:")
+    elif dflt and not dflt.get("available") and dflt["id"] != model_id:
+        st.caption(f":material/key: {dflt['label']} is the default but cannot be used yet: {dflt.get('reason')} "
+                   f"Until then the assistant uses {chosen['label']}.")
 if c2.button("New chat", use_container_width=True, disabled=not history, icon=":material/refresh:"):
     S["assistant_history"] = []
     st.rerun()
+model_ok = not MODELS or next((m.get("available") for m in MODELS if m["id"] == model_id), True)
 
 if not history:
     st.markdown("##### Try")
@@ -363,8 +379,8 @@ for i, turn in enumerate(history):
         else:
             render(turn, i)
 
-typed = st.chat_input("Ask about a run, the model, the config or how the tool works")
-question = typed or S.pop("assistant_pending", None)
+typed = st.chat_input("Ask about a run, the model, the config or how the tool works", disabled=not model_ok)
+question = (typed or S.pop("assistant_pending", None)) if model_ok else None
 if question:
     history.append({"role": "user", "content": question})
     with st.chat_message("user"):
@@ -382,7 +398,7 @@ if question:
     with st.chat_message("assistant"):
         with st.spinner("Looking it up…"):
             try:
-                r = api.assistant_ask(question, run_id, plain)
+                r = api.assistant_ask(question, run_id, plain, model_id)
             except api.BackendError as e:
                 r = {"ok": False, "text": str(e)}
     history.append({"role": "assistant", "content": r.get("text") or "", "question": question,

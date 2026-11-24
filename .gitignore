@@ -47,3 +47,6 @@ launcher_logs/
 # regulatory texts the user keeps on the machine; only the README is shared
 docs/regulatory/*
 !docs/regulatory/README.md
+
+# keys for the assistant's model endpoints (QDB_GEMMA4_API_KEY=...): never committed
+.env
