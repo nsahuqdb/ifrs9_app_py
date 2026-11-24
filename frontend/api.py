@@ -976,6 +976,19 @@ def scn_price(run_id: str, scenario: dict, vintage: str | None = None) -> dict:
                 _timeout=LONG)
 
 
+def scn_scenario_sensitivity(run_id: str, scenario: dict, vintage: str | None = None) -> dict:
+    return post(f"/scenarios/{run_id}/scenario_sensitivity",
+                {"scenario": scenario, "vintage": vintage}, _timeout=LONG)
+
+
+def scn_risk_by_scenario(run_id: str, scenarios: list, paths: int,
+                         vintage: str | None = None) -> dict:
+    """ECL at risk around each scenario (None: the forecast alone)."""
+    return post(f"/scenarios/{run_id}/risk_by_scenario",
+                {"scenarios": scenarios, "paths": int(paths), "vintage": vintage},
+                _timeout=LONG)
+
+
 def scn_drivers(run_id: str, scenario: dict, vintage: str | None = None) -> dict:
     return post(f"/scenarios/{run_id}/drivers", {"scenario": scenario, "vintage": vintage},
                 _timeout=LONG)

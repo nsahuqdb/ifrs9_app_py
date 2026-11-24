@@ -57,18 +57,20 @@ def _curves_chart(df: pd.DataFrame, y: str, title: str, yfmt: str,
     import plotly.express as px
     from plotly.colors import sample_colorscale
 
-    cols = (sample_colorscale("Viridis", [i / max(len(order) - 1, 1)
+    cols = (sample_colorscale([[0, "#93ca15"], [0.35, "#0092a6"], [0.7, "#003c52"], [1, "#8b153c"]], [i / max(len(order) - 1, 1)
                                           for i in range(len(order))])
             if len(order) > 1 else [PLUM])
-    fig = px.line(df, x="month", y=y, color="rating", title=title,
+    fig = px.line(df, x="year", y=y, color="rating", title=title,
                   category_orders={"rating": order},
-                  color_discrete_sequence=cols,
-                  labels={"month": "Month", y: "%", "rating": "Rating"})
+                  color_discrete_sequence=cols, markers=df["year"].nunique() <= 15,
+                  labels={"year": "Year", y: "%", "rating": "Rating"})
     fig.update_traces(line=dict(width=2.2))
+    n = int(df["year"].max() or 1)
     fig.update_layout(height=380, margin=dict(l=8, r=8, t=40, b=8),
                       plot_bgcolor="white", paper_bgcolor="white",
-                      xaxis=dict(showgrid=False),
-                      yaxis=dict(gridcolor="#f0eef4", tickformat=yfmt),
+                      xaxis=dict(showgrid=False, tickformat="d",
+                                 dtick=1 if n <= 15 else 5 if n <= 30 else 10),
+                      yaxis=dict(gridcolor="#edf1f3", tickformat=yfmt),
                       legend=dict(font=dict(size=11)),
                       font=dict(size=12),
                       title=dict(font=dict(size=13, color="#2a2f3a")))
@@ -117,7 +119,7 @@ with pd_tab:
                 "means the large exposures sit in the worse grades.")
         _pd_table(show, "group", lab)
 
-    curves = pd.DataFrame(r.get("pd_curves", []))
+    curves = pd.DataFrame(r.get("pd_curves_yearly", []))
     if len(curves):
         st.subheader("PD term structure")
         caption("One set of curves for the internally rated book and one for "
@@ -125,9 +127,11 @@ with pd_tab:
                 "scale.")
         scales = [sc for sc in ("Internal", "External")
                   if sc in set(curves["scale"])]
-        c1, c2 = st.columns([1, 3])
+        c1, c2, c3 = st.columns([1, 3, 1])
         with c1:
             sc = st.selectbox("Rating scale", scales, key="risk_curve_scale")
+        with c3:
+            yrs = st.selectbox("Years", [10, 20, 30, 50], key="risk_curve_years")
         part = curves[curves["scale"] == sc]
         order = (part.drop_duplicates("rating").sort_values("bucket")["rating"]
                  .tolist())
@@ -141,17 +145,17 @@ with pd_tab:
         if not picked:
             st.info("Pick one or more ratings to plot.")
         else:
-            sel = part[part["rating"].isin(picked)]
+            sel = part[part["rating"].isin(picked) & (part["year"] <= yrs)]
             keep = [o for o in order if o in picked]
             c1, c2 = st.columns(2)
             with c1:
-                _curves_chart(sel, "cum_pd", "Cumulative PD (%)", ".2f", keep)
+                _curves_chart(sel, "cum_pd", "Cumulative PD by year (%)", ".2f", keep)
             with c2:
-                _curves_chart(sel, "marginal_pd", "Marginal PD by month (%)",
-                              ".3f", keep)
-            caption("A mis-built curve shows in the marginal PD: a step, a "
-                    "flat stretch, or a month that goes backwards. A worse "
-                    "grade should sit above a better one throughout.")
+                _curves_chart(sel, "marginal_pd", "Marginal PD by year (%)",
+                              ".2f", keep)
+            caption("Cumulative: the PD by the end of the year. Marginal: the "
+                    "share of contracts that default in that year. A worse grade "
+                    "should sit above a better one throughout.")
 
 with lgd_tab:
     floor = pd.DataFrame(r["lgd_floor"])

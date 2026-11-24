@@ -1,17 +1,18 @@
 [theme]
-primaryColor = "#5b1f6e"
+primaryColor = "#003c52"
 backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f7f5fa"
+secondaryBackgroundColor = "#f5f8f9"
 textColor = "#1f2430"
 font = "sans serif"
 baseFontSize = 15
 baseRadius = "0.55rem"
-borderColor = "#e4e0ea"
+borderColor = "#e2e8eb"
 showWidgetBorder = true
-dataframeHeaderBackgroundColor = "#f6f3f9"
-linkColor = "#5b1f6e"
-chartCategoricalColors = ["#5b1f6e", "#8e5aa3", "#0d9488", "#c9a9d8", "#7c3aed",
-                          "#5eead4", "#8a94a6", "#d97706"]
+dataframeHeaderBackgroundColor = "#eef4f6"
+linkColor = "#0092a6"
+# QDB template colours: navy, teal, sky, lime, burgundy, orange
+chartCategoricalColors = ["#003c52", "#0092a6", "#00a3eb", "#93ca15", "#8b153c",
+                          "#ff4a00", "#7fc8d2", "#8a94a6"]
 
 [client]
 # No Deploy button or developer menu: this is an application, not a notebook.

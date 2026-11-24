@@ -28,7 +28,7 @@ def history_and_forecast(df: pd.DataFrame, title: str) -> None:
     hist, fc = d[act], d[~act]
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=hist["year"], y=hist["value"], mode="lines+markers",
-                             name="History", line=dict(color="#5b1f6e", width=2.5),
+                             name="History", line=dict(color="#003c52", width=2.5),
                              marker=dict(size=5)))
     if len(fc):
         joined = pd.concat([hist.tail(1), fc]) if len(hist) else fc
@@ -39,7 +39,7 @@ def history_and_forecast(df: pd.DataFrame, title: str) -> None:
     fig.update_layout(title=title, height=340, margin=dict(l=8, r=8, t=40, b=8),
                       plot_bgcolor="white", paper_bgcolor="white",
                       legend=dict(orientation="h", y=-0.15),
-                      xaxis=dict(showgrid=False), yaxis=dict(gridcolor="#f0eef4"))
+                      xaxis=dict(showgrid=False), yaxis=dict(gridcolor="#edf1f3"))
     st.plotly_chart(fig, use_container_width=True)
 
 

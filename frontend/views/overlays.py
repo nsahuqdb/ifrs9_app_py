@@ -1,8 +1,8 @@
 """Management overlay: post-model adjustments, kept as sets of rules.
 
 One page, laid out like Config versions: the overlays in a table; select one
-to see its rules. A draft is edited, checked against the run selected at the
-top, and marked tested by its maker, which locks it: unofficial runs may then
+to see its rules. A draft is edited, checked against a run chosen
+in its Check section, and marked tested by its maker, which locks it: unofficial runs may then
 use it, and it goes to the Approval queue, where somebody else approves it for
 official runs. A locked overlay is changed by copying it to a new draft. Only
 a draft is removed. Stage 3 is never touched, and a contract matched by two
@@ -23,7 +23,13 @@ page_setup("Management overlay",
            "tested by its maker (locked; unofficial runs), then approved by somebody "
            "else (official runs). Apply it to a run from the Runs page.")
 
-run_id = S.get("run_id")
+def _run_ids() -> list[str]:
+    """The runs an overlay can be checked against, newest first."""
+    try:
+        return [r["run_id"] for r in api.runs() if r.get("has_report")]
+    except api.BackendError:
+        return []
+
 
 METHODS, LEVELS = OVERLAY_METHODS, OVERLAY_LEVELS
 L_LABEL = {v: k for k, v in LEVELS.items()}
@@ -138,10 +144,16 @@ def _detail(b: dict) -> None:
 
     # ---- check against the selected run
     st.markdown("**Check against a run**")
-    if not run_id:
-        caption("Select a run at the top to check this overlay against it.")
-    elif st.button(f"Check against run {run_id}", icon=":material/science:",
-                   key=f"ovc_{oid}"):
+    ids = _run_ids()
+    run_id = None
+    if not ids:
+        caption("There is no run to check it against yet.")
+    else:
+        c1, c2 = st.columns([2, 1], vertical_alignment="bottom")
+        run_id = c1.selectbox("Run", ids, key=f"ovr_{oid}")
+        go = c2.button("Check", icon=":material/science:", key=f"ovc_{oid}",
+                       width="stretch")
+    if run_id and go:
         with guard():
             pv = (api.overlay_preview_rules(run_id, oid, rules) if editable
                   else api.preview_bundle(oid, run_id))

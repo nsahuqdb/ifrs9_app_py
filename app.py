@@ -126,8 +126,6 @@ pages = {
         st.Page(P + "overlays.py", title="Management overlay", icon=":material/tune:"),
         st.Page(P + "suppressions.py", title="Validation suppressions",
                 icon=":material/rule_folder:"),
-        st.Page(P + "config.py", title="Live configuration",
-                icon=":material/settings:"),
         st.Page(P + "assumptions.py", title="Model assumptions",
                 icon=":material/function:"),
         st.Page(P + "audit.py", title="Audit log", icon=":material/history:"),
@@ -152,7 +150,7 @@ NEEDS_RUN = {"Overview", "Portfolio view", "Staging", "Concentration", "Segments
              "Parameter stress", "Scenario stress",
              "Model assumptions", "ECL calculator"}
 COMPARES = {"Movement", "Migration", "Reconcile & export"}
-OPTIONAL_RUN = {"Management overlay", "Assistant", "Audit log"}
+OPTIONAL_RUN = {"Assistant"}
 
 nav = st.navigation(pages, position="top")
 # The menu holding the page on screen is marked like the page in its list.
@@ -165,7 +163,7 @@ others = [i for i in ids if i != S["run_id"]]
 if S.get("compare_id") not in others:
     S["compare_id"] = others[0] if others else None
 
-mode = ("compare" if nav.title in COMPARES or nav.title == "Audit log"
+mode = ("compare" if nav.title in COMPARES
         else "run" if nav.title in NEEDS_RUN | OPTIONAL_RUN else None)
 S["_runbar"] = {"mode": mode, "runs": with_report} if mode and ids else None
 

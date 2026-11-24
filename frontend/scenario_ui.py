@@ -122,7 +122,7 @@ SHAPES = {"one_year": "One year", "recover": "Recovers", "held": "Held",
 DRIVER_COLOUR = {"GDP_WLD": "#2a78d6", "OIL_PRICE": "#eb6834", "US_RATE": "#1baf7a",
                  "GOV_SPEND_QAT": "#eda100", "NONOIL_GDP_QAT": "#e87ba4",
                  "CREDIT_QAT": "#008300", "GDP_QAT": "#6250d6", "PROPERTY_QAT": "#6250d6",
-                 "GDP_GCC": "#6250d6", "_momentum": "#c3bfcc", "_set": "#dccbe6"}
+                 "GDP_GCC": "#6250d6", "_momentum": "#c0c9ce", "_set": "#c6e2e7"}
 
 CSS = """
 <style>
@@ -130,8 +130,8 @@ CSS = """
   background:#fff; border:1px solid var(--line); border-radius:10px; overflow:hidden;
   margin:.15rem 0 .4rem;}
 .scn-table th {font-weight:600; color:var(--muted); font-size:.76rem; padding:.5rem .7rem;
-  background:#faf8fc; border-bottom:1px solid var(--line); text-align:left; white-space:nowrap;}
-.scn-table td {padding:.45rem .7rem; border-bottom:1px solid #f1eef5; color:var(--ink);
+  background:#f5f8f9; border-bottom:1px solid var(--line); text-align:left; white-space:nowrap;}
+.scn-table td {padding:.45rem .7rem; border-bottom:1px solid #eef2f4; color:var(--ink);
   vertical-align:middle;}
 .scn-table tr:last-child td {border-bottom:none;}
 .scn-table th.num, .scn-table td.num {text-align:right; font-variant-numeric:tabular-nums;
@@ -141,12 +141,12 @@ CSS = """
 .chip {display:inline-block; padding:0 7px; border-radius:999px; font-size:.7rem; line-height:1.35rem;
   font-weight:600; border:1px solid transparent; white-space:nowrap;}
 .chip-set {background:var(--plum-100); color:var(--plum); border-color:var(--plum-200);}
-.chip-linked {background:#e6f6f4; color:#0f766e; border-color:#b7e4de;}
+.chip-linked {background:#e6f4f6; color:#007386; border-color:#b3dde4;}
 .scn-sec {font-size:.8rem; font-weight:700; letter-spacing:.04em; text-transform:uppercase;
   color:var(--muted); margin:.9rem 0 .2rem;}
 .scn-text {color:var(--ink-2); line-height:1.6; font-size:.92rem; margin:0 0 .9rem;}
 .scn-var {display:flex; gap:.6rem; align-items:baseline; padding:.35rem 0;
-  border-bottom:1px solid #f1eef5;}
+  border-bottom:1px solid #eef2f4;}
 .scn-var:last-child {border-bottom:none; margin-bottom:.8rem;}
 .scn-var .nm {font-weight:600; color:var(--ink); min-width:13rem;}
 .scn-var .vals {font-variant-numeric:tabular-nums; color:var(--plum); min-width:11rem;
@@ -493,7 +493,7 @@ def _layout(fig, rows: int, per_row: int) -> None:
                       paper_bgcolor="white", font=dict(size=11, color="#4a5162"),
                       legend=dict(orientation="h", yref="container", y=0.995, yanchor="top",
                                   x=0, xanchor="left", font=dict(size=11.5)))
-    fig.update_yaxes(gridcolor="#f2eff6", zerolinecolor="#ded9e6")
+    fig.update_yaxes(gridcolor="#eef2f4", zerolinecolor="#d5dee2")
     fig.update_annotations(font=dict(size=11.5, color="#2a2f3a"))
 
 
@@ -519,7 +519,7 @@ def shock_grid(paths: list, height_per_row: int = 190) -> None:
         x = d[d["variable"] == v].sort_values("t")
         role = x["role"].iloc[0]
         rr, cc = i // cols + 1, i % cols + 1
-        fig.add_hline(y=0, line=dict(color="#d9d4e0", width=1), row=rr, col=cc)
+        fig.add_hline(y=0, line=dict(color="#d3dce0", width=1), row=rr, col=cc)
         mc = ([PLUM if bool(z) else TEAL for z in x["set"]]
               if role == "main" and "set" in x else ROLE_COLOUR.get(role, GREY))
         fig.add_trace(go.Scatter(x=x["t"], y=x["move"], mode="lines+markers",
@@ -573,7 +573,7 @@ def level_grid(paths: list, units: dict | None = None, height_per_row: int = 190
         role = x["role"].iloc[0]
         rr, cc = i // cols + 1, i % cols + 1
         fig.add_trace(go.Scatter(x=x["year"], y=x["baseline"], mode="lines+markers",
-                                 line=dict(color="#b8b2c2", width=2), marker=dict(size=5),
+                                 line=dict(color="#b4bfc5", width=2), marker=dict(size=5),
                                  showlegend=False,
                                  hovertemplate="%{x}: %{y:.2f}<extra>forecast</extra>"),
                       row=rr, col=cc)
@@ -582,7 +582,7 @@ def level_grid(paths: list, units: dict | None = None, height_per_row: int = 190
                                  marker=dict(size=6), showlegend=False,
                                  hovertemplate="%{x}: %{y:.2f}<extra>scenario</extra>"),
                       row=rr, col=cc)
-    items = [("Forecast in the macro data", "#b8b2c2", "solid", "lines+markers"),
+    items = [("Forecast in the macro data", "#b4bfc5", "solid", "lines+markers"),
              ("Under the scenario: set", ROLE_COLOUR["main"], "solid", "lines+markers"),
              ("Under the scenario: linked", ROLE_COLOUR["linked"], "solid", "lines+markers")]
     _legend(fig, items)
@@ -631,7 +631,7 @@ def history_grid(series: list, episode: list, units: dict | None = None,
                                      showlegend=False, hovertemplate="%{x}: %{y:.1f}"
                                      "<extra>projection</extra>"), row=rr, col=cc)
         if e0 is not None:
-            fig.add_vrect(x0=e0 - 0.5, x1=e1 + 0.5, fillcolor="#efe6f3", opacity=0.7,
+            fig.add_vrect(x0=e0 - 0.5, x1=e1 + 0.5, fillcolor="#e3f0f3", opacity=0.7,
                           line_width=0, layer="below", row=rr, col=cc)
     items = [("Recorded: set by the scenario", PLUM, "solid", "lines+markers"),
              ("Recorded: linked in the scenario", TEAL, "solid", "lines+markers")]
@@ -639,7 +639,7 @@ def history_grid(series: list, episode: list, units: dict | None = None,
         items.append(("IMF projection", GREY, "dot", "lines"))
     _legend(fig, items)
     fig.add_trace(go.Scatter(x=[None], y=[None], mode="markers", name="Years replayed",
-                             marker=dict(size=12, symbol="square", color="#efe6f3"),
+                             marker=dict(size=12, symbol="square", color="#e3f0f3"),
                              showlegend=True, hoverinfo="skip"), row=1, col=1)
     _layout(fig, rows, height_per_row)
     fig.update_xaxes(showgrid=False, tickformat="d")
@@ -765,9 +765,9 @@ def _graph(d: pd.DataFrame, e: pd.DataFrame) -> str:
         lab = (f'<<b>{esc(g["label"].iloc[0])}</b><br/>'
                f'<font point-size="10">{esc(val)}</font>>')
         if role == "main":
-            st_ = 'fillcolor="#5b1f6e", color="#5b1f6e", fontcolor="white"'
+            st_ = 'fillcolor="#003c52", color="#003c52", fontcolor="white"'
         else:
-            st_ = 'fillcolor="#e9f7f5", color="#0d9488", fontcolor="#1f2430"'
+            st_ = 'fillcolor="#e6f4f6", color="#0092a6", fontcolor="#1f2430"'
         lines.append(f'"{v}" [label={lab}, {st_}];')
     src = [v for v in present if (d[d["variable"] == v]["role"] == "main").all()
            and not (e["variable"] == v).any()]
@@ -813,7 +813,7 @@ def _bars(v: str, g: pd.DataFrame, e: pd.DataFrame, labels: dict, H: int) -> Non
                       margin=dict(l=6, r=6, t=6, b=6), plot_bgcolor="white",
                       paper_bgcolor="white", font=dict(size=11, color="#4a5162"),
                       legend=dict(orientation="h", y=-0.18, x=0, font=dict(size=10.5)),
-                      yaxis=dict(gridcolor="#f2eff6", zerolinecolor="#cfc8da"))
+                      yaxis=dict(gridcolor="#eef2f4", zerolinecolor="#cbd5da"))
     fig.update_traces(marker_line_color="white", marker_line_width=1, selector=dict(type="bar"))
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 

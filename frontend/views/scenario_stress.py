@@ -5,10 +5,12 @@ side with others, and the risk behind them.
                    model, stage moves and collateral, by sector, and what
                    drives it
     Compare        several scenarios on the same run
-    Sensitivity    each variable moved one standard deviation the adverse
-                   way, with its linked effects
-    ECL at risk    the provision over thousands of macro paths
-    Reverse stress what it takes to raise the provision by a given amount
+    Sensitivity    one scenario made milder or harsher, and each of its
+                   variables on its own at the scenario's size
+    ECL at risk    for each chosen scenario, n macro paths drawn around it,
+                   and the provision's distribution over them
+    Reverse stress what it takes to raise the provision by an amount (QAR m)
+                   or a share of today's provision
 
 Scenarios are built on Scenario library. Every price is a repricing of the
 run through the function it was priced with (ifrs9qdb.stresstest); nothing in
@@ -21,7 +23,7 @@ import streamlit as st
 
 import api
 import scenario_ui as su_
-from ui import (ERR, OK, PLUM, TEAL, bar, caption, fmt_table, guard, metric_row, money,
+from ui import (PLUM, TEAL, bar, caption, fmt_table, guard, metric_row, money,
                 page_setup, pct, signed, waterfall)
 
 S = st.session_state
@@ -172,7 +174,7 @@ with tab_c:
                      category_orders={"scenario": order[::-1],
                                       "channel": ["PD model", "Stage moves", "Collateral"]},
                      color_discrete_map={"PD model": PLUM, "Stage moves": TEAL,
-                                         "Collateral": "#c9a9d8"},
+                                         "Collateral": "#7fc8d2"},
                      height=max(260, 44 * len(t) + 90))
         fig.update_layout(margin=dict(l=8, r=8, t=8, b=8), plot_bgcolor="white",
                           paper_bgcolor="white", legend_title_text="",
@@ -199,52 +201,56 @@ with tab_c:
                               title=dict(text=f"{name}, shock against the run's forecast{unit}",
                                          font=dict(size=13)),
                               xaxis=dict(tickformat="d", dtick=1, title=""),
-                              yaxis=dict(gridcolor="#f2eff6", title=""))
+                              yaxis=dict(gridcolor="#eef2f4", title=""))
             st.plotly_chart(fig, use_container_width=True)
 
 # ------------------------------------------------------------ sensitivity --
 with tab_s:
-    c = st.columns([2, 2, 3, 2], vertical_alignment="bottom")
-    size = c[0].number_input("Adverse move (standard deviations)", 0.25, 4.0, 1.0, 0.25)
-    shape = c[1].selectbox("Shape", ["one_year", "recover", "held"],
-                           format_func=su_.SHAPES.get)
-    lk = c[2].toggle("With the linked effects", value=True)
-    if c[3].button("Run", type="primary", use_container_width=True, key="sens_go"):
-        with st.spinner("One repricing per variable…"):
+    if S.get("sens_pick") not in IDS:
+        S["sens_pick"] = S.get("scn_pick") if S.get("scn_pick") in IDS else IDS[0]
+    c = st.columns([5, 2], vertical_alignment="bottom")
+    c[0].selectbox("Scenario", IDS, key="sens_pick", format_func=lambda i: su_.option(ALL[i]))
+    sscn = ALL[S["sens_pick"]]
+    if c[1].button("Run", type="primary", use_container_width=True, key="sens_go"):
+        with st.spinner(f"Pricing {sscn['name']} at four sizes and each of its variables…"):
             with guard():
-                S["scn_sens"] = (run_id, api.scn_sensitivity(run_id, size, shape, lk))
+                S["scn_sens"] = (run_id, S["sens_pick"],
+                                 api.scn_scenario_sensitivity(run_id, sscn))
     se = S.get("scn_sens")
-    if se and se[0] == run_id:
-        t = pd.DataFrame(se[1]["table"])
-        t["moved"] = [f"{lb} ({m:+.1f} {su_.unit(u)})"
-                      for lb, m, u in zip(t["label"], t["move"], t["unit"])]
-        bar(t, "moved", "change", diverging=True,
-            title=f"Change in provision for a {se[1]['size_sd']:g} sd adverse move")
-        caption("A standard deviation is each variable's own, from its yearly history: "
-                "the move in brackets.")
-        st.markdown("**One variable over a range**")
-        c = st.columns([3, 2], vertical_alignment="bottom")
-        vv = c[0].selectbox("Variable", list(t["variable"]),
-                            format_func=dict(zip(t["variable"], t["label"])).get)
-        if c[1].button("Draw", use_container_width=True):
-            with st.spinner("Seven repricings…"):
-                with guard():
-                    S["scn_curve"] = (run_id, api.scn_curve(run_id, vv, shape, lk))
-        cv = S.get("scn_curve")
-        if cv and cv[0] == run_id:
-            k = pd.DataFrame(cv[1]["curve"])
-            k["label"] = [f"{m:+.1f}" for m in k["move"]]
-            import plotly.graph_objects as go
-            fig = go.Figure(go.Scatter(x=k["move"], y=k["change"], mode="lines+markers",
-                                       line=dict(color=PLUM, width=3), marker=dict(size=7)))
-            fig.update_layout(height=300, margin=dict(l=8, r=8, t=36, b=8),
-                              title=dict(text=f"{cv[1]['label']}: change in provision",
+    if se and se[0] == run_id and se[1] == S["sens_pick"]:
+        import plotly.graph_objects as go
+        k = pd.DataFrame(se[2]["scaled"])
+        c1, c2 = st.columns(2, gap="large")
+        with c1:
+            fig = go.Figure(go.Scatter(
+                x=k["scale"], y=k["change"], mode="lines+markers+text",
+                text=[money(v) if a else "" for a, v in zip(k["scale"], k["change"])],
+                textposition="top left", line=dict(color=PLUM, width=3), marker=dict(size=8)))
+            fig.update_layout(height=320, margin=dict(l=8, r=8, t=36, b=8),
+                              title=dict(text="Change in provision as the scenario is scaled",
                                          font=dict(size=13)),
                               plot_bgcolor="white", paper_bgcolor="white",
-                              xaxis=dict(title=f"Move in year 1 ({su_.unit(cv[1]['unit'])})",
-                                         zerolinecolor="#ded9e6"),
-                              yaxis=dict(tickformat=",", gridcolor="#f2eff6"))
+                              xaxis=dict(title="Size of the scenario (× its moves)",
+                                         tickvals=list(k["scale"]),
+                                         ticktext=[f"×{a:g}" for a in k["scale"]],
+                                         zerolinecolor="#d5dee2"),
+                              yaxis=dict(tickformat=",", gridcolor="#eef2f4"))
             st.plotly_chart(fig, use_container_width=True)
+        with c2:
+            vt = pd.DataFrame(se[2]["variables"])
+            if len(vt):
+                vt["moved"] = [lb if m is None or pd.isna(m) else
+                               (f"{lb} ({100 * m:.0f}%)" if v == "_deferral" else
+                                f"{lb} ({m:+.1f} {su_.unit(u)} in Y{int(y)})")
+                               for lb, m, u, y, v in zip(vt["label"], vt["move"], vt["unit"],
+                                                         vt["year"].fillna(1), vt["variable"])]
+                bar(vt, "moved", "change", diverging=True,
+                    title="Each variable on its own, at the scenario's size")
+        caption("×1 is the scenario as it is; ×0.5 halves every move, ×2 doubles it. On the "
+                "right, each main variable moves as the scenario sets it, with its linked "
+                "effects, the others held at the forecast. The parts need not add up to "
+                "the whole: the PD model is not a straight line.")
+
     st.markdown("**How sure: the PD model's slope on its main variable**")
     c = st.columns([5, 2], vertical_alignment="bottom")
     c[0].caption(f"Prices *{ALL[S.get('scn_pick', IDS[0])]['name']}* (the scenario on the "
@@ -263,72 +269,74 @@ with tab_s:
                     (f"Slope {x['range'][1]:.15g}", signed(x["high"]))])
 
 # ------------------------------------------------------------ ECL at risk --
+FORECAST = "__forecast__"
+RISK_OPTS = [FORECAST] + IDS
+
+
+def _risk_label(i: str) -> str:
+    return "Forecast (no scenario)" if i == FORECAST else su_.option(ALL[i])
+
+
 with tab_r:
-    c = st.columns(4, vertical_alignment="bottom")
-    n = c[0].number_input("Paths", 200, 20000, 2000, 200)
-    seed = c[1].number_input("Seed", 1, 2 ** 31 - 2, 20261027, 1)
-    thr = c[2].number_input("Provision threshold (QAR m, optional)", 0.0, value=0.0,
-                            step=50.0)
-    if c[3].button("Simulate", type="primary", use_container_width=True):
-        with st.spinner("Drawing macro paths and pricing them (about a minute the first "
-                        "time)…"):
+    S.setdefault("risk_pick", [FORECAST] + ([S["scn_pick"]] if S.get("scn_pick") in IDS else []))
+    c = st.columns([5, 1.4, 1.2], vertical_alignment="bottom")
+    chosen = c[0].multiselect("Scenarios", RISK_OPTS, key="risk_pick", format_func=_risk_label)
+    n = c[1].number_input("Paths per scenario", 200, 20000, 2000, 200)
+    if c[2].button("Simulate", type="primary", use_container_width=True, disabled=not chosen):
+        with st.spinner(f"Drawing {int(n):,} paths around each of {len(chosen)} scenario(s) and "
+                        "pricing them (about a minute the first time)…"):
             with guard():
-                S["scn_risk"] = (run_id, api.scn_risk(run_id, int(n), int(seed),
-                                                      thr * 1e6 if thr else None))
+                S["scn_risk"] = (run_id, list(chosen), api.scn_risk_by_scenario(
+                    run_id, [None if i == FORECAST else ALL[i] for i in chosen], int(n)))
+    caption("Each path is the scenario's path plus a random five-year path from the macro "
+            "system. Every scenario gets the same random paths, so they differ only by "
+            "their own moves.")
     rk = S.get("scn_risk")
     if rk and rk[0] == run_id:
-        r = rk[1]
-        sm = pd.DataFrame(r["summary"])
-        items = [("Provision now", money(r["base"])), ("Mean over paths", money(r["mean"]))]
-        for _, x in sm.iterrows():
-            items.append((f"{x['measure']} ({signed(x['change'])})", money(x["value"])))
-        if r.get("p_exceed") is not None:
-            items.append(("Chance above threshold", pct(100 * r["p_exceed"], 1)))
-        metric_row(items)
+        r = rk[2]
+        res = r["results"]
+        top = max(r["percentiles"])
+        tbl = pd.DataFrame([{"scenario": x["scenario"], "scenario path": x["centre"],
+                             "mean": x["mean"], **{f"ECL at {p:g}%": x[f"p{p:g}"]
+                                                   for p in r["percentiles"]},
+                             f"average beyond {top:g}%": x[f"es{top:g}"]} for x in res])
+        metric_row([("Provision now", money(r["base"])),
+                    ("Paths per scenario", f"{r['paths']:,}")])
+        st.dataframe(fmt_table(tbl, money_cols=tuple(c_ for c_ in tbl.columns
+                                                     if c_ != "scenario")),
+                     use_container_width=True, hide_index=True)
         import plotly.graph_objects as go_
-        h = pd.DataFrame(r["histogram"])
-        fig = go_.Figure(go_.Bar(x=(h["from"] + h["to"]) / 2, y=h["count"],
-                                 width=(h["to"] - h["from"]), marker_color="#c9a9d8"))
-        for _, x in sm.iterrows():
-            fig.add_vline(x=x["value"], line_dash="dash", line_color=ERR,
-                          annotation_text=x["measure"].replace("ECL at ", ""))
+        from ui import SEQ
+        fig = go_.Figure()
+        for j, x in enumerate(res):
+            h = pd.DataFrame(x["histogram"])
+            fig.add_trace(go_.Scatter(x=(h["from"] + h["to"]) / 2, y=h["count"],
+                                      mode="lines", name=x["scenario"], line_shape="hvh",
+                                      line=dict(color=SEQ[j % len(SEQ)], width=2)))
         fig.add_vline(x=r["base"], line_color="#2a2f3a", annotation_text="now")
-        fig.update_layout(height=320, margin=dict(l=8, r=8, t=24, b=8),
-                          plot_bgcolor="white", paper_bgcolor="white", bargap=0,
+        fig.update_layout(height=340, margin=dict(l=8, r=8, t=24, b=8),
+                          plot_bgcolor="white", paper_bgcolor="white",
+                          legend=dict(orientation="h", y=-0.2),
                           xaxis=dict(tickformat=",", title="Provision"),
-                          yaxis=dict(title="Paths"))
+                          yaxis=dict(title="Paths", gridcolor="#eef2f4"))
         st.plotly_chart(fig, use_container_width=True)
-        nm = pd.DataFrame(r["named"])
-        if len(nm):
-            nm = nm.sort_values("percentile", ascending=False)
-            nm["where"] = nm["percentile"].map(
-                lambda v: "worse than every path" if v >= 99.95
-                else f"worse than {v:.0f}% of paths")
-            st.markdown("**Where the scenarios fall**")
-            st.dataframe(fmt_table(nm[["scenario", "proxy_change", "where"]],
-                                   money_cols=("proxy_change",))
-                         .rename(columns={"proxy_change": "change"}),
-                         use_container_width=True, hide_index=True)
+        names = [x["scenario"] for x in res]
+        pick = st.selectbox("Tail detail for", names, key="risk_tail") if len(names) > 1 \
+            else names[0]
+        x = res[names.index(pick)]
         c1, c2 = st.columns(2)
         with c1:
-            ch = pd.DataFrame(r["by_channel"]).rename(columns={"tail_change": "change"})
-            bar(ch, "channel", "change", diverging=True, title="What drives the tail")
+            ch = pd.DataFrame(x["by_channel"]).rename(columns={"tail_change": "change"})
+            bar(ch, "channel", "change", diverging=True, title=f"What drives the worst {100 - top:g}%")
         with c2:
-            bs = pd.DataFrame(r["by_segment"]).rename(columns={"tail_change": "change",
-                                                                "segment": "sector"})
-            bar(bs.head(10), "sector", "change", diverging=True, title="Tail by sector")
-        ls = pd.DataFrame(r.get("loss_summary") or [])
-        if len(ls):
+            bs = pd.DataFrame(x["by_segment"]).rename(columns={"tail_change": "change",
+                                                               "segment": "sector"})
+            bar(bs.head(10), "sector", "change", diverging=True, title="By sector")
+        if x.get("loss_summary"):
             with st.expander("Credit loss over the next year (customers defaulting at "
                              "their stressed PD)"):
-                metric_row([("Expected loss", money(r.get("expected_loss")))] +
-                           [(x["measure"], money(x["value"])) for _, x in ls.iterrows()])
-                cu = pd.DataFrame(r.get("customers") or [])
-                if len(cu):
-                    st.dataframe(fmt_table(cu, money_cols=("exposure", "tail_loss"))
-                                 .assign(pd12=cu["pd12"].map(lambda v: f"{100 * v:.2f}%"),
-                                         lgd=cu["lgd"].map(lambda v: f"{100 * v:.0f}%")),
-                                 use_container_width=True, hide_index=True)
+                metric_row([("Average", money(x.get("loss_mean")))] +
+                           [(y["measure"], money(y["value"])) for y in x["loss_summary"]])
         with st.expander("Check the path pricing against full repricing"):
             if st.button("Run the check"):
                 with st.spinner("Repricing every scenario in full…"):
@@ -346,18 +354,28 @@ with tab_r:
 
 # -------------------------------------------------------- reverse stress --
 with tab_v:
-    c = st.columns([3, 1], vertical_alignment="bottom")
-    tgt = c[0].number_input("Increase in provision to reach (QAR m)", 1.0,
-                            value=float(round(cx["ecl"] * 0.05 / 1e6, -1) or 100.0), step=10.0)
-    if c[1].button("Find", type="primary", use_container_width=True):
+    c = st.columns([1.4, 2.6, 1], vertical_alignment="bottom")
+    unit = c[0].segmented_control("Target in", ["QAR m", "% of provision"], default="QAR m",
+                                  key="rev_unit", required=True)
+    if unit == "QAR m":
+        tgt = c[1].number_input("Increase in provision to reach (QAR m)", 0.1,
+                                value=float(round(cx["ecl"] * 0.05 / 1e6, 1) or 1.0), step=1.0)
+        amount = tgt * 1e6
+    else:
+        tgt = c[1].number_input("Increase in provision to reach (% of today's)", 0.1, 500.0,
+                                10.0, 1.0)
+        amount = cx["ecl"] * tgt / 100
+        caption(f"{tgt:g}% of {money(cx['ecl'])} = {money(amount)}")
+    if c[2].button("Find", type="primary", use_container_width=True):
         with st.spinner("Searching every scenario and variable, then confirming the "
                         "closest in full…"):
             with guard():
-                S["scn_rev"] = (run_id, api.scn_reverse(run_id, tgt * 1e6))
+                S["scn_rev"] = (run_id, api.scn_reverse(run_id, amount))
     rv = S.get("scn_rev")
     if rv and rv[0] == run_id:
         r = rv[1]
         metric_row([("Target", signed(r["target"])),
+                    ("% of provision", pct(100 * r["target"] / cx["ecl"]) if cx["ecl"] else "—"),
                     ("Paths reaching it", pct(100 * r["probability"], 1)),
                     ("About one in", f"{r['one_in']:,.0f}" if r.get("one_in") else "—")])
         caption(f"Of {r['paths']:,} five-year macro paths drawn from the linked-effects "

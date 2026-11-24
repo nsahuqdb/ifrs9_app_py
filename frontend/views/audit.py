@@ -16,8 +16,7 @@ page_setup("Audit log",
            "So that months later someone can say what produced a figure, who "
            "touched it and who signed it off — without guesswork.")
 
-tab_log, tab_snap, tab_run, tab_diff = st.tabs(
-    ["Project log", "Frozen configuration", "This run's activity", "Compare runs"])
+tab_log, tab_run, tab_diff = st.tabs(["Project log", "Run", "Compare runs"])
 
 with tab_log:
     c1, c2, c3, c4 = st.columns([3, 3, 3, 1])
@@ -52,14 +51,19 @@ with tab_log:
                          "action": st.column_config.TextColumn("Action", width="small"),
                          "details": st.column_config.TextColumn("Details", width="large")})
 
-run_id = st.session_state.get("run_id")
+try:
+    RUN_IDS = [r["run_id"] for r in api.runs() if r.get("has_report")]
+except api.BackendError:
+    RUN_IDS = []
 
-with tab_snap:
-    if not run_id:
-        st.info("Select a run at the top.", icon="👈")
+with tab_run:
+    if not RUN_IDS:
+        st.info("No runs yet.")
     else:
+        run_id = st.selectbox("Run", RUN_IDS, key="aud_run")
         with guard():
             s = api.snapshot(run_id)
+        st.markdown("**Frozen configuration**")
         if not s.get("exists"):
             st.warning(s.get("note", "No snapshot for this run."), icon="⚠️")
         else:
@@ -71,26 +75,24 @@ with tab_snap:
                          use_container_width=True, hide_index=True)
             caption("Hashes, not just copies: a copy can be edited afterwards and "
                     "still look original.")
-
-with tab_run:
-    if not run_id:
-        st.info("Select a run at the top.", icon="👈")
-    else:
+        st.markdown("**Activity recorded in the run**")
         with guard():
             entries = api.audit(run_id)
         if not entries:
-            st.info("Nothing recorded against this run yet.")
+            caption("Nothing recorded against this run yet.")
         else:
             st.dataframe(pd.DataFrame(entries), use_container_width=True,
                          hide_index=True)
             caption("The run's own audit.jsonl. Append-only.")
 
 with tab_diff:
-    other = st.session_state.get("compare_id")
-    if not run_id or not other:
-        st.info("Select a run and a second run at the top to compare their "
-                "configurations.")
+    if len(RUN_IDS) < 2:
+        st.info("Two runs are needed to compare their configurations.")
     else:
+        c1, c2 = st.columns(2)
+        run_id = c1.selectbox("Run", RUN_IDS, key="aud_cmp_a")
+        other = c2.selectbox("Against", [i for i in RUN_IDS if i != run_id],
+                             key="aud_cmp_b")
         with guard():
             d = api.snapshot_compare(other, run_id)
         if not d:

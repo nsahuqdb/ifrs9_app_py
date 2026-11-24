@@ -24,7 +24,7 @@ from .client import AssistantError, chat
 from .ground import Facts, denies, remove, strip_tables, tool_talk, unsupported
 from .router import looks_like_data, plan as route
 from .config import AssistantConfig, load_config
-from .semantic import CATALOGUE, TOOLS as SEMANTIC, resolve_run
+from .semantic import CATALOGUE, TOOLS as SEMANTIC, USED_RUNS, resolve_run, run_label
 from .tools import execute_tool as raw_tool
 
 
@@ -41,6 +41,19 @@ RAW OUTPUT FILES (only when nothing above fits)
 
 
 def execute(name: str, args: dict | None, focus: str | None) -> dict:
+    """One tool by name, noting which runs it read (``runs_used``)."""
+    tok = USED_RUNS.set([])
+    try:
+        res = _execute(name, args, focus)
+    finally:
+        used = USED_RUNS.get() or []
+        USED_RUNS.reset(tok)
+    if isinstance(res, dict) and res.get("ok") and used:
+        res["runs_used"] = list(used)
+    return res
+
+
+def _execute(name: str, args: dict | None, focus: str | None) -> dict:
     """One tool by name. Semantic tools get the focus run; a failure is a
     result the model can read, never an exception."""
     args = dict(args or {})
@@ -399,8 +412,16 @@ def _result(text: str, results: dict, steps: list, parsed: dict | None,
     named = " ".join([text] + [str(r.get("summary") or "") for r in results.values()
                                if r.get("tool") == "benchmark"])
     srcs = sources(cites, named, files)
+    # which run(s) the figures come from, oldest first
+    used = sorted({rid for r in results.values() if r.get("ok")
+                   for rid in (r.get("runs_used") or [])})
+    try:
+        runs = [run_label(rid) for rid in used]
+    except Exception:
+        runs = [{"run_id": rid} for rid in used]
     return {"ok": ok, "text": text, "tables": tables, "chart": chart, "cites": cites,
-            "docs": docs, "sources": srcs, "ask": ask, "followups": followups, "steps": steps}
+            "docs": docs, "sources": srcs, "ask": ask, "followups": followups, "steps": steps,
+            "runs": runs}
 
 
 def answer(question: str, history: list[dict] | None = None,

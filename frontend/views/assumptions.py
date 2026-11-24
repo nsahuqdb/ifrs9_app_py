@@ -1,22 +1,20 @@
-"""What this run froze: its scenarios, its weights, its macro forecast.
+"""Model assumptions: what the selected run assumed, and where the methodology
+explains it.
 
-A run copies its config and static reference into ``config_used/`` beside its
-outputs. That copy is the only honest source for "what assumptions produced
-this number" — the files in the repository have moved on since, and reading
-them to explain a past quarter explains the wrong thing.
+The values are read from the run's frozen config (config_used/), the copy the
+run priced with -- not the files in the repository, which may have moved on.
 """
 import pandas as pd
 import streamlit as st
 
 import api
-from ui import bar, caption, fmt_table, guard, metric_row, page_setup, pct
+from ui import caption, guard, page_setup
 
 run_id = st.session_state.get("run_id")
 if not run_id:
-    st.info("No run selected. Build one on **Run the pipeline**, or point the "
-            "backend at a folder of existing runs.", icon="👈")
+    st.info("No run selected. Build one on **Run the pipeline**.", icon="👈")
     st.stop()
-page_setup("Model assumptions", f"As frozen by {run_id}")
+page_setup("Model assumptions", f"The assumptions {run_id} was priced with")
 
 with guard():
     m = api.model_assumptions(run_id)
@@ -25,58 +23,36 @@ if not m.get("available"):
     st.info(m.get("reason", "This run has no frozen config."))
     st.stop()
 
-sev = pd.DataFrame(m["severity"])
-weights = pd.DataFrame(m["weights"])
+rows = pd.DataFrame(m.get("assumptions") or [])
+if rows.empty:
+    st.info("The assumptions of this run could not be read.")
+    st.stop()
 
-st.subheader("Scenarios")
-caption("Severity is expressed as a z-score: −1.28 is a once-in-ten-years "
-        "downturn, 0 is neutral.")
-st.dataframe(sev, use_container_width=True, hide_index=True)
+areas = list(dict.fromkeys(rows["area"]))
+pick = st.segmented_control("Area", ["All"] + areas, default="All",
+                            key="ass_area", label_visibility="collapsed")
+show = rows if pick in (None, "All") else rows[rows["area"] == pick]
+st.dataframe(
+    show.rename(columns={"area": "Area", "assumption": "Assumption",
+                         "value": "Value in this run", "source": "Set in",
+                         "link": "Methodology"}),
+    hide_index=True, width="stretch",
+    height=min(760, 38 + 35 * len(show)),
+    column_config={
+        "Area": st.column_config.TextColumn(width="small"),
+        "Assumption": st.column_config.TextColumn(width="large"),
+        "Value in this run": st.column_config.TextColumn(width="medium"),
+        "Set in": st.column_config.TextColumn(width="small"),
+        "Methodology": st.column_config.LinkColumn(width="small",
+                                                   display_text="Open ↗")})
+caption("Values from the run's frozen config. “Fixed by the method” is part of "
+        "the calculation, not a setting.")
 
-st.subheader("Scenario weights")
-used = m.get("weights_used")
-if used:
-    caption("What the run is priced with, as the engine works them out from "
-            "this frozen config. The two rating scales carry their OWN "
-            "weights: each from its own model's forecast (model.yml), the "
-            "external one a vector a year (the average is shown).")
-    st.dataframe(pd.DataFrame({"scenario": list(used["internal"]),
-                               "internal": list(used["internal"].values()),
-                               "external": [used["external"].get(k)
-                                            for k in used["internal"]]}),
-                 use_container_width=True, hide_index=True)
-if len(weights) == 0:
-    st.info("This config states no explicit weights.")
-else:
-    caption("As written in the config file's explicit_weights. On mode auto the "
-            "engine computes the weights instead and this block is not used — it can "
-            "be a snapshot of an earlier method's weights.")
-    metric_row([
-        ("Internal weights sum", f"{weights['internal'].sum():.15g}"),
-        ("External weights sum", f"{weights['external'].sum():.15g}"),
-    ])
-    st.dataframe(weights, use_container_width=True, hide_index=True)
-    if abs(weights["internal"].sum() - 1) > 1e-6:
-        caption("Not exactly 1.0, and deliberately so — the V4 weights are "
-                "stated as written and are not normalised, because the engine "
-                "does not normalise them either.")
-
-st.subheader("Macroeconomic variables")
-mw = pd.DataFrame(m["mev_weights"])
-if len(mw):
-    caption("Weight and coefficient together are the model. A variable with a "
-            "large coefficient and zero weight moves nothing, however "
-            "alarming the coefficient looks.")
-    st.dataframe(mw, use_container_width=True, hide_index=True)
-    inert = mw[mw["weight"].fillna(0) == 0]
-    if len(inert):
-        st.info("Weighted zero in this model, so shocking them changes "
-                f"nothing: {', '.join(inert['mev'].astype(str))}.", icon="ℹ️")
-
-fc = pd.DataFrame(m["mev_forecast"])
-if len(fc):
-    st.subheader("The forecast this run priced on")
-    for name, g in fc.groupby("label", sort=False):
-        bar(g.assign(yr=[f"Year {y}" for y in g["year"]]), "yr", "value",
-            horizontal=False, title=str(name), fmt="%{y:.2f}")
-    st.dataframe(fc, use_container_width=True, hide_index=True)
+fc = pd.DataFrame(m.get("mev_forecast") or [])
+if len(fc) and {"label", "year", "value"} <= set(fc.columns):
+    st.subheader("Macro forecast")
+    wide = fc.pivot_table(index="label", columns="year", values="value",
+                          aggfunc="first", sort=False)
+    wide.columns = [f"Year {c}" for c in wide.columns]
+    st.dataframe(wide.reset_index().rename(columns={"label": "Variable"}),
+                 hide_index=True, width="stretch")

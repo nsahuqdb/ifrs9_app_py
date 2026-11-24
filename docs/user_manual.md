@@ -55,7 +55,7 @@ The menu bar is the same on every page.
 | **Portfolio** | Overview · Portfolio view · Staging · Risk parameters · Concentration · Segments · Scenarios · Data quality · ECL calculator | read one run |
 | **Comparison** | Movement · Migration · Reconcile & export | compare two runs |
 | **Stress testing** | Parameter stress · Macro data · Scenario library · Scenario stress | what-ifs, macro data and scenarios |
-| **Governance** | Config versions · Calculator versions · Management overlay · Validation suppressions · Live configuration · Model assumptions · Audit log | control what produces a number |
+| **Governance** | Config versions · Calculator versions · Management overlay · Validation suppressions · Model assumptions · Audit log | control what produces a number |
 | **Help** | Assistant · How this works (and these documents) | questions and reference |
 
 At the right, the badge shows who is signed in and the engine version
@@ -722,8 +722,8 @@ applied, with the contracts they share.
 
 ## 9.4 Check the impact
 
-With a run chosen at the top of the page, press **Check against run
-run_0000N**. It uses the rules as they stand in the grid, saved or not.
+Under **Check against a run**, pick the **Run** and press **Check**. It uses
+the rules as they stand in the grid, saved or not.
 
 ![An overlay checked against a run.](images/ovl_05_checked.png)
 
@@ -882,13 +882,13 @@ Account type.
 - **Exposure-weighted lifetime PD** bar and table: exposure-weighted and
   simple-mean PD per group. A weighted PD well above the simple mean means the
   large exposures sit in the worse grades. Stage 3 shows 100%.
-- **PD term structure** — choose the **Rating scale** (Internal / External)
-  and the **Ratings** to draw. *Cumulative PD (%)* by month should rise and
-  flatten; *Marginal PD by month (%)* shows each month's default
-  probability. A worse grade should sit above a better one throughout; a
-  step, a flat stretch or a month that goes backwards marks a mis-built
-  curve. The steps at months 12, 24 … 60 are the yearly PiT PDs; after year 5
-  the curve reverts towards TTC.
+- **PD term structure** — choose the **Rating scale** (Internal / External),
+  the **Ratings** to draw and how many **Years** (10, 20, 30 or 50).
+  *Cumulative PD by year (%)* is the PD by the end of each year and should
+  rise and flatten; *Marginal PD by year (%)* is the share that defaults in
+  that year (the cumulative PD at the end of the year less the one at its
+  start). A worse grade should sit above a better one throughout. Years 1–5
+  carry the PiT PDs; after year 5 the PD reverts towards TTC.
 
 **LGD & collateral** — tiles for the **Weighted LGD**, the exposure **On the
 floor** and its share **Of contracts**; LGD against collateral coverage; and
@@ -1198,53 +1198,54 @@ channels.
 
 ![Compare: several scenarios side by side.](images/scn_compare.png)
 
-**Sensitivity** — how much a standard move in each variable costs.
+**Sensitivity** — how the provision moves with one scenario.
 
-![Sensitivity.](images/scn_sensitivity.png)
+![Sensitivity: one scenario scaled, and each of its variables on its own.](images/scn_sensitivity.png)
+
+Pick a **Scenario** (library or saved) and press **Run**. On the left, the
+change in provision with the scenario at ×0.5, ×1 (as it is), ×1.5 and ×2 of
+its moves. On the right, each of the scenario's main variables on its own, at
+the size the scenario gives it (e.g. *Oil price (−48.1% in Y1)*), with its
+linked effects and the other main variables held at the forecast. The parts
+need not add up to the whole, because the PD model is not a straight line;
+the exact split that adds up is **What drives it** on the Price tab. **How
+sure: the PD model's slope on its main variable** → **Price the range** prices
+the Price tab's scenario at the low and high end of the slope's range.
+
+**ECL at risk** — the provision's distribution over macro paths drawn around
+one or more scenarios.
+
+![ECL at risk: the distribution of the provision around each scenario.](images/scn_eclatrisk.png)
 
 | Field | Accepts |
 |---|---|
-| **Adverse move (standard deviations)** | 0.25 – 4.0, step 0.25 (default 1). A standard deviation is each variable's own, from its yearly history (Macro data → Variables). |
-| **Shape** | one_year, recover, held |
-| **With the linked effects** | on: the other variables follow; off: the variable alone |
+| **Scenarios** | one or more library or saved scenarios, and *Forecast (no scenario)* |
+| **Paths per scenario** | 200 – 20,000 (default 2,000). Each scenario gets this many paths: three scenarios at 2,000 is 6,000 paths in all. |
 
-Press **Run**: a bar per variable, the cost of an adverse move of that size.
-**One variable over a range** → **Draw** prices one variable across a range
-of shocks. **How sure: the PD model's slope on its main variable** → **Price
-the range** prices the chosen scenario at the low and high end of the slope's
-confidence interval.
+Press **Simulate**. Each path is the scenario's own path plus a random
+five-year path from the macro system; every scenario gets the same random
+paths, so the scenarios differ only by their own moves. *Forecast (no
+scenario)* is the random paths alone. The table gives, for each scenario,
+the provision on the **scenario path** itself, the **mean** over its paths,
+the **ECL at 95%** and **ECL at 99%** and the **average beyond 99%**. The chart
+draws each scenario's distribution, with *now* marked. **Tail detail for**
+picks one scenario: **What drives the worst 1%** (PD model, stage moves,
+collateral) and **By sector**; the expander **Credit loss over the next
+year** gives the average and the 95% and 99% loss if customers default at
+their stressed PD. The paths are the same each time, so the same choice gives
+the same result.
 
-**ECL at risk** — the provision's distribution over simulated macro paths.
-
-![ECL at risk: the distribution of the provision over macro paths.](images/scn_eclatrisk.png)
-
-| Field | Accepts |
-|---|---|
-| **Paths** | 200 – 20,000 (default 2,000) five-year macro paths, drawn from the linked-effects model |
-| **Seed** | any whole number; the same seed gives the same paths |
-| **Provision threshold (QAR m, optional)** | 0 = none; otherwise the chance of exceeding it is reported |
-
-Press **Simulate**. Tiles: **Provision now**, **Mean over paths**, **ECL at
-95%** and **ECL at 99%** (each with its change from now) and, with a
-threshold, **Chance above threshold**. The histogram of the provision over
-the paths marks *now* and the percentiles. **Where the scenarios fall** places
-each library scenario on the distribution (*worse than 97% of paths*), so a
-committee can see how rare its "severe" scenario is. **What drives the
-tail** and **Tail by sector** split the 99% change by channel and sector; the
-expander **Credit loss over the next year** gives the expected loss and the
-loss percentiles if customers default at their stressed PD, with the
-customers that carry the tail.
-
-**Reverse stress** — what it takes to reach a given loss.
+**Reverse stress** — what it takes to reach a given increase in provision.
 
 ![Reverse stress.](images/scn_reverse.png)
 
-Type **Increase in provision to reach (QAR m)** and press **Find**. Tiles:
-**Target**, **Paths reaching it** (the share of simulated paths that do) and
-**About one in** (its rarity). **Each scenario, scaled** — how many times its
-moves each library scenario needs to reach the target. **Each variable
-alone** — the year-1 shock in one variable that reaches it, with how many
-standard deviations that is.
+Choose **Target in**: **QAR m** or **% of provision**, type the increase and
+press **Find** (a percentage is turned into QAR on today's provision, shown
+under the box). Tiles: **Target**, **% of provision**, **Paths reaching it**
+(the share of the forecast's random paths that do) and **About one in** (its
+rarity). **Each scenario, scaled** — how many times its moves each scenario
+needs to reach the target. **Each variable alone** — the year-1 shock in one
+variable that reaches it, with how many standard deviations that is.
 
 ## 13.4 Parameter stress
 
@@ -1380,38 +1381,21 @@ be made until it is released under a new version. **Versions** lists each
 version with its archive; an earlier one can be picked on Run the pipeline to
 rerun from its archived code.
 
-## 14.2 Live configuration
+## 14.2 Model assumptions
 
-*Governance → Live configuration* (page title *Model configuration*)
-
-![Live configuration.](images/config.png)
-
-What the engine is calibrated to: the TTC anchor PD, forecast years, maximum
-maturity (50 years), the LGD base and floor, the macro variables with their
-weights and coefficients, the macro forecast and the scenario weights.
-These change when the model changes, not each quarter. A warning names any
-variable with zero weight (shocking it changes nothing). **Edit** saves
-`config/` files on disk only if they still parse; a run freezes its own copy,
-so past runs are unaffected. For quarterly changes use a config version
-(Section 5) — editing the live config bypasses the approval trail.
-
-## 14.3 Model assumptions
-
-*Governance → Model assumptions* — the assumptions **as frozen by the
-selected run**.
+*Governance → Model assumptions* — the model assumptions the **selected run**
+was priced with, read from the run's frozen configuration.
 
 ![Model assumptions.](images/assumptions.png)
 
-Scenarios and their severities (z: −1.28 is a once-in-ten-years downturn, 0
-neutral); the scenario weights the run priced with, internal and external
-(the external scale has a weight vector a year; its average is shown), and
-the explicit weights written in the file (used only when the mode is
-*explicit*); the macro variables with weight and coefficient (*weight and
-coefficient together are the model*); and the forecast the run priced on,
-year by year. Use it to answer "what assumptions produced this quarter's
-number?" without opening a file.
+One table, by area (**Staging**, **PD**, **EAD**, **LGD**, **ECL**): each
+assumption, the **Value in this run** (e.g. *60 days*, *45%*, the scenario
+weights), where it is **Set in** (the file, or *fixed by the method* when it is
+part of the calculation rather than a setting) and a **Methodology** link that
+opens the section of the ECL methodology explaining it. Below, the **Macro
+forecast** the run priced on, year by year.
 
-## 14.4 Audit log
+## 14.3 Audit log
 
 *Governance → Audit log*
 
@@ -1420,9 +1404,10 @@ number?" without opening a file.
 | Tab | Shows |
 |---|---|
 | **Project log** | every event (runs, approvals, config and overlay transitions, edits, exports), filterable by **Event type**, **Run ID**, **User** |
-| **Frozen configuration** | the selected run's frozen configuration: when taken, by whom, and the hash of every file (*hashes, not just copies: a copy can be edited afterwards and still look original*) |
-| **This run's activity** | the run's own append-only `audit.jsonl` |
-| **Compare runs** | file-by-file hashes of the two runs' configuration; *The configuration is identical between the two runs, so any change in the numbers came from the data*, or the files that differ |
+| **Run** | pick a **Run**: its frozen configuration (when taken, by whom, and the hash of every file — *hashes, not just copies*) and the activity recorded in the run (its own append-only `audit.jsonl`) |
+| **Compare runs** | pick a **Run** and the run to compare it **Against**: file-by-file hashes of the two runs' configuration; *The configuration is identical between the two runs, so any change in the numbers came from the data*, or the files that differ |
+
+The page has no run picker at the top: each tab chooses its own run.
 
 # 15. Help
 
@@ -1431,7 +1416,10 @@ number?" without opening a file.
 *Help → Assistant*
 
 Ask questions in plain language about the runs, the model, the configuration
-and how the tool works. Figures come from the same lookups as the pages;
+and how the tool works. An answer built on run figures starts with one line
+naming the run: its id, *Official* or *Unofficial*, the quarter and the
+portfolio date (e.g. *Run run_00002 · Unofficial · Q3 2026 (30 Sep 2026)*);
+an answer comparing two runs names both. Figures come from the same lookups as the pages;
 explanations come from the documents under Help (the ECL methodology, the
 stress testing methodology and this manual). It is read-only: it cannot run,
 edit or approve anything, and says which page does.
@@ -1548,9 +1536,9 @@ IFRS 9, Basel, QCB and the stress-testing supervisors.
 | Macro import | frequency | A, Q, M or from the dates |
 | Scenario | Size | points for rates and growth; percent for prices |
 | Scenario | deferral | 0–100 % |
-| Sensitivity | adverse move | 0.25 – 4 standard deviations |
-| ECL at risk | paths | 200 – 20,000 |
-| Reverse stress | target | QAR millions, ≥ 1 |
+| Sensitivity | scenario | one library or saved scenario |
+| ECL at risk | paths per scenario | 200 – 20,000 |
+| Reverse stress | target | QAR millions (≥ 0.1) or % of today's provision |
 | Parameter stress | PD multiplier | 0 – 10 |
 | Parameter stress | notches | −10 to +20 (positive = downgrade) |
 | Parameter stress | LGD | 0 – 1 |
@@ -1571,7 +1559,7 @@ IFRS 9, Basel, QCB and the stress-testing supervisors.
 | A product priced in Business Finance by mistake | the product is not in `product_portfolio_mapping.csv` | add it in a new config version |
 | An off-balance product shows zero ECL | ONBALANCE is zero and the exposure was put in OFFBALANCE only | supply the credit-equivalent exposure in ONBALANCE (Section 4.2) |
 | Collateral has no effect | the collateral type is not in `collateral_types.csv` (counts for nothing), or the LGD is already at the floor | map the type; check *Risk parameters → LGD & collateral* |
-| A property-price or credit-growth stress returns zero | those variables carry zero weight in the PD model | expected; see *Live configuration* |
+| A property-price or credit-growth stress returns zero | those variables carry zero weight in the PD model | expected; see *Model assumptions* |
 | The approval is refused for the maker's own item | separation of duties | another person approves |
 | An overlay check reports overlapping rules | two rules match the same contract | narrow one rule's target |
 | Calculator versions shows *Changed* | code edited without a version bump | release a new version before an official run |

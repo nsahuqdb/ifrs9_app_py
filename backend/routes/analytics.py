@@ -262,6 +262,9 @@ def risk(run_id: str, by: str = Query("stage"),
         "pd": _records(pd_profile(d, by)),
         "pd_by_scale": _records(pd_by_scale(d, inputs)),
         "pd_curves": _records(pd_curves_by_rating(inputs)) if inputs else [],
+        # the same curves by year, to the end of the lifetime (50 years)
+        "pd_curves_yearly": _records(yearly_curves(pd_curves_by_rating(inputs, 600)))
+        if inputs else [],
         "lgd_floor": _records(lgd_floor_stats(d)),
         "lgd_scatter": _records(lgd_vs_collateral(d)),
         "term_structure": _records(pd_term_structure(inputs, portfolio))
@@ -511,6 +514,9 @@ def scenario_weights_used(run_id: str) -> dict:
 
 
 # ------------------------------------------------------- the model ---------
+from ..model_assumptions import key_assumptions  # noqa: E402
+from ..curves import yearly as yearly_curves  # noqa: E402
+
 @router.get("/analytics/{run_id}/model")
 def model(run_id: str) -> dict:
     """What the run froze: its scenarios, weights and macro forecast."""
@@ -532,6 +538,7 @@ def model(run_id: str) -> dict:
                          if used.get("ok") else None),
         "mev_forecast": _records(mev_forecast_table(out_dir)),
         "mev_weights": _records(mev_weights_table(out_dir)),
+        "assumptions": key_assumptions(out_dir, used if used.get("ok") else None),
     }
 
 

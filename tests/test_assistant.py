@@ -1011,3 +1011,32 @@ class TestModels:
         root = Path(__file__).resolve().parents[1]
         assert ".env" in (root / ".gitignore").read_text().split()
         assert "sk-vllm-xxxxxx" in (root / ".env.example").read_text()
+
+
+class TestRunLine:
+    """Every answer from run data says which run it is about."""
+
+    def test_answer_names_its_run(self, monkeypatch):
+        from backend.assistant import agent as A
+        from backend.assistant import semantic as S
+        monkeypatch.setattr(S, "_runs", lambda: [
+            {"run_id": "run_00002", "run_type": "official", "portfolio_date": "2026-09-30"},
+            {"run_id": "run_00001", "run_type": "unofficial", "portfolio_date": "6/30/2026"}])
+
+        def fake(focus=None, **_):
+            S.resolve_run(None, focus)
+            S.resolve_run("previous", focus)
+            return {"ok": True, "summary": "x"}
+        monkeypatch.setitem(S.TOOLS, "fake_lookup", fake)
+        res = A.execute("fake_lookup", {}, "run_00002")
+        assert res["runs_used"] == ["run_00002", "run_00001"]
+        out = A._result("x", {"k1": res}, [], None, "q")
+        assert [r["run_id"] for r in out["runs"]] == ["run_00001", "run_00002"]
+        assert out["runs"][1]["run_type"] == "Official"
+        assert out["runs"][1]["quarter"] == "Q3 2026"
+        assert out["runs"][0]["quarter"] == "Q2 2026"
+
+    def test_a_document_answer_names_no_run(self):
+        from backend.assistant import agent as A
+        out = A._result("x", {"k1": {"ok": True, "summary": "doc"}}, [], None, "q")
+        assert out["runs"] == []

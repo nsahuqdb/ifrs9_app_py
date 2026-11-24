@@ -48,8 +48,8 @@ st.markdown("""
 .st-key-libnav .stButton > button:hover {background: var(--plum-50); color: var(--plum);
   border-color: transparent;}
 .st-key-libnav [class*="st-key-libsel_"] .stButton > button,
-.st-key-libnav [class*="st-key-libsel_"] .stButton > button:hover {background: #d6c0e3;
-  color: #3d1150; font-weight: 700; border-color: #b08cc4;
+.st-key-libnav [class*="st-key-libsel_"] .stButton > button:hover {background: #c6e2e7;
+  color: #002a3a; font-weight: 700; border-color: #5fb7c4;
   box-shadow: inset 4px 0 0 var(--plum);}
 .st-key-libnav .stMarkdown, .st-key-libnav [data-testid="stMarkdownContainer"] {
   margin: 0 !important;}

@@ -33,6 +33,7 @@ from ifrs9qdb.stresstest.config import config_hash
 from ifrs9qdb.stresstest.library import check_library, derivation, episode
 
 from ..settings import PROJECT_ROOT, RUNS_DIR, SCENARIOS_DB, current_user
+from .. import stress_views as SV
 from .macro import js, store
 from .runs import _output_dir
 from .stress import _load
@@ -566,6 +567,43 @@ def proxy_check(run_id: str, vintage: str | None = None) -> dict:
     return js({"table": _cached(("check", run_id, v, config_hash(cfg),
                                  tuple(_key(s) for s in scns)),
                                 lambda: st_risk.proxy_check(rc, P, scns))})
+
+
+class ScnSensIn(BaseModel):
+    scenario: dict
+    vintage: str | None = None
+
+
+@router.post("/scenarios/{run_id}/scenario_sensitivity")
+def scenario_sensitivity(run_id: str, body: ScnSensIn) -> dict:
+    """One scenario made milder or harsher, and each of its main variables on
+    its own at the scenario's size (full repricing)."""
+    rc, v, cfg = _rc(run_id, body.vintage)
+    scn = _scenario(body.scenario)
+    return js(_cached(("ssens", run_id, v, config_hash(cfg), _key(scn), scn.name),
+                      lambda: SV.scenario_sensitivity(rc, scn)))
+
+
+class RiskScnIn(BaseModel):
+    scenarios: list[dict | None]      # None: the run's forecast, no scenario
+    paths: int | None = None          # per scenario
+    vintage: str | None = None
+
+
+@router.post("/scenarios/{run_id}/risk_by_scenario")
+def risk_by_scenario(run_id: str, body: RiskScnIn) -> dict:
+    """ECL at risk around each chosen scenario: ``paths`` paths per scenario,
+    the scenario's path plus the same random paths from the macro system."""
+    if not body.scenarios:
+        raise HTTPException(400, "Choose at least one scenario.")
+    rc, P, v, cfg = _proxy(run_id, body.vintage)
+    rcfg = cfg.get("risk") or {}
+    n = max(100, min(int(body.paths or rcfg.get("paths", 2000)), 20000))
+    seed = int(rcfg.get("seed", 20261027))
+    scns = [None if d is None else _scenario(d) for d in body.scenarios]
+    key = tuple("forecast" if s is None else (_key(s), s.name) for s in scns)
+    return js(_cached(("riskscn", run_id, v, config_hash(cfg), n, seed, key),
+                      lambda: SV.ecl_at_risk(rc, P, scns, n, seed)))
 
 
 class ReverseIn(BaseModel):

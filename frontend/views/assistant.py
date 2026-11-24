@@ -134,7 +134,7 @@ def chart(ch: dict, key: str) -> None:
         meas = ["absolute" if str(s) in ("Opening", "Closing") else "relative" for s in df[x]]
         fig = go.Figure(go.Waterfall(x=df[x].astype(str), y=df[y], measure=meas,
                                      text=[f"{v:,.0f}" for v in df[y]], textposition="outside",
-                                     connector=dict(line=dict(color="#d9d4e0")),
+                                     connector=dict(line=dict(color="#d3dce0")),
                                      increasing=dict(marker=dict(color=ERR)),
                                      decreasing=dict(marker=dict(color=OK)),
                                      totals=dict(marker=dict(color=PLUM))))
@@ -148,7 +148,11 @@ def chart(ch: dict, key: str) -> None:
             fig.update_yaxes(range=[lo - pad, hi + pad])
         h = 420
     elif kind == "line":
-        fig = px.line(df, x=x, y=y, color=color, color_discrete_sequence=SEQ)
+        fig = px.line(df, x=x, y=y, color=color, color_discrete_sequence=SEQ,
+                      markers=x == "year" and df[x].nunique() <= 15)
+        if x == "year":
+            n = int(pd.to_numeric(df[x], errors="coerce").max() or 1)
+            fig.update_xaxes(tickformat="d", dtick=1 if n <= 15 else 5 if n <= 30 else 10)
         h = 380
     elif kind == "stacked":
         fig = px.bar(df, x=x, y=y, color=color, barmode="stack", color_discrete_sequence=SEQ)
@@ -174,7 +178,8 @@ def chart(ch: dict, key: str) -> None:
         h = max(260, 30 * len(d) + 90) if horizontal else 380
     nice = {"ecl": "ECL (QAR)", "exposure": "Exposure (QAR)", "change": "Change (QAR)",
             "amount": "QAR", "contracts": "Contracts", "customers": "Customers",
-            "coverage": "Coverage %", "pd_pct": "PD %", "month": "Month", "ead": "EAD (QAR)"}
+            "coverage": "Coverage %", "pd_pct": "PD %", "month": "Month", "year": "Year",
+            "ead": "EAD (QAR)"}
     fig.update_xaxes(title_text=nice.get(str(y if kind == "bar" and (ch.get("horizontal") or len(df) > 8) else x),
                                          str(y if kind == "bar" and (ch.get("horizontal") or len(df) > 8) else x)
                                          .replace("_", " ")))
@@ -185,8 +190,8 @@ def chart(ch: dict, key: str) -> None:
                       margin=dict(l=8, r=40, t=44 if title else 8, b=8),
                       plot_bgcolor="white", paper_bgcolor="white", font=dict(size=12, color="#4a5162"),
                       legend=dict(orientation="h", y=-0.18), separators=".,")
-    fig.update_xaxes(gridcolor="#f4f2f7")
-    fig.update_yaxes(gridcolor="#f4f2f7")
+    fig.update_xaxes(gridcolor="#eff3f5")
+    fig.update_yaxes(gridcolor="#eff3f5")
     st.plotly_chart(fig, use_container_width=True, key=key)
 
 
@@ -221,7 +226,21 @@ def _urls(text: str) -> str:
     return (text or "").replace("regfile://", f"{api.BACKEND.rstrip('/')}/api/regulatory/file/")
 
 
+def run_line(runs: list[dict]) -> str:
+    """Which run(s) the figures come from, in one line."""
+    def one(r, bold=True):
+        rid = f"**{r['run_id']}**" if bold else r["run_id"]
+        bits = [b for b in (r.get("run_type"), r.get("quarter")) if b]
+        date = f" ({r['portfolio_date']})" if r.get("portfolio_date") else ""
+        return rid + (" · " + " · ".join(bits) if bits else "") + date
+    if len(runs) == 1:
+        return ":material/database: Run " + one(runs[0])
+    return ":material/database: Runs " + " → ".join(one(r) for r in runs)
+
+
 def render(turn: dict, i: int, live: bool = False) -> None:
+    if turn.get("runs"):
+        st.caption(run_line(turn["runs"]))
     st.markdown(tidy_math(_urls(turn["content"])))
     chk = turn.get("check") or {}
     if chk.get("removed"):
@@ -406,5 +425,5 @@ if question:
                     "cites": r.get("cites") or [], "ask": r.get("ask"),
                     "followups": r.get("followups") or [], "steps": r.get("steps") or [],
                     "check": r.get("check") or {}, "docs": r.get("docs") or [],
-                    "sources": r.get("sources") or []})
+                    "sources": r.get("sources") or [], "runs": r.get("runs") or []})
     st.rerun()

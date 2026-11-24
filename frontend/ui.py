@@ -22,15 +22,17 @@ import streamlit as st
 
 ASSETS = Path(__file__).parent / "assets"
 
-# QDB plum, carried over from the R app so the two look related.
-PLUM = "#5b1f6e"
-PLUM_LIGHT = "#8e5aa3"
-TEAL = "#0d9488"
+# QDB colours, from the bank's slide template (QDB New PPT Template): navy
+# 003C52 and teal 0092A6 lead, sky 00A3EB, lime 93CA15, burgundy 8B153C and
+# orange FF4A00 support. The name PLUM is kept for the primary colour.
+PLUM = "#003c52"
+PLUM_LIGHT = "#00a3eb"
+TEAL = "#0092a6"
 OK = "#059669"
 WARN = "#d97706"
 ERR = "#dc2626"
 GREY = "#8a94a6"
-SEQ = [PLUM, PLUM_LIGHT, TEAL, "#c9a9d8", "#7c3aed", "#5eead4", GREY, WARN]
+SEQ = [PLUM, TEAL, PLUM_LIGHT, "#93ca15", "#8b153c", "#ff4a00", "#7fc8d2", GREY]
 
 # Severity -> tone. One mapping, used by every badge, row and tile.
 _TONE = {"ERROR": "err", "FAIL": "err", "WARN": "warn", "WARNING": "warn",
@@ -43,10 +45,10 @@ _ORDER = {"err": 0, "warn": 1, "info": 2, "muted": 3, "ok": 4}
 CSS = """
 <style>
   :root {
-    --plum:#5b1f6e; --plum-2:#7c3492; --plum-50:#faf7fc; --plum-100:#f3ecf7;
-    --plum-200:#e4d6ec;
+    --plum:#003c52; --plum-2:#0092a6; --plum-50:#f2f8fa; --plum-100:#e6f2f5;
+    --plum-200:#cce4ea;
     --ink:#1f2430; --ink-2:#344054; --muted:#667085; --faint:#98a2b3;
-    --line:#e7e4ed; --line-2:#f1eef5; --page:#f6f5f9;
+    --line:#e3e8eb; --line-2:#eef2f4; --page:#f5f7f8;
     --err:#b42318; --err-bg:#fef3f2; --err-line:#fecdca; --err-solid:#d92d20;
     --warn:#b54708; --warn-bg:#fffaeb; --warn-line:#fedf89; --warn-solid:#f79009;
     --info:#175cd3; --info-bg:#eff8ff; --info-line:#b2ddff; --info-solid:#2e90fa;
@@ -74,7 +76,7 @@ CSS = """
      app's "busy" signal, since the toolbar's running widget is hidden */
   .stApp[data-test-script-state="running"] header[data-testid="stHeader"]::after {
       content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 3px;
-      background: linear-gradient(90deg, transparent, var(--plum), #b07cc6, transparent);
+      background: linear-gradient(90deg, transparent, var(--plum), #0092a6, transparent);
       background-size: 40% 100%; background-repeat: no-repeat; opacity: 0;
       animation: qdb-in .01s linear .3s forwards, qdb-run 1.2s linear .3s infinite;}
   @keyframes qdb-in {to {opacity: 1;}}
@@ -96,7 +98,7 @@ CSS = """
   h3 {font-size: .95rem !important; font-weight: 700; color: var(--ink-2);}
   h4 {font-size: .95rem !important; font-weight: 700; color: var(--ink);}
   hr {margin: .9rem 0 !important;}
-  code {font-size: .82em; color: #5b1f6e; background: var(--plum-50);
+  code {font-size: .82em; color: #003c52; background: var(--plum-50);
         padding: 1px 5px; border-radius: 5px;}
 
   .pg-head {display: flex; align-items: baseline; gap: .9rem;
@@ -156,12 +158,12 @@ CSS = """
   [data-testid="stPageLink"] a p {font-weight: 600;}
   .stButton button[kind="primary"], .stFormSubmitButton button[kind="primary"] {
       background: var(--plum); border: 0;
-      box-shadow: 0 1px 3px rgba(91,31,110,.25);}
+      box-shadow: 0 1px 3px rgba(0,60,82,.25);}
   .stButton button[kind="primary"]:hover,
-  .stFormSubmitButton button[kind="primary"]:hover {background: #6d2a83;}
+  .stFormSubmitButton button[kind="primary"]:hover {background: #00566e;}
   /* a disabled primary button keeps its label readable */
-  .stButton button[kind="primary"]:disabled {background: #e9e2ee;
-      color: #6f5f78; box-shadow: none; opacity: 1; cursor: not-allowed;}
+  .stButton button[kind="primary"]:disabled {background: #dde7ea;
+      color: #5c6e76; box-shadow: none; opacity: 1; cursor: not-allowed;}
 
   /* ---- small text and pills */
   .caption, [data-testid="stMarkdownContainer"] p.caption {color: var(--muted);
@@ -301,11 +303,11 @@ CSS = """
 .text-table {width:100%; border-collapse:collapse; font-size:.86rem;
   margin:.25rem 0 1rem 0;}
 .text-table th {font-weight:600; color:var(--muted); font-size:.78rem;
-  border-bottom:1px solid #e6e2ec; padding:.45rem .6rem; white-space:nowrap;}
-.text-table td {border-bottom:1px solid #f0edf4; padding:.45rem .6rem;
+  border-bottom:1px solid #e1e7ea; padding:.45rem .6rem; white-space:nowrap;}
+.text-table td {border-bottom:1px solid #edf1f3; padding:.45rem .6rem;
   vertical-align:top; white-space:normal; word-break:normal;
   overflow-wrap:anywhere; line-height:1.35;}
-.text-table tr:hover td {background:#faf8fc;}
+.text-table tr:hover td {background:#f5f8f9;}
 </style>
 """
 
@@ -1055,17 +1057,17 @@ class QHeader {
              font-weight:600; }
       .q-num .q-l { text-align:right; }
       .q-s { flex:0 0 auto; font-weight:700; }
-      .q-f { flex:0 0 auto; display:none; align-items:center; color:#5b1f6e; }
+      .q-f { flex:0 0 auto; display:none; align-items:center; color:#003c52; }
       .q-m { flex:0 0 auto; display:inline-flex; align-items:center; justify-content:center;
              width:20px; height:22px; border-radius:4px; opacity:0; color:#475467; }
       .ag-header-cell:hover .q-m, .q-m.q-open { opacity:1; }
-      .q-m:hover, .q-m.q-open { background:rgba(91,31,110,.10); color:#5b1f6e; }
+      .q-m:hover, .q-m.q-open { background:rgba(0,60,82,.10); color:#003c52; }
       .q-menu { position:absolute; z-index:10000; min-width:190px; background:#fff;
                 border:1px solid #e4e7ec; border-radius:8px; padding:4px 0;
                 box-shadow:0 8px 24px rgba(16,24,40,.14); font:13px/1.2 "Source Sans Pro",
                 "Source Sans 3", system-ui, sans-serif; color:#1f2430; }
       .q-menu div.q-i { padding:7px 14px; cursor:pointer; white-space:nowrap; }
-      .q-menu div.q-i:hover { background:#f3ecf7; }
+      .q-menu div.q-i:hover { background:#e6f2f5; }
       .q-menu div.q-sep { height:1px; background:#eef0f3; margin:4px 0; }`;
     document.head.appendChild(st);
     // a click outside the table's frame never reaches it: the frame loses
@@ -1211,7 +1213,7 @@ _FIT_JS = r"""function (e) {
   }, 0);
 }"""
 _PINNED_JS = ("function(p){if(p.node.rowPinned)return {fontWeight:700,"
-              "background:'#f6f1f9'};return null;}")
+              "background:'#eef6f8'};return null;}")
 
 
 def _group_columns(defs: list, groups: dict) -> list:
@@ -1620,15 +1622,20 @@ def bar(df: pd.DataFrame, x: str, y: str, *, horizontal=True, diverging=False,
         text=[f"{(v if abs(v) >= 0.5 * 10 ** -dp else 0):,.{dp}f}" for v in d[y]],
         textposition="outside",
         textfont=dict(size=11, color="#4a5162"), cliponaxis=False,
-        hovertemplate=f"%{{y}}<br>{fmt}<extra></extra>")
+        hovertemplate=(f"%{{y}}<br>{fmt}<extra></extra>" if horizontal else
+                       f"%{{x}}<br>{fmt.replace('%{x', '%{y')}<extra></extra>"))
+    # the value axis carries the number format; the other axis holds the
+    # categories (a year stays 2015, not 2,015.00)
+    value_ax = dict(showgrid=True, gridcolor="#eff3f5", zerolinecolor="#d5dee2",
+                    tickformat=f",.{dp}f" if dp else ",", showline=False)
+    cat_ax = dict(showgrid=False, tickfont=dict(size=11.5), type="category")
     fig.update_layout(
         height=height or max(230, 32 * len(d) + 80),
         margin=dict(l=8, r=64, t=42 if title else 6, b=6),
         plot_bgcolor="white", paper_bgcolor="white",
         title=dict(font=dict(size=13, color="#2a2f3a")),
-        xaxis=dict(showgrid=True, gridcolor="#f4f2f7", zerolinecolor="#ded9e6",
-                   tickformat=f",.{dp}f" if dp else ",", showline=False),
-        yaxis=dict(showgrid=False, tickfont=dict(size=11.5)),
+        xaxis=value_ax if horizontal else cat_ax,
+        yaxis=cat_ax if horizontal else value_ax,
         showlegend=False, font=dict(size=12, color="#4a5162"), bargap=0.28,
     )
     # Two identical charts on one page (two packages that change nothing)
@@ -1650,7 +1657,7 @@ def waterfall(steps: pd.DataFrame, title: str | None = None, zoom: bool = False)
         orientation="v", measure=measure,
         x=steps["label"], y=steps["amount"],
         text=[f"{v:,.0f}" for v in steps["amount"]], textposition="outside",
-        connector=dict(line=dict(color="#d9d4e0")),
+        connector=dict(line=dict(color="#d3dce0")),
         increasing=dict(marker=dict(color=ERR)),
         decreasing=dict(marker=dict(color=OK)),
         totals=dict(marker=dict(color=PLUM)),
@@ -1659,7 +1666,7 @@ def waterfall(steps: pd.DataFrame, title: str | None = None, zoom: bool = False)
         title=title, height=440,
         margin=dict(l=8, r=8, t=50 if title else 18, b=8),
         plot_bgcolor="white", paper_bgcolor="white", showlegend=False,
-        yaxis=dict(gridcolor="#f4f2f7", tickformat=",", zerolinecolor="#ded9e6"),
+        yaxis=dict(gridcolor="#eff3f5", tickformat=",", zerolinecolor="#d5dee2"),
         xaxis=dict(tickfont=dict(size=11.5)),
         font=dict(size=12, color="#4a5162"),
     )
@@ -1698,7 +1705,7 @@ def line(df, x, y, title=None, height=320, yfmt=","):
     fig.update_layout(height=height, margin=dict(l=8, r=8, t=40 if title else 8, b=8),
                       plot_bgcolor="white", paper_bgcolor="white",
                       xaxis=dict(showgrid=False),
-                      yaxis=dict(gridcolor="#f0eef4", tickformat=yfmt),
+                      yaxis=dict(gridcolor="#edf1f3", tickformat=yfmt),
                       showlegend=False, font=dict(size=12))
     st.plotly_chart(fig, use_container_width=True)
 

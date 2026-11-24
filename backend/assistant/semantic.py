@@ -17,6 +17,7 @@ A tool never raises: a problem is a result the model can read and act on
 from __future__ import annotations
 
 import re
+from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
 
@@ -42,7 +43,45 @@ def _runs() -> list[dict]:
     return sorted(rows, key=lambda r: r["run_id"], reverse=True)
 
 
+# the runs a lookup read, collected while it runs (agent.execute)
+USED_RUNS: ContextVar[list | None] = ContextVar("USED_RUNS", default=None)
+
+
+def _note_run(rid: str | None) -> None:
+    used = USED_RUNS.get()
+    if rid and used is not None and rid not in used:
+        used.append(rid)
+
+
+def _as_date(s) -> datetime | None:
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%Y%m%d"):
+        try:
+            return datetime.strptime(str(s or "").strip()[:10], fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def run_label(rid: str) -> dict:
+    """Which run an answer is about: id, official or unofficial, quarter and
+    portfolio date."""
+    r = next((x for x in _runs() if x["run_id"] == rid), {"run_id": rid})
+    d = _as_date(r.get("portfolio_date"))
+    rt = str(r.get("run_type") or "").strip().lower()
+    return {"run_id": rid,
+            "run_type": rt.capitalize() if rt else None,
+            "quarter": f"Q{(d.month - 1) // 3 + 1} {d.year}" if d else None,
+            "portfolio_date": d.strftime("%d %b %Y") if d else None,
+            "status": r.get("status")}
+
+
 def resolve_run(ref, focus: str | None = None) -> tuple[str | None, str]:
+    rid, why = _resolve_run(ref, focus)
+    _note_run(rid)
+    return rid, why
+
+
+def _resolve_run(ref, focus: str | None = None) -> tuple[str | None, str]:
     """A run named any way a person would: an id, a number ("run 2", "2"),
     "latest", "previous", a date ("2026-09-30", "Sep 2026", "Q3 2026").
     Returns (run_id, problem)."""
@@ -943,7 +982,7 @@ def pd_curve(run_id=None, ratings=None, scale="Internal", years: int = 10, kind=
     inp = A._inputs(rid)
     if inp is None:
         return _fail(f"Run {rid}'s PD curves could not be read.")
-    c = pd_curves_by_rating(inp)
+    c = pd_curves_by_rating(inp, 600)
     sc = "External" if str(scale).lower().startswith("e") else "Internal"
     c = c[c["scale"] == sc]
     allr = list(dict.fromkeys(c["rating"]))
@@ -955,18 +994,20 @@ def pd_curve(run_id=None, ratings=None, scale="Internal", years: int = 10, kind=
     else:
         pick = allr[:: max(1, len(allr) // 5)][:6]
     yrs = max(1, min(int(years or 10), 50))
-    c = c[c["rating"].isin(pick) & (c["month"] <= 12 * yrs)]
+    from ..curves import yearly
     col = "marginal_pd" if str(kind).lower().startswith("m") else "cum_pd"
-    yearly = c[c["month"] % 12 == 0].assign(year=lambda x: x["month"] // 12)
-    piv = yearly.pivot_table(index="year", columns="rating", values=col).reset_index()
+    yr = yearly(c[c["rating"].isin(pick)])
+    yr = yr[yr["year"] <= yrs]
+    piv = yr.pivot_table(index="year", columns="rating", values=col).reset_index()
     piv = piv[["year"] + [r for r in pick if r in piv.columns]]
     # the analytics give these curves in percent already
-    long = c.assign(pd_pct=c[col])[["month", "rating", "pd_pct"]]
+    long = yr.assign(pd_pct=yr[col])[["year", "rating", "pd_pct"]]
+    name = "Marginal" if col == "marginal_pd" else "Cumulative"
     return {"ok": True,
-            "summary": f"{'Marginal' if col == 'marginal_pd' else 'Cumulative'} PD (%) by year, {sc} scale, run {rid}:\n{_text(piv)}",
-            "table": _table(piv, f"{'Marginal' if col == 'marginal_pd' else 'Cumulative'} PD % by year · {sc} · {rid}"),
-            "chart": {"kind": "line", "x": "month", "y": "pd_pct", "color": "rating",
-                      "title": f"{'Cumulative' if col == 'cum_pd' else 'Marginal'} PD by month (%) · {sc} · {rid}",
+            "summary": f"{name} PD (%) by year, {sc} scale, run {rid}:\n{_text(piv)}",
+            "table": _table(piv, f"{name} PD % by year · {sc} · {rid}"),
+            "chart": {"kind": "line", "x": "year", "y": "pd_pct", "color": "rating",
+                      "title": f"{name} PD by year (%) · {sc} · {rid}",
                       "rows": long.to_dict(orient="records")}}
 
 
