@@ -792,7 +792,8 @@ contracts move to Stage 2.
 
 **Where the pack differs.** The pack says a Tasdeer facility must not pull
 the customer's other facilities into Stage 2 (slides 89–90). The tool, like
-the R tool before it, does pull them (section 17).
+the R tool before it, does pull them; QDB keeps this treatment (November
+2026).
 
 ## 16.5 Investments
 
@@ -839,5 +840,4 @@ model, Stage 1 unless an override or default is recorded, ONBALANCE held flat.
 | One macro variable | only non-oil GDP carries weight in the internal model |
 | External scenario weights | still on the V1 orientation (section 7.7); the move to V2 is pending |
 | No FX conversion | balances are used as delivered |
-| Contagion from Tasdeer | a customer's Tasdeer facility moves its other Stage 1 contracts to Stage 2; the pack says it should not (slides 89–90). To be confirmed against LIC and decided |
 | No SICR test for investments | holdings are Stage 1 unless an override or default is recorded; there is no rating-based test (section 16.5) |
