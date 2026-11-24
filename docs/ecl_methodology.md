@@ -239,7 +239,9 @@ Then:
   lending customer or an investment counterparty) can only worsen the stage;
   Stage 3 always stays Stage 3.
 - **Contagion:** if any contract of a customer is Stage 2 or worse, its Stage 1
-  contracts move to Stage 2 (Tasdeer excluded).
+  contracts move to Stage 2. Tasdeer facilities are not moved by the sweep
+  (they are Stage 2 already), but a Tasdeer facility counts as the customer's
+  Stage 2 contract, so it moves the customer's other contracts (section 16.4).
 
 The DPD threshold is `dpd_stage2_threshold_days` in `staging_thresholds.csv`
 (60). The tool has no SICR test against the origination PD or rating: the
@@ -671,7 +673,160 @@ steps without changing the total.
 Customers present in both runs are counted by previous and current stage (and
 grade); each cell carries the exposure and the ECL in both runs.
 
-# 16. Limitations and open points
+# 16. Portfolio by portfolio
+
+The sections above describe each step once. This chapter goes through the six
+portfolios and says, for each, what it holds, how each step treats it, and
+where the design in the methodology pack (v11, May 2025) differs from what the
+tool does today. Figures (exposure, ECL, stage mix) change every quarter and
+are not repeated here: see the Portfolio pages, or ask the assistant.
+
+**At a glance**
+
+| Portfolio | Book | Scale | Unrated grade | Staging | EAD | Stage 3 |
+|---|---|---|---|---|---|---|
+| Business Finance | Lending | Internal | QDB 5 (Agriculture, Fisheries, Livestock: by DPD) | rule of section 6.1 | schedule, else linear / bullet | 100% of balance |
+| Off BS | Lending | Internal | QDB 5 | rule of section 6.1 | amount in ONBALANCE, bullet | 100% of balance |
+| Al Dhameen | Lending | Internal | QDB 6 | rule of section 6.1 | amount in ONBALANCE, linear (annual) | 100% of balance |
+| Tasdeer | Lending | Internal | QDB 5 | Stage 2 (Stage 3 over 90 DPD) | amount in ONBALANCE, bullet | 100% of balance |
+| Investments | Investments | External | Baa3 | overrides only (DPD is 0) | ONBALANCE, bullet | 100% of balance |
+| Banks and Fis | Investments | External | Baa3 | overrides only (DPD is 0) | ONBALANCE, bullet | 100% of balance |
+
+The scale decides the PD model: internal grades use the non-oil GDP model
+(sections 7.1–7.6), external grades the GCC GDP model (section 7.7). LGD
+(chapter 9) and the ECL formula (chapter 10) are the same for all six.
+
+## 16.1 Business Finance
+
+**What it holds.** QDB's direct financing: Long Term, Short Term, Murabaha,
+Ijara, Forward Ijara, Istisna and Tawarruq (the products of the original
+mapping), and Bai Al Wadiya, Fisheries, Greenhouse, Microfinance and Paid
+guarantees (added by the team for product types seen in production). A
+product type that is not in `product_portfolio_mapping.csv` also lands here,
+so it is still provisioned (section 4.2).
+
+**Rating.** The customer's own grade from CustomerMaster. An unrated customer
+in Agriculture, Fisheries or Livestock gets the collective-assessment grade
+for its worst DPD (section 5.1; the pack's cohort study, slides 96–99, set
+these grades from default rates by DPD bucket). Any other unrated customer
+gets QDB 5. The worst grade across a customer's contracts goes on all of them.
+
+**Staging.** The rule of section 6.1, at customer level: worst DPD above 60
+days, watchlist or restructured → Stage 2; worst DPD above 90 or the default
+flag → Stage 3; one Stage 2 contract pulls the customer's Stage 1 contracts to
+Stage 2.
+
+**EAD.** The repayment schedule where there is one (section 8.1). Without a
+schedule: linear for amortising contracts (payment type 4), bullet for bullet
+contracts (payment type 3) (section 8.2). EIR gaps are filled from the
+average EIR of the product (section 4.3).
+
+**LGD.** Collateral allocated to the facility, net of the haircut of its type
+(chapter 9). Only bank guarantees, residential property and commercial
+property reduce the LGD; every other type carries a 100% haircut.
+
+**Where the pack differs.** The pack's haircut table (slide 71) shows
+commercial property at 100%; the tool uses 75% and adds corporate guarantee,
+personal cheque and corporate cheque at 100%. The pack allocates collateral
+at customer level (slides 69, 72); the tool allocates it per facility.
+
+## 16.2 Off BS
+
+**What it holds.** Letters of guarantee (LG) and letters of credit (LC).
+
+**Rating.** As Business Finance: the customer's own grade, else QDB 5; worst
+grade per customer.
+
+**Staging.** As Business Finance (section 6.1); an Off BS facility is staged
+with the customer's other contracts.
+
+**EAD.** The engine prices the amount the extract puts in ONBALANCE, which is
+the guarantee amount or the LC outstanding times the CCF; the engine applies
+no CCF itself (section 8.3). The pack's CCFs (slide 78) are 50% for bank
+guarantees and 20% for letters of credit and other products. No schedule:
+the balance is held flat to maturity (bullet).
+
+**Where the pack differs.** Slide 79 says EAD is the guarantee or LC
+**limit** times the CCF, with 80% of unused limits expected to be drawn; the
+extract uses the guarantee amount or LC outstanding, not the limit.
+
+## 16.3 Al Dhameen
+
+**What it holds.** QDB's guarantee programme: the financing is given by
+partner banks and QDB guarantees it (pack, slide 96). Delinquency data comes
+from the partner banks with a lag.
+
+**Rating.** The customer's own grade when it has one; otherwise QDB 6. The
+pack set QDB 6 for the whole portfolio because the delinquency data was not
+reliable (one notch below the lending book's average, close to QDB 5; slide
+100); the tool keeps a real grade where there is one.
+
+**Staging.** The rule of section 6.1, on the DPD the partner banks report.
+
+**EAD.** The amount in ONBALANCE: the full guaranteed amount. Without a
+schedule, amortising contracts (payment type 4) run down linearly with annual
+payments counted back from maturity, as LIC does (section 8.2).
+
+**Where the pack differs.** The pack's CCF table (slide 78) gives Al Dhameen
+50%; the extract carries the full amount (CCF 100%). The pack applies QDB 6
+to every Al Dhameen customer (slides 6, 100); the tool only to unrated ones.
+
+## 16.4 Tasdeer
+
+**What it holds.** A product close to insurance: QDB pays the customer the
+guaranteed amount when the customer's counterparty does not pay within 90
+days (pack, slide 96). It is a very small portfolio with no rating, default
+or delinquency history.
+
+**Rating.** QDB 5 for unrated customers (pack, slides 89 and 101: close to
+the lending book's average).
+
+**Staging.** Stage 2 outright, to avoid undue cost and effort (pack, slides
+89–90); Stage 3 when the DPD is above 90 or the default flag is set (section
+6.1). The contagion sweep does not touch Tasdeer facilities, but a customer's
+Tasdeer facility does count as Stage 2 for the sweep: its other Stage 1
+contracts move to Stage 2.
+
+**EAD.** The amount in ONBALANCE (the pack's CCF for Tasdeer guarantees is
+50%, slide 78), held flat to maturity (bullet).
+
+**Where the pack differs.** The pack says a Tasdeer facility must not pull
+the customer's other facilities into Stage 2 (slides 89–90). The tool, like
+the R tool before it, does pull them (section 17).
+
+## 16.5 Investments
+
+**What it holds.** The investment book other than bank placements: sukuk and
+bonds, mainly GCC sovereign and other highly rated issuers (pack, slide 87).
+
+**Rating.** The holding's external grade when it is on the master scale,
+otherwise Baa3 (section 5.2). The pack took external ratings on Moody's
+scale (slide 6); unrated holdings at Baa3 are the tool's rule.
+
+**PD.** The external (GCC GDP) model of section 7.7.
+
+**Staging.** Days past due are written as 0 for every holding (a traded
+instrument carries no arrears count), so a holding is Stage 1 unless a Stage
+2 override, a restructuring override or a default is recorded during the run
+(sections 6.2, 11.1). There is no rating-based test of significant increase
+in credit risk. The pack allows the low credit risk expedient for debt
+securities rated AAA and AA, in line with QCB (slide 87).
+
+**EAD.** ONBALANCE, held flat to maturity (bullet). A rate stored in percent
+is detected and divided by 100.
+
+**LGD.** The formula of chapter 9; a holding with no collateral allocated gets
+45%.
+
+## 16.6 Banks and Fis
+
+**What it holds.** Placements with banks and financial institutions; in the
+investment extract, the rows whose account type is "Banks and Fis".
+
+**Treatment.** As Investments: external grade or Baa3, the external PD
+model, Stage 1 unless an override or default is recorded, ONBALANCE held flat.
+
+# 17. Limitations and open points
 
 | Point | What it means |
 |---|---|
@@ -684,3 +839,5 @@ grade); each cell carries the exposure and the ECL in both runs.
 | One macro variable | only non-oil GDP carries weight in the internal model |
 | External scenario weights | still on the V1 orientation (section 7.7); the move to V2 is pending |
 | No FX conversion | balances are used as delivered |
+| Contagion from Tasdeer | a customer's Tasdeer facility moves its other Stage 1 contracts to Stage 2; the pack says it should not (slides 89–90). To be confirmed against LIC and decided |
+| No SICR test for investments | holdings are Stage 1 unless an override or default is recorded; there is no rating-based test (section 16.5) |

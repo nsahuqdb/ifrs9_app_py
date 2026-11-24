@@ -1437,6 +1437,8 @@ edit or approve anything, and says which page does.
 | Governance | *Which validation checks failed?* · *Who approved this run?* · *Which overlays are approved?* · *List the config versions* |
 | How the method works | *How is the PiT PD calculated?* · *How is LGD calculated?* · *How is Stage 2 decided?* · *What is the exposure cap?* — the steps with their formulas, and every version the documents describe (internal and external scale, lending and investments) unless you name one |
 | How the tool works | *How do I approve an overlay?* · *How do I run the ECL?* |
+| One portfolio | *What's going on in Al Dhameen?* · *How is Tasdeer treated?* — how the portfolio is treated (ECL methodology, chapter 16) and its figures against the previous run |
+| Regulation | *Compare our collateral haircuts with Basel and QCB* · *Is our 60-day backstop in line with IFRS 9?* · *What does the EBA stress test do with stage transfers?* · *Which regulatory documents do you have?* — QDB's setting (from the run's own config) beside each rule with its paragraph, and the passages it rests on |
 | The code (only when asked) | *Where is the function that computes LGD?* |
 
 **What an answer contains**
@@ -1455,6 +1457,15 @@ edit or approve anything, and says which page does.
 - **Ask next** — two or three follow-up questions; click one to ask it.
 - **How this was looked up** — every lookup with its arguments, so any figure
   can be traced.
+
+**Regulatory texts.** The assistant knows the Regulatory reference document
+(Help → Regulatory reference: IFRS 9, Basel, QCB, EBA, Bank of England,
+Federal Reserve, FINMA). To let it read the official texts themselves — the
+QCB circulars above all, which hold values such as QCB's collateral haircuts
+— save the PDFs in the app's `docs/regulatory` folder (sub-folders are fine).
+They are read on this machine the first time they are needed, cited by file
+and page, and never uploaded. Ask *Which regulatory documents do you have?*
+to see what it has read.
 
 **Every figure is checked.** Before a reply is shown, each amount,
 percentage and customer id in it is compared with what the lookups returned.
@@ -1480,8 +1491,11 @@ is previous run → that run; "biggest" means by ECL. You can name runs as
 
 ## 15.2 The documents
 
-**User manual**, **ECL methodology** and **Stress testing methodology** can
-each be read on screen (chapter picker, search) and downloaded as Word.
+**User manual**, **ECL methodology**, **Stress testing methodology** and
+**Regulatory reference** can each be read on screen (chapter picker, search)
+and downloaded as Word. The ECL methodology's chapter 16 goes through the six
+portfolios one by one; the Regulatory reference puts QDB's settings beside
+IFRS 9, Basel, QCB and the stress-testing supervisors.
 **How this works** is a one-page summary of the tool.
 
 # 16. Quick reference: accepted values

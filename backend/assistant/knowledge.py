@@ -25,6 +25,7 @@ HELP_PAGES = {
     "user_manual": "Help → User manual",
     "ecl_methodology": "Help → ECL methodology",
     "stress_testing_methodology": "Help → Stress testing methodology",
+    "regulatory_reference": "Help → Regulatory reference",
 }
 
 # The app page that shows each document (for a link that opens it there).
@@ -32,6 +33,7 @@ HELP_PAGE_FILES = {
     "user_manual": "frontend/views/help_manual.py",
     "ecl_methodology": "frontend/views/help_ecl.py",
     "stress_testing_methodology": "frontend/views/help_stress.py",
+    "regulatory_reference": "frontend/views/help_regulatory.py",
 }
 
 _STOP = set("""a an and are as at be by for from has have how i if in into is it
@@ -67,6 +69,8 @@ SYNONYMS = {
     "s1": "stage 1", "s2": "stage 2", "s3": "stage 3", "ifrs9": "ifrs 9",
     "haircut": "haircut collateral", "collateral": "collateral haircut loss given default", "overlay": "management overlay",
     "override": "override during the run", "cure": "cure probation",
+    "qcb": "qatar central bank qcb", "bcbs": "basel committee", "boe": "bank of england",
+    "fed": "federal reserve", "eba": "european banking authority eba",
 }
 
 
@@ -278,7 +282,7 @@ class Index:
 
 
 @lru_cache(maxsize=2)
-def _build(stamp: tuple, config_key: tuple) -> Index:
+def _build(stamp: tuple, config_key: tuple, reg_key: tuple = ()) -> Index:
     chunks: list[Chunk] = []
     eng = _engine_root()
     for p in _sources():
@@ -288,6 +292,13 @@ def _build(stamp: tuple, config_key: tuple) -> Index:
             chunks += _code_chunks(p, eng.parent)
     for path, label in config_key:
         chunks += _config_chunks(Path(path), label)
+    # the regulatory texts the user keeps in docs/regulatory, a page each
+    try:
+        from .regulatory import folder
+        chunks += [Chunk("", c.kind, c.source, c.title, c.section, c.text, c.line, c.where)
+                   for c in folder()[0]]
+    except Exception:
+        pass
     return Index(chunks)
 
 
@@ -310,12 +321,17 @@ def config_files() -> list[tuple[str, str]]:
 
 def index() -> Index:
     cfg = tuple(config_files())
-    return _build(_stamp(), tuple((p, l) for p, l in cfg))
+    try:
+        from .regulatory import stamp as reg_stamp
+        reg = reg_stamp()
+    except Exception:
+        reg = ()
+    return _build(_stamp(), tuple((p, l) for p, l in cfg), reg)
 
 
 def search(query: str, scope: str = "all", k: int = 5) -> list[Chunk]:
-    kinds = {"docs": ("doc",), "code": ("code",), "config": ("config",),
-             "all": ("doc", "code", "config")}.get(scope, ("doc", "code", "config"))
+    kinds = {"docs": ("doc",), "code": ("code",), "config": ("config",), "reg": ("reg",),
+             "all": ("doc", "code", "config", "reg")}.get(scope, ("doc", "code", "config"))
     return [c for _, c in index().search(query, kinds, k)]
 
 
@@ -340,6 +356,8 @@ def cite_label(c: Chunk) -> str:
         return f"{c.title} › {c.section} ({c.where})"
     if c.kind == "code":
         return f"{c.source}:{c.line} `{c.section}`"
+    if c.kind == "reg":
+        return f"{c.source}, {c.section} ({c.where})"
     return c.title
 
 
@@ -359,8 +377,10 @@ def explain(query: str, k: int = 4) -> list[Chunk]:
     close to the best is kept, so a question that has two answers -- the
     internal and the external PD, lending and investments, Stage 1/2 and
     Stage 3 -- gets both unless it names one."""
+    regs = re.search(r"\b(basel|bcbs|qcb|central bank|regulat\w*|supervis\w*|circular|eba|ecb|boe|"
+                     r"bank of england|fed|federal reserve|finma|complian\w*|benchmark\w*)\b", query, re.I)
     hits = [(sc, c) for sc, c in index().search(query, ("doc",), k=30)
-            if c.source in HELP_PAGE_FILES]
+            if c.source in HELP_PAGE_FILES and (regs or c.source != "regulatory_reference")]
     if not hits:
         return []
     best = hits[0][0]
@@ -395,6 +415,10 @@ def explain(query: str, k: int = 4) -> list[Chunk]:
         out.append(c)
     out = out[:k]
     # read in the document's own order: 7.3 before 7.4, the methodology
-    # before the manual
-    out.sort(key=lambda c: (order.get(c.source, 3), c.line))
+    # before the manual -- except a section whose headings name everything
+    # asked ("16.3 Al Dhameen" for "Al Dhameen portfolio"), which leads
+    want = {t for t in tokens(expand(query)) if t not in GENERIC and t not in _STOP}
+    want = {t for t in tokens(query) if t not in GENERIC} or want
+    named = lambda c: bool(want) and want <= set(tokens(c.section))
+    out.sort(key=lambda c: (not named(c), order.get(c.source, 3), c.line))
     return out

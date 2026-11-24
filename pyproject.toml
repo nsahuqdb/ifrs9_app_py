@@ -26,6 +26,7 @@ dependencies = [
     "streamlit-aggrid>=1.2.1",   # tables: a filter in each column header
     "plotly>=5.20",
     "requests>=2.31",
+    "pypdf>=4.0",                # the assistant reads the PDFs in docs/regulatory
 ]
 
 [project.optional-dependencies]

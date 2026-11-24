@@ -150,6 +150,13 @@ means and which input it uses; then anything that differs. If the sections descr
 one, cover EACH under its own bold heading. Say only what the sections say: no definitions, horizons or \
 claims of your own. Cite the section ids (k…). Never cite or mention code unless \
 the user asked about the code (then search_docs with scope "code" or read_code).
+5a. For a question that compares QDB with a regulation (Basel, QCB, IFRS 9, EBA, Bank of England, Fed, \
+FINMA) or asks what a regulation says: use benchmark(topic) and regulation(query). For each item asked \
+about, state QDB's value, the regulator's value with its paragraph (e.g. CRE22.49, B5.5.37, pack slide 84) \
+and whether QDB is higher, lower or the same, i.e. more or less conservative. Say that Basel values are \
+capital rules, not provisioning rules, when you compare with them. If a QCB value is not in an \
+observation, say it has to be read in the QCB circular and whether the circular is in the regulatory \
+folder. Never state a regulatory number that no observation gives.
 5. For a question about the RUN's figures: the direct answer first (one or two sentences with the key \
 figures), then at most three bullets on what drives it -- for a "why", name the main reason or step from \
 the observation with its figure (a movement step, a stage reason, a trigger). Do not retype a table that \
@@ -254,7 +261,8 @@ VIEW = {"movement": "both", "compare": "both", "staging": "both", "scenarios": "
         "migration": "both", "overview": "both", "breakdown": "auto", "pd_curve": "chart",
         "concentration": "both", "top": "table", "stage_moves": "table", "customer": "table",
         "stage_reason": "table", "validation": "table", "model": "table", "run_info": "table",
-        "runs": "table", "config_file": "table", "data_quality": "table", "audit": "table"}
+        "runs": "table", "config_file": "table", "data_quality": "table", "audit": "table",
+        "benchmark": "table", "reg_documents": "table"}
 _WANT_CHART = re.compile(r"\b(chart|plot|graph|visual\w*|draw|diagram|trend|curve|waterfall|pie|bars?)\b", re.I)
 _WANT_TABLE = re.compile(r"\b(table|tabular|in rows|spreadsheet|excel)\b", re.I)
 _WANT_CODE = re.compile(r"\b(code|function|python|source|implementation|implemented|script|module)\b", re.I)
@@ -428,6 +436,11 @@ def answer(question: str, history: list[dict] | None = None,
                     if have else
                     "I could not find that in the run data. Try asking it another way, "
                     "or open the page that shows it.")
+        # a comparison with Basel always says what Basel values are
+        if any(r.get("tool") == "benchmark" for r in results.values()) and re.search(r"\bbasel\b", text, re.I) \
+                and not re.search(r"capital (?:rule|requirement)", text, re.I):
+            text += ("\n\n*Basel values are capital rules, used here as a reference point; IFRS 9 asks for "
+                     "an unbiased estimate and does not prescribe haircuts or LGDs.*")
         out = _result(text, results, steps, parsed, question)
         out["check"] = {"removed": removed, "typed_table": typed_table}
         return out
@@ -453,7 +466,25 @@ def answer(question: str, history: list[dict] | None = None,
         for name, args in route(question, history, portfolios)[:2]:
             tid = lookup(name, args, json.dumps({"action": "tool", "tool": name, "args": args}))
             results[tid]["routed"] = True
-        if any(r.get("tool") == "explain" for r in results.values()):
+        tools_run = {r.get("tool") for r in results.values()}
+        if tools_run & {"benchmark", "regulation"}:
+            cfg = dataclasses.replace(cfg, max_tokens=max(cfg.max_tokens, 2000),
+                                      timeout_seconds=max(cfg.timeout_seconds, 120))
+            convo.append({"role": "user", "content":
+                          "The lookups above hold QDB's settings beside the regulations. Reply with action "
+                          "\"final\" as rule 5a says: for each item asked about, QDB's value, the "
+                          "regulator's value with its paragraph, and whether QDB is higher, lower or the same; "
+                          "list the benchmark lookup in \"show\" and cite the passages you use."})
+        elif "explain" in tools_run and tools_run - {"explain"}:
+            cfg = dataclasses.replace(cfg, max_tokens=max(cfg.max_tokens, 1500),
+                                      timeout_seconds=max(cfg.timeout_seconds, 120))
+            convo.append({"role": "user", "content":
+                          "The lookups above hold how this portfolio is treated (document sections) and its "
+                          "figures. Reply with action \"final\": first how it is treated -- rating, staging, "
+                          "EAD, LGD and anything special, in a few bullets from the sections -- then what its "
+                          "figures show, with the key figure; list the data lookup in \"show\" and cite "
+                          "the sections."})
+        elif any(r.get("tool") == "explain" for r in results.values()):
             # a methodology answer is longer than a figure: room for the steps
             cfg = dataclasses.replace(cfg, max_tokens=max(cfg.max_tokens, 2000),
                                       timeout_seconds=max(cfg.timeout_seconds, 120))

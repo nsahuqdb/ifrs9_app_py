@@ -43,3 +43,7 @@ scenarios/
 
 # The launcher's logs (start_ifrs9.bat)
 launcher_logs/
+
+# regulatory texts the user keeps on the machine; only the README is shared
+docs/regulatory/*
+!docs/regulatory/README.md

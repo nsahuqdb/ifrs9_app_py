@@ -1209,6 +1209,131 @@ def explain(query="", **_) -> dict:
             "cites": [_doc_cite(c) for c in hits]}
 
 
+def _config_dirs(run_id, focus):
+    """(config dir, static dir, where): the run's frozen copy, else live."""
+    from ..routes import analytics as A
+    from ifrs9qdb.analytics.model_view import config_used
+    rid, _ = resolve_run(run_id, focus)
+    if rid:
+        try:
+            cu = config_used(A._run_output(rid))
+            if cu:
+                return Path(cu["config"]), Path(cu["static"]), f"as frozen by {rid}"
+        except Exception:
+            pass
+    try:
+        from ..settings import CONFIG_DIR, STATIC_DIR
+        return Path(CONFIG_DIR), Path(STATIC_DIR), "live configuration"
+    except Exception:
+        return None, None, "no configuration found"
+
+
+def benchmark(topic="", run_id=None, focus=None, **_) -> dict:
+    """QDB's settings beside Basel, IFRS 9, QCB (and, for stress testing, the
+    EBA, Bank of England, Federal Reserve, FINMA): collateral haircuts, LGD,
+    CCF, staging and default, scenarios and measurement, stress test design.
+    QDB's values are read from the run's frozen configuration."""
+    from . import regulatory as R
+    t = str(topic or "").strip().lower()
+    t = {"haircut": "collateral", "haircuts": "collateral", "security": "collateral", "ead": "ccf",
+         "sicr": "staging", "default": "staging", "scenario": "measurement", "scenarios": "measurement",
+         "stress test": "stress", "stress testing": "stress"}.get(t, t)
+    if t and t not in ("all", *R.TOPICS):
+        found = R.topic_of(t)
+        t = found[0] if found else "all"
+    if t == "stress":
+        df = pd.DataFrame(R.STRESS)
+        return {"ok": True,
+                "summary": "Stress test designs (supervisors and QDB):\n" + _text(df, 20),
+                "table": _table(df, "Stress test designs: supervisors and QDB"),
+                "cites": []}
+    cdir, sdir, where = _config_dirs(run_id, focus)
+    q = R.qdb_settings(cdir, sdir)
+    rows = R.benchmark_rows(q, t or "all")
+    df = pd.DataFrame(rows)
+    df = df[[c for c in df.columns if c != "topic" and (df[c].astype(str).str.strip() != "").any()]]
+    head = (f"QDB's settings ({where}) beside the benchmarks{'' if not t or t == 'all' else ' · ' + t}. "
+            "Basel values are capital rules, used as a reference point; IFRS 9 sets principles, not "
+            "numbers; QCB values come from the methodology pack's quotes of Circular 9/2017 and KPMG's "
+            "summary of the QCB instructions, or must be read in the circular.")
+    # a value every row shares (IFRS 9 on collateral, QCB's "see the circular")
+    # is said once, so the comparison fits what the model reads
+    shared = {}
+    for k, ref in (("IFRS 9", "IFRS 9 ref"), ("QCB", "QCB ref")):
+        vals = {(r[k], r[ref]) for r in rows if r[k]}
+        if len(vals) == 1 and sum(bool(r[k]) for r in rows) >= 3:
+            shared[k] = vals.pop()
+    if shared:
+        head += " For every item: " + "; ".join(f"{k}: {v} [{ref}]" for k, (v, ref) in shared.items()) + "."
+    lines = []
+    for r in rows:
+        bits = [f"QDB: {r['QDB']}"]
+        for k, ref in (("Basel", "Basel ref"), ("IFRS 9", "IFRS 9 ref"), ("QCB", "QCB ref")):
+            if r[k] and k not in shared:
+                bits.append(f"{k}: {r[k]} [{r[ref]}]")
+        if r["other"]:
+            bits.append(r["other"])
+        if r["note"]:
+            bits.append(f"note: {r['note']}")
+        lines.append(f"- {r['item']} — " + "; ".join(bits))
+    return {"ok": True, "summary": head + "\n" + "\n".join(lines),
+            "table": _table(df, f"QDB vs regulation · {t or 'all'} · {where}")}
+
+
+def regulation(query="", k: int = 5, **_) -> dict:
+    """What the regulations say: the Regulatory reference document and the
+    official texts kept in docs/regulatory (read on this machine), passage by
+    passage with file and page."""
+    from . import regulatory as R
+    qtext = str(query or "").strip()
+    if not qtext:
+        return _fail("Say what to look up in the regulations.")
+    hits = K.index().search(qtext, ("doc", "reg"), k=20)
+    hits = [(sc, c) for sc, c in hits if c.kind == "reg" or (c.source == "regulatory_reference"
+                                                           and not c.heading.startswith(("7. Sources",
+                                                                                         "8. The regulatory")))]
+    # the official text is the authority: a page that answers comes before the
+    # summary of it in the Regulatory reference
+    if hits:
+        best = max(sc for sc, _ in hits)
+        hits.sort(key=lambda x: (not (x[1].kind == "reg" and x[0] >= 0.25 * best), -x[0]))
+    chunks, listing = R.folder()
+    note = ("" if listing else
+            "The regulatory folder (docs/regulatory) is empty: only the Regulatory reference document "
+            "is available. Put the official texts (QCB circular, Basel chapters, ...) there to search them.")
+    if not hits:
+        return _fail(f"Nothing in the Regulatory reference or the regulatory folder on {qtext!r}. {note}")
+    hits = hits[:max(1, min(int(k or 5), 8))]
+    parts, docs = [], []
+    for _, c in hits:
+        label = K.cite_label(c)
+        parts.append(f"[{c.id}] {label}\n{c.text[:2200]}")
+        docs.append({"id": c.id, "title": c.title if c.kind == "doc" else c.source,
+                     "heading": c.heading if c.kind == "doc" else c.section, "text": c.text,
+                     "link": K.link(c) if c.kind == "doc" else None,
+                     "file": c.where if c.kind == "reg" else None})
+    have = "; ".join(f"{d['document']}" + (f" ({d['problem']})" if d["problem"] else "")
+                     for d in listing) or "none"
+    return {"ok": True,
+            "summary": (f"Regulatory passages (documents in the folder: {have}). {note}\n\n"
+                        + "\n\n".join(parts)),
+            "docs": docs,
+            "cites": [{**_doc_cite(c), "kind": c.kind} for _, c in hits]}
+
+
+def reg_documents(**_) -> dict:
+    """The regulatory texts in docs/regulatory and whether each could be read."""
+    from . import regulatory as R
+    _, listing = R.folder()
+    if not listing:
+        return {"ok": True, "summary": ("The regulatory folder (docs/regulatory) is empty. The assistant has "
+                                        "the Regulatory reference document (Help → Regulatory reference); put "
+                                        "official texts in the folder to search them.")}
+    df = pd.DataFrame(listing)
+    return {"ok": True, "summary": f"Documents in docs/regulatory:\n{_text(df, 60)}",
+            "table": _table(df, "Regulatory folder")}
+
+
 def read_code(symbol="", **_) -> dict:
     """The engine's source for a function or class by name (or a citation id)."""
     c = K.chunk(symbol) if re.fullmatch(r"k\d+", str(symbol)) else K.code_symbol(symbol)
@@ -1230,6 +1355,7 @@ TOOLS = {
     "overlays": overlays, "audit": audit, "model": model, "config_file": config_file,
     "search_docs": search_docs, "read_code": read_code, "explain": explain,
     "stage_moves": stage_moves, "stage_reason": stage_reason,
+    "benchmark": benchmark, "regulation": regulation, "reg_documents": reg_documents,
 }
 
 CATALOGUE = """\
@@ -1256,4 +1382,8 @@ MODEL AND CONFIG
 KNOWLEDGE (for how/why/where questions; cite what you use)
 - explain(query) — HOW something is calculated, decided or done: the sections of the ECL methodology, stress methodology and user manual that answer it, whole, with formulas. Use this for any methodology or how-to question.
 - search_docs(query, scope) — search the user manual, ECL methodology, stress testing methodology (scope=docs), the engine code (scope=code), config (scope=config), or all. Returns passages with ids like k12.
+REGULATION
+- benchmark(topic, run) — QDB's settings beside Basel, IFRS 9 and QCB, with paragraph references; topic: collateral (haircuts), lgd, ccf, staging (default, SICR, cure), measurement (scenarios, horizon, discounting), stress (EBA, Bank of England, Fed, FINMA, QCB designs), or all. QDB's values are read from the run's frozen config.
+- regulation(query) — what a regulation says: the Regulatory reference document and the official texts in docs/regulatory (file and page).
+- reg_documents() — which regulatory texts are in docs/regulatory.
 - read_code(symbol) — the source of an engine function or class, e.g. read_code("compute_lgd")."""

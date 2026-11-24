@@ -84,6 +84,15 @@ RESULTS = _W("results?", "summary", "summarise", "summarize", "overview", "headl
 TRIGGERS = _W("triggers?", "drivers?", "why are", "reasons?")
 
 
+REGULATOR = re.compile(r"\b(basel|bcbs|cre\s?\d{2}|qcb|qatar central bank|central bank|regulat\w*|regulator\w*|"
+                       r"supervis\w*|circular|guideline\w*|eba|ecb|bank of england|boe|pra|fed|federal reserve|"
+                       r"ccar|dfast|finma|icaap|compliant|compliance|benchmark\w*|"
+                       r"ifrs\s?9\s+(?:standard|paragraph|requir\w*|says?|presum\w*)|"
+                       r"(?:according to|under|per|vs\.?|versus|against|compared? (?:to|with))\s+ifrs\s?9)\b", re.I)
+REG_DOCS = re.compile(r"\b(which|what|list)\b.*\b(regulat\w*|circulars?|documents?|texts?)\b.*"
+                      r"\b(have|available|folder|loaded|read)\b", re.I)
+
+
 def _stage_pair(q: str) -> tuple[int | None, int | None]:
     m = re.search(r"\bstages?\s*([123])\s*(?:to|→|->|-|into)\s*(?:stage\s*)?([123])\b", q, re.I)
     if m:
@@ -154,6 +163,27 @@ def plan(question: str, history: list[dict] | None = None,
     pair = ({"run_a": f"run_{int(runs[0]):05d}", "run_b": f"run_{int(runs[1]):05d}"} if len(runs) >= 2
             else {"run_b": run} if run else {})
 
+    # regulation: what the rules say, and QDB beside them
+    if REG_DOCS.search(q):
+        return [("reg_documents", {})]
+    if REGULATOR.search(q):
+        from .regulatory import topic_of
+        topics = topic_of(q)
+        plan_ = []
+        if topics:
+            plan_.append(("benchmark", {**base, "topic": topics[0]}))
+        plan_.append(("regulation", {"query": q}))
+        return plan_
+    # one portfolio: how it is treated, and where it stands
+    if f.get("portfolio") and re.search(r"\b(about|going on|tell me|profile|overview|happening|treat\w*|"
+                                        r"methodolog\w*|how (?:is|are|does))\b", q, re.I) \
+            and not (CUSTOMERS.search(q) or MOVE.search(q) or FIGURE.search(q)):
+        p = f["portfolio"]
+        steps = [("explain", {"query": f"{p} portfolio"})]
+        if not re.search(r"\b(treat\w*|methodolog\w*|how (?:is|are|does))\b", q, re.I):
+            steps.append(("compare", {"run_a": "previous", **({"run_b": run} if run else {}),
+                                      "by": ["stage"], "measure": "ecl", "filters": {"portfolio": p}}))
+        return steps
     # the code, only when asked for it
     if CODE.search(q) and re.search(r"\b(where|which|show|how)\b", q, re.I):
         return [("search_docs", {"query": q, "scope": "code"})]

@@ -138,6 +138,8 @@ pages = {
         st.Page(P + "help_ecl.py", title="ECL methodology", icon=":material/functions:"),
         st.Page(P + "help_stress.py", title="Stress testing methodology",
                 icon=":material/thunderstorm:"),
+        st.Page(P + "help_regulatory.py", title="Regulatory reference",
+                icon=":material/gavel:"),
         st.Page(P + "help.py", title="How this works", icon=":material/help:"),
     ],
 }

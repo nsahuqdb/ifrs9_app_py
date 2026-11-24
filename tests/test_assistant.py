@@ -712,3 +712,147 @@ class TestPresentation:
         assert self._show("top 10 customers as a chart", "top") == ("chart", True)
         assert self._show("ecl by stage as a table", "breakdown") == ("table", False)
         assert self._show("ecl by stage, table and chart", "breakdown") == ("both", True)
+
+
+class TestRegulatory:
+    """24 Nov 2026: the assistant should know the regulations and compare
+    QDB's settings with them (e.g. our haircuts vs QCB / Basel)."""
+
+    @staticmethod
+    def _live():
+        from pathlib import Path
+        import ifrs9qdb
+        root = Path(ifrs9qdb.__file__).resolve().parent
+        return root / "config", root / "static"
+
+    def test_qdb_haircuts_are_read_from_the_config_and_explained(self):
+        from backend.assistant import regulatory as R
+        q = R.qdb_settings(*self._live())
+        rows = {r["item"]: r for r in R.benchmark_rows(q, "collateral")}
+        cash = rows["Cash collateral / collateral account"]
+        assert cash["QDB"] == "100% haircut (nothing counted)"
+        assert cash["Basel"].startswith("0%") and "CRE22.49" in cash["Basel ref"]
+        assert rows["Residential property"]["QDB"] == "50% haircut (50% of value counted)"
+        assert rows["Commercial property"]["QDB"] == "75% haircut (25% of value counted)"
+        assert rows["Bank guarantee"]["QDB"] == "0% haircut (counted in full)"
+
+    def test_a_changed_haircut_shows_in_the_comparison(self, tmp_path):
+        import shutil
+        from backend.assistant import regulatory as R
+        cfg, static = self._live()
+        st = tmp_path / "static"
+        shutil.copytree(static, st)
+        p = st / "collateral_types.csv"
+        p.write_text(p.read_text().replace("22,1,Cash Collateral,1.00", "22,1,Cash Collateral,0.10"))
+        rows = {r["item"]: r for r in R.benchmark_rows(R.qdb_settings(cfg, st), "collateral")}
+        assert rows["Cash collateral / collateral account"]["QDB"].startswith("10% haircut (90% of value")
+
+    def test_lgd_and_staging_benchmarks_carry_their_paragraphs(self):
+        from backend.assistant import regulatory as R
+        q = R.qdb_settings(*self._live())
+        lgd = {r["item"]: r for r in R.benchmark_rows(q, "lgd")}
+        assert lgd["LGD on the unsecured part"]["QDB"] == "45%"
+        assert "40%" in lgd["LGD on the unsecured part"]["Basel"] and "CRE32.6" in lgd["LGD on the unsecured part"]["Basel ref"]
+        assert lgd["Lowest LGD possible"]["QDB"].startswith("22.5%")
+        stg = {r["item"]: r for r in R.benchmark_rows(q, "staging")}
+        assert stg["Stage 2 backstop (days past due)"]["QDB"] == "worst DPD above 60 days"
+        assert "5.5.11" in stg["Stage 2 backstop (days past due)"]["IFRS 9 ref"]
+        assert "B5.5.37" in stg["Default (Stage 3)"]["IFRS 9 ref"]
+
+    def test_the_reference_document_agrees_with_the_benchmarks(self):
+        from pathlib import Path
+        doc = (Path(__file__).resolve().parents[1] / "docs" / "regulatory_reference.md").read_text()
+        for s in ("| Cash in the same currency | 0% |", "CRE22.52", "| Senior unsecured, non-financial corporates | 40% | CRE32.6 |",
+                  "| Short-term self-liquidating trade letters of credit | 20% | CRE20.99 |", "B5.5.37", "5.5.11",
+                  "| PD, corporate and bank exposures (not sovereigns) | 0.05% | CRE32.4 |"):
+            assert s in doc, s
+
+    def test_folder_texts_are_read_cited_by_page_and_cached(self, tmp_path, monkeypatch):
+        from backend.assistant import regulatory as R
+        (tmp_path / "QCB").mkdir()
+        (tmp_path / "QCB" / "instructions.md").write_text(
+            "Section 3. Collateral. Residential real estate is taken at a haircut of thirty percent.\n" * 3)
+        (tmp_path / "broken.pdf").write_bytes(b"not a pdf")
+        monkeypatch.setattr(R, "REG_DIR", tmp_path)
+        monkeypatch.setattr(R, "_CACHE", tmp_path / ".index")
+        chunks, listing = R.folder()
+        docs = {d["document"]: d for d in listing}
+        assert docs["instructions.md"]["problem"] == "" and docs["broken.pdf"]["problem"]
+        assert chunks and chunks[0].where == "docs/regulatory/QCB/instructions.md"
+        assert (tmp_path / ".index").is_dir()
+        from backend.assistant.semantic import regulation
+        r = regulation("residential real estate haircut")
+        assert r["ok"] and r["docs"][0]["file"] == "docs/regulatory/QCB/instructions.md"
+        assert "page 1" in r["cites"][0]["label"]
+
+    def test_a_pdf_is_read_page_by_page(self, tmp_path, monkeypatch):
+        rl = pytest.importorskip("reportlab.pdfgen.canvas")
+        from backend.assistant import regulatory as R
+        c = rl.Canvas(str(tmp_path / "rules.pdf"))
+        c.drawString(72, 800, "Section 4. A facility more than 90 days past due is credit impaired.")
+        c.showPage()
+        c.drawString(72, 800, "Section 5. Haircut for commercial real estate collateral.")
+        c.save()
+        monkeypatch.setattr(R, "REG_DIR", tmp_path)
+        monkeypatch.setattr(R, "_CACHE", tmp_path / ".index")
+        chunks, _ = R.folder()
+        assert [c.section for c in chunks] == ["page 1", "page 2"]
+        assert "90 days past due" in chunks[0].text
+
+    def test_an_empty_folder_says_so(self, tmp_path, monkeypatch):
+        from backend.assistant import regulatory as R
+        from backend.assistant.semantic import reg_documents, regulation
+        monkeypatch.setattr(R, "REG_DIR", tmp_path / "none")
+        assert "empty" in reg_documents()["summary"]
+        r = regulation("QCB default definition")
+        assert r["ok"] and "empty" in r["summary"] and r["docs"][0]["link"]["page"] == "frontend/views/help_regulatory.py"
+
+    @pytest.mark.parametrize("q,tools", [
+        ("compare the haircuts we apply with QCB and Basel", ["benchmark", "regulation"]),
+        ("what does basel say about LGD", ["benchmark", "regulation"]),
+        ("is our 60 dpd backstop compliant with IFRS 9", ["benchmark", "regulation"]),
+        ("compare our CCF with basel", ["benchmark", "regulation"]),
+        ("which regulatory documents do you have", ["reg_documents"]),
+        ("How pit pd is calculated", ["explain"]),
+        ("whats going on in Al Dhameen", ["explain", "compare"]),
+        ("how is Tasdeer treated", ["explain"]),
+    ])
+    def test_router(self, q, tools):
+        from backend.assistant.router import plan
+        got = plan(q, None, ["Business Finance", "Al Dhameen", "Tasdeer", "Off BS", "Investments", "Banks and Fis"])
+        assert [t for t, _ in got] == tools
+
+    def test_methodology_questions_do_not_pull_the_regulatory_document(self):
+        from backend.assistant.knowledge import explain
+        for q in ("how is lgd calculated", "How pit pd is calculated", "how is stage 2 decided"):
+            assert all(c.source != "regulatory_reference" for c in explain(q))
+
+    def test_a_portfolio_question_leads_with_its_section(self):
+        from backend.assistant.knowledge import explain
+        assert explain("Al Dhameen portfolio")[0].heading == "16.3 Al Dhameen"
+        assert explain("Business Finance portfolio")[0].heading == "16.1 Business Finance"
+
+
+class TestPortfolioChapter:
+    def test_tasdeer_contagion_is_documented_as_the_engine_does_it(self):
+        """Section 16.4 says a customer's Tasdeer facility moves its other
+        Stage 1 contracts to Stage 2 (the pack says it should not). If the
+        engine changes, the document must change with it."""
+        from pathlib import Path
+        from ifrs9qdb.etl.report import classify_stage_report
+        st = classify_stage_report(dpd=[0, 0, 95], default_flag=[0, 0, 0], watchlist=[0, 0, 0],
+                                   local_any=[False] * 3, portfolio=["Tasdeer", "Business Finance", "Tasdeer"],
+                                   customer=["A", "A", "B"])
+        assert list(st) == [2, 2, 3]
+        doc = (Path(__file__).resolve().parents[1] / "docs" / "ecl_methodology.md").read_text()
+        assert "Tasdeer facility does count as Stage 2 for the sweep" in doc
+        assert "Stage 3 when the DPD is above 90" in doc
+
+    def test_each_portfolio_has_its_section(self):
+        from pathlib import Path
+        import pandas as pd
+        import ifrs9qdb
+        doc = (Path(__file__).resolve().parents[1] / "docs" / "ecl_methodology.md").read_text()
+        ports = pd.read_csv(Path(ifrs9qdb.__file__).resolve().parent / "static" / "portfolios.csv")
+        for p in ports["portfolio_code"]:
+            assert f"## 16." in doc and f" {p}\n" in doc.replace("## 16.", "\n## 16."), p

@@ -51,6 +51,7 @@ EXAMPLES = [
     "Plot the PD curves for QDB 3, QDB 5 and QDB 7",
     "How is LGD calculated?",
     "How do I approve an overlay?",
+    "Compare our collateral haircuts with Basel and QCB",
 ]
 
 if "assistant_history" not in S:
@@ -237,7 +238,12 @@ def render(turn: dict, i: int, live: bool = False) -> None:
         for j, d in enumerate(docs):
             with st.expander(f"{d.get('title', '')} › {d.get('heading', '')}", icon=":material/menu_book:",
                              expanded=False):
-                _doc_text(d.get("text") or "")
+                if d.get("file"):
+                    st.caption(f"{d['file']} · {d.get('heading', '')}")
+                    st.text(d.get("text") or "")
+                    _file_button(d["file"], key=f"as_file_{i}_{j}")
+                else:
+                    _doc_text(d.get("text") or "")
                 _open_link(d.get("link"), key=f"as_doc_{i}_{j}")
     if tables:
         st.download_button("Download as Excel", to_excel(tables, turn.get("question", "")),
@@ -290,6 +296,16 @@ def _open_link(link: dict | None, key: str) -> None:
                      query_params={k: v for k, v in (("ch", link.get("ch")), ("sec", link.get("sec"))) if v})
     except Exception:                       # page not registered (a test, an old app)
         st.caption(link.get("label") or "")
+
+
+def _file_button(rel: str, key: str) -> None:
+    """Download the regulatory text a passage comes from (it is on this
+    machine, in docs/regulatory)."""
+    from pathlib import Path
+    p = Path(__file__).resolve().parents[2] / rel
+    if p.is_file():
+        st.download_button(f"Download {p.name}", p.read_bytes(), file_name=p.name, key=key,
+                           icon=":material/download:")
 
 
 def _queue(q: str) -> None:
