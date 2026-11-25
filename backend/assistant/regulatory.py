@@ -199,8 +199,10 @@ def _hc(q: dict, *names: str) -> str:
 # topic, item, qdb(q) -> text, then each benchmark with its reference. The
 # Basel values are the BIS consolidated framework (CRE20, CRE22, CRE32); IFRS 9
 # the standard's paragraphs; QCB from the methodology pack's quotes of
-# Circular 9/2017 and KPMG's summary of the QCB instructions (2018), or "see
-# the circular" where only the circular has the value.
+# Circular 9/2017 and KPMG's summary of the QCB instructions (2018); the
+# collateral and CCF values from QCB's Basel III Pillar 1 instructions
+# (Implementation Instructions, Basel III Framework for Conventional Banks,
+# January 2014, section 4.1.2 and 4.1.5), a capital rule, not an ECL rule.
 def _rows(q: dict) -> list[dict]:
     lgd = q.get("lgd_base", 0.45)
     fl = q.get("lgd_floor", 0.5)
@@ -213,45 +215,53 @@ def _rows(q: dict) -> list[dict]:
                   "IFRS 9": ifrs9, "IFRS 9 ref": ifrs9_ref, "QCB": qcb, "QCB ref": qcb_ref,
                   "other": other, "note": note})
 
-    qcb_hc = "eligible collateral list with regulatory haircuts in the IFRS 9 instructions"
-    qcb_hc_ref = "QCB Circular 9/2017 (KPMG summary, p.34); values: the circular in docs/regulatory"
+    Q = "QCB Basel III Pillar 1 instructions (2014)"
+    q_not = "not eligible collateral (only cash, gold, rated debt securities, listed equities, funds)"
     ifrs_coll = "collateral cash flows, net of costs to obtain and sell, are part of the cash shortfalls"
     # collateral -------------------------------------------------------------
     row("collateral", "Cash collateral / collateral account", _hc(q, "Cash Collateral", "COLLATERAL ACCOUNT"),
         "0% (cash in the same currency); F-IRB: LGD 0% on the covered part", "CRE22.49; CRE32.11",
-        ifrs_coll, "B5.5.55", qcb_hc, qcb_hc_ref,
-        note="QDB gives cash no value; Basel counts it in full")
+        ifrs_coll, "B5.5.55", "0% (cash in the same currency)", f"{Q}, para 151, 155",
+        note="QDB gives cash no value; Basel and QCB count it in full")
     row("collateral", "Bank guarantee", _hc(q, "LETTER OF GUARANTEE-BANK"),
         "a guarantee is recognised by putting the guarantor's risk in place of the borrower's, not by a haircut",
-        "CRE22 (guarantees)", ifrs_coll, "B5.5.55", qcb_hc, qcb_hc_ref)
+        "CRE22 (guarantees)", ifrs_coll, "B5.5.55",
+        "recognised by substitution when direct, explicit, irrevocable, unconditional and the bank "
+        "has a lower risk weight than the borrower", f"{Q}, para 150, 168–171")
     row("collateral", "Residential property", _hc(q, "Residential Property"),
         "F-IRB: LGD 20% on the secured part, with a 40% haircut on the value", "CRE32.10–32.11",
-        ifrs_coll, "B5.5.55", qcb_hc, qcb_hc_ref,
+        ifrs_coll, "B5.5.55", "not eligible collateral; residential mortgage loans 75% risk weight "
+        "(corporate 100%)", f"{Q}, para 103–104, 151",
         note="Basel's standardised approach treats real estate through LTV-based risk weights, not a haircut")
     row("collateral", "Commercial property", _hc(q, "Commercial Property"),
         "F-IRB: LGD 20% on the secured part, with a 40% haircut on the value", "CRE32.10–32.11",
-        ifrs_coll, "B5.5.55", qcb_hc, qcb_hc_ref)
+        ifrs_coll, "B5.5.55", "not eligible collateral; commercial mortgage loans 100% risk weight "
+        "(no relief)", f"{Q}, para 105, 151")
     row("collateral", "Farm property", _hc(q, "FARM PROPERTY"),
-        "real estate: F-IRB LGD 20%, haircut 40%", "CRE32.10–32.11", ifrs_coll, "B5.5.55", qcb_hc, qcb_hc_ref)
+        "real estate: F-IRB LGD 20%, haircut 40%", "CRE32.10–32.11", ifrs_coll, "B5.5.55", q_not, f"{Q}, para 151")
     row("collateral", "Listed shares", _hc(q, "Share - Local", "Share - Foreign", "Equity"),
         "20% (main-index equities and gold); 30% (other listed equities)", "CRE22.49",
-        ifrs_coll, "B5.5.55", qcb_hc, qcb_hc_ref)
+        ifrs_coll, "B5.5.55", "15% (main-index equities); 25% (other listed equities); 10-day basis, "
+        "scaled up for secured lending (20-day holding period)", f"{Q}, para 155–158")
     row("collateral", "Bonds", _hc(q, "Local Bond", "Foreign Bond"),
         "by issuer, rating and maturity: sovereigns AAA to AA- 0.5% (up to 1 year) to 12% (over 10 years), "
         "A+ to BBB- 1% to 20%, BB 15%; other issuers AAA to AA- 1% (up to 1 year), 3% (1-3 years), 6% (5-10 years)",
-        "CRE22.49", ifrs_coll, "B5.5.55", qcb_hc, qcb_hc_ref)
+        "CRE22.49", ifrs_coll, "B5.5.55", "0.5%–24% by rating, maturity and issuer (sovereign BB+ to BB- 15%; "
+        "other issuers below BBB- not eligible)", f"{Q}, para 151, 155")
     row("collateral", "Gold / precious metal", _hc(q, "Precious Metal"), "20%", "CRE22.49",
-        ifrs_coll, "B5.5.55", qcb_hc, qcb_hc_ref)
+        ifrs_coll, "B5.5.55", "15% (gold; 10-day basis, scaled up for secured lending)", f"{Q}, para 155–158")
     row("collateral", "Machinery, goods, other physical", _hc(q, "Machinery Detail", "GOODS"),
         "F-IRB: LGD 25% on the secured part, with a 40% haircut on the value", "CRE32.11",
-        ifrs_coll, "B5.5.55", qcb_hc, qcb_hc_ref)
+        ifrs_coll, "B5.5.55", q_not, f"{Q}, para 151")
     row("collateral", "Personal / corporate guarantees, cheques, insurance, documents",
         _hc(q, "Personal Guarantee", "Corporate Guarantee"),
         "guarantees only from eligible guarantors (substitution); ineligible collateral: 100% haircut",
-        "CRE22 (guarantees); CRE32.11", ifrs_coll, "B5.5.55", qcb_hc, qcb_hc_ref)
+        "CRE22 (guarantees); CRE32.11", ifrs_coll, "B5.5.55",
+        "guarantees only from sovereigns, Qatar Government entities, PSEs, banks and rated entities with a "
+        "lower risk weight; other collateral not eligible", f"{Q}, para 151, 170")
     row("collateral", "Currency mismatch", "no extra haircut",
         "8% on top when collateral and exposure are in different currencies", "CRE22.52",
-        qcb=qcb_hc, qcb_ref=qcb_hc_ref)
+        qcb="8% (none when both currencies are pegged to the same currency)", qcb_ref=f"{Q}, para 153")
     # LGD --------------------------------------------------------------------
     row("lgd", "LGD on the unsecured part", _pct(lgd),
         "F-IRB senior unsecured: 40% (non-financial corporates), 45% (financial institutions); "
@@ -274,14 +284,19 @@ def _rows(q: dict) -> list[dict]:
     row("ccf", "Letters of guarantee (performance, bid bonds)",
         "amount x CCF in the extract; pack CCF 50% for bank guarantees",
         "50% (transaction-related contingent items); 100% (guarantees of indebtedness)", "CRE20.97; CRE20.95",
-        "ECL on financial guarantee contracts and loan commitments", "5.5.1")
+        "ECL on financial guarantee contracts and loan commitments", "5.5.1",
+        "50% transaction-related (net of cash margin); 100% direct credit substitutes and other guarantees",
+        f"{Q}, para 114–115")
     row("ccf", "Letters of credit", "amount x CCF in the extract; pack CCF 20%",
-        "20% (short-term self-liquidating trade letters of credit)", "CRE20.99")
+        "20% (short-term self-liquidating trade letters of credit)", "CRE20.99",
+        qcb="20% (short-term self-liquidating trade LCs)", qcb_ref=f"{Q}, para 113")
     row("ccf", "Al Dhameen (guarantee of partner-bank financing)", "full amount (CCF 100%) in the extract; "
-        "the pack says 50%", "100% (direct credit substitutes, general guarantees of indebtedness)", "CRE20.95")
+        "the pack says 50%", "100% (direct credit substitutes, general guarantees of indebtedness)", "CRE20.95",
+        qcb="100% (direct credit substitutes, general guarantees of indebtedness)", qcb_ref=f"{Q}, para 115")
     row("ccf", "Undrawn commitments", "on-balance facilities: no drawdown (DDF 0, pack slide 79)",
         "40% (commitments); 10% (unconditionally cancellable)", "CRE20.98; CRE20.100",
-        "revolving facilities: the period of actual exposure, which can exceed the contract", "5.5.20")
+        "revolving facilities: the period of actual exposure, which can exceed the contract", "5.5.20",
+        "20% (up to 1 year), 50% (over 1 year); 0% if unconditionally cancellable", f"{Q}, para 112")
     # staging and default ----------------------------------------------------
     row("staging", "Default (Stage 3)", "worst DPD above 90 at customer level, or the default flag",
         "more than 90 days past due, or a defaulted borrower", "CRE20.104",

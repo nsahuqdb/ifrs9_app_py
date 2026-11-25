@@ -22,10 +22,9 @@ Three points to keep in mind when reading the comparisons:
   reference point, not as a requirement for the ECL.
 - **QCB.** QDB applies IFRS 9 under QCB Circular 9/2017. Where this document
   quotes QCB, the source is the methodology pack's quotation of the circular
-  or KPMG's published summary of the QCB instructions. Values only the
-  circular holds (the collateral haircut table, for one) are marked "see the
-  circular": put the circular in the regulatory folder (chapter 8) and the
-  assistant reads it.
+  or KPMG's published summary of the QCB instructions. Collateral haircuts
+  and CCFs come from QCB's Basel III Pillar 1 instructions (2014), QCB's
+  capital rule; like Basel, a reference point, not an ECL requirement.
 
 QDB's values in the tables are the configuration at the time of writing. The
 assistant compares with the values a run actually used.
@@ -141,12 +140,19 @@ What can be stated without the circular, and where it comes from:
 | Scenarios | at least three, at most five | KPMG, IFRS 9 transition impact on banks in the GCC – Qatar, p.34; pack, slide 108 |
 | Moving back a stage | 12-month cooling-off period from Stage 3/2 to Stage 2/1 | KPMG, p.34; pack, slide 92 (12 months, with QCB approval) |
 | Level of staging | obligor level; exceptions need QCB approval | KPMG, p.34 |
-| Collateral | a list of eligible collateral with regulatory haircuts | KPMG, p.34; **values: see the circular** |
+| Collateral (IFRS 9 instructions) | a list of eligible collateral with regulatory haircuts | KPMG, p.34 |
+| Eligible collateral (capital) | cash, gold, rated debt securities, unrated senior bank debt, main-index and other listed equities, funds; real estate, machinery, goods and personal guarantees are not eligible | QCB Basel III Pillar 1 instructions (2014), para 151 |
+| Haircuts (capital, 10-day basis) | cash in the same currency 0%; gold and main-index equities 15%; other listed equities 25%; debt securities 0.5%–24% by rating, maturity and issuer; currency mismatch 8%; scaled up for secured lending (20-day holding period) | same, para 153, 155–158 |
+| Guarantees (capital) | recognised by substitution if direct, explicit, irrevocable and unconditional, from sovereigns, Qatar Government entities, PSEs, banks or rated entities with a lower risk weight | same, para 150, 168–171 |
+| Real estate (capital) | through risk weights, not as collateral: residential mortgage loans 75%, commercial mortgage loans 100% | same, para 103–105 |
+| CCFs (capital) | unconditionally cancellable 0%; commitments 20% (up to 1 year) / 50%; trade LCs 20%; transaction-related guarantees 50%; direct credit substitutes and other guarantees 100% | same, para 112–115 |
 | Domestic sovereign | exposures to the Government of Qatar (through the Ministry of Finance and QCB) are outside the ECL model | KPMG, pp.33–34 |
 | Reporting | quarterly templates with agreed-upon procedures by the auditors; annual templates with the audit report | KPMG, p.34 |
 
-To read in the circular: the haircut for each eligible collateral type, any
-LGD or provision minimum, the cure and restructuring rules in full.
+Still to read in Circular 9/2017 itself: the IFRS 9 haircut list (if it
+differs from the capital rule), any LGD or provision minimum, and the cure and
+restructuring rules in full. The 45% unsecured LGD is the pack's attribution;
+the Pillar 1 instructions use the standardised approach, which has no LGD.
 
 # 5. How QDB compares
 
@@ -157,22 +163,24 @@ value × allocation × (1 − haircut) (ECL methodology, chapter 9).
 
 | Collateral | QDB haircut | Value QDB counts | Basel | QCB |
 |---|---|---|---|---|
-| Cash collateral, collateral account | 100% | nothing | 0% haircut (CRE22.49); F-IRB LGD 0% on the covered part (CRE32.11) | see the circular |
-| Bank guarantee | 0% | all | guarantor's risk in place of the borrower's (CRE22) | see the circular |
-| Residential property | 50% | half | F-IRB: 40% haircut, LGD 20% on the secured part (CRE32.11) | see the circular |
-| Commercial property | 75% | a quarter | F-IRB: 40% haircut, LGD 20% on the secured part (CRE32.11) | see the circular |
-| Farm property | 100% | nothing | real estate: 40% haircut, LGD 20% (CRE32.11) | see the circular |
-| Listed shares | 100% | nothing | 20% (main index), 30% (other listed) (CRE22.49) | see the circular |
-| Bonds | 100% | nothing | 0.5%–20% for investment-grade debt by issuer, rating and maturity (CRE22.49) | see the circular |
-| Gold, precious metal | 100% | nothing | 20% (CRE22.49) | see the circular |
-| Machinery, goods | 100% | nothing | F-IRB: 40% haircut, LGD 25% (CRE32.11) | see the circular |
-| Personal and corporate guarantees, cheques, insurance, documents | 100% | nothing | only eligible guarantors count; ineligible collateral 100% (CRE32.11) | see the circular |
-| Currency mismatch | none | | 8% on top (CRE22.52) | see the circular |
+| Cash collateral, collateral account | 100% | nothing | 0% haircut (CRE22.49); F-IRB LGD 0% on the covered part (CRE32.11) | 0% haircut, same currency (para 155) |
+| Bank guarantee | 0% | all | guarantor's risk in place of the borrower's (CRE22) | the same, if irrevocable and unconditional (para 168–171) |
+| Residential property | 50% | half | F-IRB: 40% haircut, LGD 20% on the secured part (CRE32.11) | not eligible collateral; 75% risk weight for residential mortgage loans (para 103–104) |
+| Commercial property | 75% | a quarter | F-IRB: 40% haircut, LGD 20% on the secured part (CRE32.11) | not eligible collateral; 100% risk weight, no relief (para 105) |
+| Farm property | 100% | nothing | real estate: 40% haircut, LGD 20% (CRE32.11) | not eligible (para 151) |
+| Listed shares | 100% | nothing | 20% (main index), 30% (other listed) (CRE22.49) | 15% (main index), 25% (other listed), 10-day basis (para 155) |
+| Bonds | 100% | nothing | 0.5%–20% for investment-grade debt by issuer, rating and maturity (CRE22.49) | 0.5%–24% by rating, maturity and issuer (para 155) |
+| Gold, precious metal | 100% | nothing | 20% (CRE22.49) | 15% (para 155) |
+| Machinery, goods | 100% | nothing | F-IRB: 40% haircut, LGD 25% (CRE32.11) | not eligible (para 151) |
+| Personal and corporate guarantees, cheques, insurance, documents | 100% | nothing | only eligible guarantors count; ineligible collateral 100% (CRE32.11) | guarantees only from eligible guarantors; the rest not eligible (para 151, 170) |
+| Currency mismatch | none | | 8% on top (CRE22.52) | 8% (para 153) |
 
 **What this shows.** QDB counts value only for bank guarantees, residential
 and commercial property, and then at most up to half the balance (the 50%
-unsecured floor). Cash, shares, bonds and gold, which Basel counts with small
-or no haircuts, give no benefit at QDB. IFRS 9 asks that collateral cash
+unsecured floor). Cash, shares, bonds and gold, which Basel and QCB count with
+small or no haircuts, give no benefit at QDB. QCB's capital rule does not count
+real estate as collateral at all (QCB column: QCB Basel III Pillar 1
+instructions, 2014). IFRS 9 asks that collateral cash
 flows be part of the estimate (B5.5.55).
 
 ## 5.2 LGD
@@ -180,20 +188,20 @@ flows be part of the estimate (B5.5.55).
 | | QDB | Basel | QCB |
 |---|---|---|---|
 | Unsecured | 45% | 40% non-financial corporates, 45% financial institutions; 75% subordinated (CRE32.6–32.7) | 45% minimum (pack, slide 71) |
-| Lowest possible | 22.5% (45% × at least 50% unsecured) | advanced approach floors: 25% unsecured; 0–15% fully secured (CRE32.16) | see the circular |
-| Stage 3 | 100% of the balance | | see the circular |
+| Lowest possible | 22.5% (45% × at least 50% unsecured) | advanced approach floors: 25% unsecured; 0–15% fully secured (CRE32.16) | none found (the Pillar 1 instructions have no LGD) |
+| Stage 3 | 100% of the balance | | not read (Circular 9/2017) |
 
 The pack's 45% for all senior unsecured claims is the earlier Basel value;
 the current framework gives non-financial corporates 40%.
 
 ## 5.3 EAD and CCF
 
-| Product | QDB | Basel |
-|---|---|---|
-| Letters of guarantee | guarantee amount × CCF in the extract; pack CCF 50% for bank guarantees | 50% transaction-related (CRE20.97); 100% guarantees of indebtedness (CRE20.95) |
-| Letters of credit | LC outstanding × CCF in the extract; pack CCF 20% | 20% short-term trade LCs (CRE20.99) |
-| Al Dhameen | full amount (CCF 100%); the pack says 50% | 100% direct credit substitutes (CRE20.95) |
-| Undrawn on-balance limits | not counted (drawdown factor 0: facilities are revocable, pack slide 79) | 40% commitments; 10% unconditionally cancellable (CRE20.98, 20.100) |
+| Product | QDB | Basel | QCB (capital) |
+|---|---|---|---|
+| Letters of guarantee | guarantee amount × CCF in the extract; pack CCF 50% for bank guarantees | 50% transaction-related (CRE20.97); 100% guarantees of indebtedness (CRE20.95) | 50% transaction-related, net of cash margin (para 114); 100% direct credit substitutes and other guarantees (para 115) |
+| Letters of credit | LC outstanding × CCF in the extract; pack CCF 20% | 20% short-term trade LCs (CRE20.99) | 20% (para 113) |
+| Al Dhameen | full amount (CCF 100%); the pack says 50% | 100% direct credit substitutes (CRE20.95) | 100% (para 115) |
+| Undrawn on-balance limits | not counted (drawdown factor 0: facilities are revocable, pack slide 79) | 40% commitments; 10% unconditionally cancellable (CRE20.98, 20.100) | 0% if unconditionally cancellable; otherwise 20% (up to 1 year) or 50% (para 112) |
 
 ## 5.4 Staging and default
 
@@ -238,6 +246,7 @@ with a static book and no management actions.
 - Basel Committee, Basel Framework (BIS): CRE20 (standardised approach: individual exposures), CRE22 (credit risk mitigation), CRE32 (IRB risk components). <https://www.bis.org/basel_framework/>
 - Basel Committee, Stress testing principles, October 2018 (d450). <https://www.bis.org/bcbs/publ/d450.htm>
 - QCB, Circular 9/2017 (IFRS 9 instructions to banks), as quoted in the IFRS 9 methodology pack (v11, May 2025).
+- QCB, Implementation Instructions – Basel III Framework for Conventional Banks, Pillar 1 Guidelines for Capital Adequacy (January 2014), sections 4.1.1, 4.1.2 and 4.1.5. <https://www.qcb.gov.qa/Documents/BankInstructions2024/AR/0381-0464_annex001.pdf>
 - KPMG, IFRS 9: Transition impact on banks in the GCC – Qatar (2018), pp.33–34.
 - EBA, 2025 EU-wide stress test – Methodological Note.
 - Bank of England, Key elements of the 2025 Bank Capital Stress Test.

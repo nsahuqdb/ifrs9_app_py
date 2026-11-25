@@ -1040,3 +1040,21 @@ class TestRunLine:
         from backend.assistant import agent as A
         out = A._result("x", {"k1": {"ok": True, "summary": "doc"}}, [], None, "q")
         assert out["runs"] == []
+
+
+class TestQcbCapitalRule:
+    """QCB's Basel III Pillar 1 instructions fill the QCB column for collateral and CCFs."""
+
+    def test_qcb_values_and_link(self):
+        from backend.assistant.links import source_url
+        from backend.assistant.regulatory import _rows
+        rows = {r["item"]: r for r in _rows({"haircut": {}})}
+        assert rows["Cash collateral / collateral account"]["QCB"].startswith("0%")
+        assert "15% (main-index" in rows["Listed shares"]["QCB"]
+        assert "not eligible" in rows["Residential property"]["QCB"]
+        assert rows["Letters of credit"]["QCB"].startswith("20%")
+        assert all("para" in r["QCB ref"] for r in rows.values()
+                   if r["topic"] in ("collateral", "ccf") and r["QCB"])
+        own = "QCB_Basel_III_Pillar1_instructions_2014_0381-0464_annex001.pdf"
+        assert source_url("QCBB3", [own])[1].startswith("regfile://")
+        assert "qcb.gov.qa" in source_url("QCBB3", [])[1]

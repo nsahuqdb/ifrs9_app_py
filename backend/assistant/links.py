@@ -33,6 +33,8 @@ OFFICIAL = {
             "2026-june-dodd-frank-act-stress-test-introduction.htm"),
     "FINMA": ("FINMA, stress tests",
               "https://finma.ch/en/supervision/banks-and-securities-firms/supervisory-instruments/stress-tests"),
+    "QCBB3": ("QCB Implementation Instructions, Basel III Framework for Conventional Banks (Pillar 1, 2014)",
+              "https://www.qcb.gov.qa/Documents/BankInstructions2024/AR/0381-0464_annex001.pdf"),
     "KPMG": ("KPMG, IFRS 9 transition impact on banks in the GCC – Qatar",
              "https://assets.kpmg.com/content/dam/kpmg/qa/pdf/10/ifrs9-transition-impact-on-banks-in-the-gcc-"
              "qatar-web-version.pdf"),
@@ -41,7 +43,7 @@ OFFICIAL = {
 # What, in a file's name, says it is one of these (for the user's own copy).
 LOCAL_NAME = {
     "CRE20": r"cre\s*-?_?20", "CRE22": r"cre\s*-?_?22", "CRE32": r"cre\s*-?_?32",
-    "IFRS9": r"ifrs\s*-?_?9", "EBA": r"\beba\b|methodological", "QCB": r"9\s*[-_/ ]\s*2017|circular\s*9",
+    "IFRS9": r"ifrs\s*-?_?9", "EBA": r"\beba\b|methodological", "QCB": r"9\s*[-_/ ]\s*2017|circular\s*9", "QCBB3": r"0381|basel\s*iii.*conventional|pillar\s*1",
 }
 
 # reference in text -> source key
@@ -53,6 +55,7 @@ PATTERNS = [
     (re.compile(r"\bBank Capital Stress Test\b"), lambda m: "BOE"),
     (re.compile(r"\b(?:Supervisory Stress Test|Stress Test Results)\b"), lambda m: "FED"),
     (re.compile(r"\bd450\b|\bStress testing principles\b"), lambda m: "D450"),
+    (re.compile(r"\bQCB Basel III Pillar 1 instructions\b"), lambda m: "QCBB3"),
     (re.compile(r"\bKPMG\b"), lambda m: "KPMG"),
     (re.compile(r"\b(?:QCB\s+)?Circular\s+(?:No\.?\s*)?9/2017\b"), lambda m: "QCB"),
 ]
